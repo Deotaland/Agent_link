@@ -1,0 +1,5 @@
+{
+    "manufacturer": "waveshare",
+    "type": "esp32p4-waveshare",
+    "target": "esp32p4"
+}

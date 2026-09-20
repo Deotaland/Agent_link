@@ -1,0 +1,42 @@
+menu "Agent Link Device"
+
+choice BOARD_TYPE
+    prompt "Board Type"
+    default BOARD_TYPE_ROROLEE_S3
+    help
+        This option only decides which board to compile, not the target chip.
+        Different boards may use different chips.
+        Adding a new board: see boards/README.md
+    config BOARD_TYPE_ROROLEE_S3
+        bool "RoRoLee-S3 (ESP32-S3)"
+
+    config BOARD_TYPE_ESP32P4_WAVESHARE
+        bool "ESP32-P4 Waveshare (CO5300 466x466 AMOLED)"
+    config BOARD_TYPE_ESP32S3_TEM_MONITOR
+        bool "ESP32-S3 TemMonitor (pressure / temperature / humidity monitor)"
+    config BOARD_TYPE_ESP32S3_ES8311_VOICE
+        bool "ESP32-S3 ES8311 Voice (single-codec audio example)"
+    config BOARD_TYPE_ESP32S3_ES8311_ASR
+        bool "ESP32-S3 ES8311 ASR (minimal real-time ASR example)"
+    config BOARD_TYPE_ESP32S3_GC2145_CAMERA
+        bool "ESP32-S3 GC2145 Camera (DVP camera preview on ST7789 LCD)"
+    config BOARD_TYPE_ESP32S3_WORK_BADGE
+        bool "ESP32-S3 Work Badge (electronic staff ID card, rorolee-s3 hardware, LVGL UI)"
+        select LV_FONT_MONTSERRAT_20
+        select LV_FONT_MONTSERRAT_28
+endchoice
+
+choice AGENT_LINK_TRANSPORT
+    prompt "Transport backend"
+    default AGENT_LINK_TRANSPORT_BLE
+    help
+        How the device reaches the Deotaland Agent platform.
+        BLE:  connect to the phone App over Bluetooth (the App relays to the cloud)
+        WiFi: join a WiFi network; the first run brings up a SoftAP captive portal to enter the credentials
+    config AGENT_LINK_TRANSPORT_BLE
+        bool "BLE"
+    config AGENT_LINK_TRANSPORT_WIFI
+        bool "WiFi"
+endchoice
+
+endmenu

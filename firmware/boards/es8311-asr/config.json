@@ -1,0 +1,5 @@
+{
+    "manufacturer": "deotaland",
+    "type": "es8311-asr",
+    "target": "esp32s3"
+}

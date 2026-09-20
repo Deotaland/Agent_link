@@ -1,0 +1,5 @@
+{
+    "manufacturer": "deotaland",
+    "type": "gc2145-camera",
+    "target": "esp32s3"
+}

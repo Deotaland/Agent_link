@@ -1,0 +1,48 @@
+menu "agent_link SDK"
+
+config AGENT_LINK_OTA_ENABLE
+    bool "Enable OTA firmware upgrade over the App link"
+    default y
+    help
+        Handle 0x37 StartOtaUpgrade / 0x56 AbortOtaUpgrade and stream the new firmware
+        in over the L2CAP data channel, then verify SHA-256 and reboot into it.
+        the official App upgrades agent_link devices with the code path it already ships.
+        Requires an OTA-capable partition table (ota_0/ota_1 + otadata).
+
+if AGENT_LINK_OTA_ENABLE
+
+config AGENT_LINK_OTA_REQUIRE_NEWER_VERSION
+    bool "Reject firmware that is not strictly newer"
+    default n
+    help
+        y = rule: the version in 0x37 must be strictly greater
+        than the running one (major.minor.patch), otherwise the device answers 2030
+        OtaVersionIncompat. Same version or a downgrade is refused.
+
+        n (default) = accept any version. This is what lets a bench device be flashed
+        back and forth between agent_link firmware (2.x) and the production 1.7.x image
+        without a serial cable. The App still decides what it offers.
+
+config AGENT_LINK_OTA_REQUIRE_MODEL_MATCH
+    bool "Reject firmware built for a different device model"
+    default y
+    help
+        The App may append a model string to 0x37. When it does and this is enabled, it
+        must equal this device's model (agent_link_config_t.model) or the device answers
+        2037 OtaModelMismatch — this is what stops a build for other hardware from being
+        flashed onto this one. An App that sends no model is always allowed through
+        (older App versions)
+
+config AGENT_LINK_OTA_RX_BUFFER_KB
+    int "OTA receive buffer (KB)"
+    range 16 128
+    default 32
+    help
+        Ring buffer between the link RX callback and the flash-writing worker. Allocated
+        in PSRAM when available, otherwise internal RAM. The link is back-pressured (the
+        peer stops getting credit) whenever less than a quarter of it is free, so a
+        smaller buffer costs throughput, never correctness.
+
+endif # AGENT_LINK_OTA_ENABLE
+
+endmenu

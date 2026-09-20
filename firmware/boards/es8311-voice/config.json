@@ -1,0 +1,5 @@
+{
+    "manufacturer": "deotaland",
+    "type": "es8311-voice",
+    "target": "esp32s3"
+}
