@@ -16,7 +16,7 @@
  *               registered agent_io_actuate_cb_t callback.
  *          Semantics ("temperature", "buzzer") live only in the description
  *          strings; the SDK moves bytes and routes by id, so adding a new sensor
- *          needs no SDK changes. See docs/device-io.md. Rich media (screen,
+ *          needs no SDK changes. Rich media (screen,
  *          speaker, camera) still use the dedicated callbacks in agent_link.h.
  */
 #include <stddef.h>

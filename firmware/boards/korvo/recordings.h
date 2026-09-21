@@ -6,10 +6,15 @@
 // 1001 UnknownCommand rather than fake a success the App would act on. A board may claim them
 // though: on_command is consulted first, and returning true from it wins. That is what this does.
 //
-// Wire format is docs/ble_sdk.md 4.6. One thing does NOT match that document: it budgets a page at
-// ATT_MTU - 20, but the SDK hands on_command a fixed 128-byte response buffer, so the real budget
-// is that buffer. Paging is unaffected — the App follows next_offset either way; pages are just
-// smaller than the document's arithmetic suggests.
+// Response layout, one page per command:
+//   [entry_count(2 LE)] [entries...] [has_more(1)] [total_count(2 LE)] [next_offset(2 LE)]
+// and one entry:
+//   [name_len(1)] [name(UTF-8, no NUL)] [size_bytes(4 LE)] [mtime_sec(4 LE)] [duration_ms(4 LE)]
+// The request is 0, 3 or 4 bytes: [offset(2 LE)] [max_entries(1), 0 = let the device decide]
+// [scope(1), 0 = recordings, 1 = messages].
+//
+// A page is budgeted against the response buffer the SDK provides (AGENT_LINK_CMD_RESP_MAX),
+// not against the MTU, so pages are small; the App just follows next_offset until has_more is 0.
 
 #include <cstddef>
 #include <cstdint>
@@ -35,4 +40,11 @@ public:
 
 private:
     Config cfg_ = {};
+
+    // Scratch for one entry, held here rather than on the stack. HandleList runs on the transport's
+    // own task (see agent_output_cb_t::on_command), whose stack is small and already deep by the
+    // time a command reaches us — 650 bytes of locals plus the VFS/FATFS/SDMMC call chain is what
+    // overflowed it. Safe as members: the SDK serialises commands onto that one task.
+    char rel_[sizeof("messages/") + 256] = {};
+    char abs_[384] = {};
 };

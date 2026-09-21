@@ -288,6 +288,6 @@ void OnLinkState(bool connected) {
 }  // namespace agentlink
 
 // Public API (include/agent_link.h).
-extern "C" void agent_link_audio_set_buffer_ms(uint32_t playable_ms) {
+extern "C" void agent_link_playback_set_buffer_ms(uint32_t playable_ms) {
     agentlink::audio::SetBufferMs(playable_ms);
 }

@@ -18,3 +18,8 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# NimBLE host task stack. ESP-IDF defaults to 4096, which is enough for the stack itself but not
+# once a board does real work in an agent_output_cb_t callback — those run on this task, and a
+# directory scan through VFS/FATFS/SDMMC overflowed it. See agent_link.h's note on callback context.
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=6144

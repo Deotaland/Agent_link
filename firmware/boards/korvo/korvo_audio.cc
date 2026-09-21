@@ -48,11 +48,11 @@ esp_err_t KorvoAudio::Init(const Config& cfg) {
         play_buf_ = xStreamBufferCreate(16 * 1024, /*trigger=*/1);
         if (!play_buf_) { ESP_LOGE(TAG, "play buffer alloc failed"); return ESP_ERR_NO_MEM; }
         ESP_LOGW(TAG, "no PSRAM - play buffer is 16KB (0.5s); long replies will stutter");
-        agent_link_audio_set_buffer_ms(16 * 1024 / 32);
+        agent_link_playback_set_buffer_ms(16 * 1024 / 32);
     } else {
         // Tell the SDK what we hold so it throttles the App (event 0x20) before this overflows.
         // 32 bytes per ms at PCM16/16kHz/mono.
-        agent_link_audio_set_buffer_ms(static_cast<uint32_t>(cfg_.play_buf_bytes / 32));
+        agent_link_playback_set_buffer_ms(static_cast<uint32_t>(cfg_.play_buf_bytes / 32));
     }
 
     // The card is optional: without one everything works except recording.
@@ -97,6 +97,13 @@ void KorvoAudio::PlayLoop() {
     }
 }
 
+// The App sees this label on the stream; it says where the audio came from, not what to do with it.
+esp_err_t KorvoAudio::OpenAudioStream() {
+    agent_stream_opts_t o = {};
+    o.name = "mic";
+    return agent_link_stream_open(AGENT_STREAM_AUDIO, &o, &audio_stream_);
+}
+
 void KorvoAudio::StartAsr() { want_asr_.store(true,  std::memory_order_release); }
 void KorvoAudio::StopAsr()  { want_asr_.store(false, std::memory_order_release); }
 
@@ -136,13 +143,13 @@ void KorvoAudio::MicLoop() {
 
         // -- Reconcile desired vs actual. Stops run first, so a stop+start in one pass can't overlap --
         if (asr_on && !want_asr) {
-            agent_link_asr_end(true);
+            agent_link_stream_close(audio_stream_, true);
             asr_on = false;
             asr_on_.store(false, std::memory_order_release);
             ESP_LOGI(TAG, "ASR stream ended");
         }
         if (cmd_on && !want_cmd) {
-            agent_link_voice_end();        // closes the 0x40 session the first frame opened
+            agent_link_stream_close(voice_stream_, true);
             cmd_on = false;
             cmd_on_.store(false, std::memory_order_release);
             ESP_LOGI(TAG, "voice command sent");
@@ -156,8 +163,8 @@ void KorvoAudio::MicLoop() {
             if (agent_link_state() != AGENT_STATE_READY) {
                 ESP_LOGW(TAG, "asr requested but the App is not connected");
                 want_asr_.store(false, std::memory_order_release);
-            } else if (agent_link_asr_start("korvo") != ESP_OK) {
-                ESP_LOGW(TAG, "asr_start failed - the App must open the L2CAP channel (PSM 0x0081) first");
+            } else if (OpenAudioStream() != ESP_OK) {
+                ESP_LOGW(TAG, "audio stream failed to open - the App must open the L2CAP channel first");
                 want_asr_.store(false, std::memory_order_release);
             } else {
                 asr_on = true;
@@ -171,10 +178,13 @@ void KorvoAudio::MicLoop() {
             if (agent_link_state() != AGENT_STATE_READY) {
                 ESP_LOGW(TAG, "voice command requested but the App is not connected");
                 want_cmd_.store(false, std::memory_order_release);
+            } else if (agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &voice_stream_) != ESP_OK) {
+                ESP_LOGW(TAG, "voice stream failed to open");
+                want_cmd_.store(false, std::memory_order_release);
             } else {
                 cmd_on = true;
                 cmd_on_.store(true, std::memory_order_release);
-                ESP_LOGI(TAG, "voice command started (0x40 VoiceChunk)");
+                ESP_LOGI(TAG, "voice stream started");
             }
         }
         if (!rec_on && want_rec) {
@@ -215,13 +225,13 @@ void KorvoAudio::MicLoop() {
         if (asr_on) {
             if (agent_link_state() != AGENT_STATE_READY) {
                 ESP_LOGW(TAG, "link dropped mid-stream, ending ASR");
-                agent_link_asr_end(false);
+                agent_link_stream_close(audio_stream_, false);
                 asr_on_.store(false, std::memory_order_release);
                 want_asr_.store(false, std::memory_order_release);
-            } else if (agent_link_asr_push(reinterpret_cast<const uint8_t*>(buf), bytes) == ESP_ERR_NO_MEM) {
+            } else if (agent_link_stream_write(audio_stream_, buf, bytes) == ESP_ERR_NO_MEM) {
                 // Backpressure truncated us: end this segment rather than send a torn stream.
                 ESP_LOGW(TAG, "ASR truncated (link can't keep up), stopping");
-                agent_link_asr_end(false);
+                agent_link_stream_close(audio_stream_, false);
                 asr_on_.store(false, std::memory_order_release);
                 want_asr_.store(false, std::memory_order_release);
             }
@@ -229,14 +239,14 @@ void KorvoAudio::MicLoop() {
         if (cmd_on) {
             if (agent_link_state() != AGENT_STATE_READY) {
                 ESP_LOGW(TAG, "link dropped mid-command, closing the voice session");
-                agent_link_voice_end();
+                agent_link_stream_close(voice_stream_, false);
                 cmd_on_.store(false, std::memory_order_release);
                 want_cmd_.store(false, std::memory_order_release);
             } else {
                 // ESP_ERR_NO_MEM here means the SDK's voice queue hit its 96KB cap and dropped this
                 // frame to keep the head of the utterance. It logs that itself and the session stays
                 // open on purpose, so — unlike the ASR path — do NOT tear the stream down.
-                (void)agent_link_push_voice(reinterpret_cast<const uint8_t*>(buf), bytes);
+                (void)agent_link_stream_write(voice_stream_, buf, bytes);
             }
         }
         if (rec_on) {

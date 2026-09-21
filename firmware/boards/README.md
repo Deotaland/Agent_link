@@ -29,7 +29,7 @@ boards/rorolee-s3/
 | `ShowText(utf8)`                         | Agent to device | a screen                                                                         |
 | `Vibrate(ms)`                            | Agent to device | a motor                                                                          |
 | `SetLed(rgb)`                            | Agent to device | a controllable LED (the SDK synthesises a `led0` endpoint for it)                |
-| `OnListen(start, max_ms)`                | Agent to device | a mic the App can switch on (commands 0x3C/0x3D) — drive your `agent_link_asr_*` loop from it |
+| `OnListen(start, max_ms)`                | Agent to device | a mic the App can switch on (commands 0x3C/0x3D) — open an `AGENT_STREAM_AUDIO` stream from it |
 | `GetBatteryLevel()` / `IsCharging()`     | device to Agent | a fuel gauge                                                                     |
 
 Set a capability bit only when you implement its method; anything you leave out keeps the base no-op.

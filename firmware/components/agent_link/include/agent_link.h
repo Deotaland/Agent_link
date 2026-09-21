@@ -23,6 +23,7 @@
 #include "esp_err.h"
 #include "agent_link_caps.h"
 #include "agent_link_io.h"
+#include "agent_link_stream.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +33,14 @@ extern "C" {
 #define AGENT_LINK_PROTO_VERSION 1
 
 /**
+ * @brief Bytes of response data an agent_output_cb_t::on_command handler may return.
+ * @note Deliberately small: a command response shares one control frame with its header, and the
+ *       negotiated MTU is not known to the board. A command whose answer can grow past this must
+ *       define paging in its own payload.
+ */
+#define AGENT_LINK_CMD_RESP_MAX 128
+
+/**
  * @brief Agent → Device output callbacks
  *
  * These callbacks are invoked by the SDK when the Agent platform sends
@@ -39,7 +48,15 @@ extern "C" {
  * implemented within these callbacks.
  *
  * @note All callbacks are optional — set to NULL if not applicable.
- * @note Callbacks may be invoked from SDK internal threads; avoid blocking
+ * @note Every callback here runs on the transport's own task — for BLE, the NimBLE host task —
+ *       not on a worker the SDK owns. Two consequences, and both bite:
+ *         - Blocking stalls the link. Queue the work and return.
+ *         - The stack is the transport's, not yours, and it is small
+ *           (CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE, 4096 by default) and already deep by the time
+ *           a callback is reached. Keep locals to a few hundred bytes and do not call into
+ *           filesystem or network stacks from here; a directory scan with a couple of 256-byte
+ *           buffers is enough to overflow it.
+ *       Callbacks are serialised onto that one task, so static scratch is safe.
  */
 typedef struct {
     /**
@@ -104,30 +121,26 @@ typedef struct {
      * @param resp_len Output: actual response length
      * @param ctx     User context
      * @return true if command recognized and handled; false otherwise
-     * @note Return true → SDK responds with status=0 + your data
-     *       Return false → SDK forwards to on_custom or returns empty ACK
-     * @note 0x03 GetChargingStatus is auto-handled by SDK using cached battery data
+     * @note Return true → the SDK answers status=0 with your data.
+     *       Return false → the SDK answers 1001 UnknownCommand. It never invents a success for a
+     *       command nobody implemented: an App told "done" for something that did not happen is
+     *       worse off than one told the device cannot do it, which it can degrade around.
+     * @note This is also how a board implements a command the SDK itself does not: it is consulted
+     *       before the SDK's own fallback, so claiming an id here wins.
+     * @note @p resp_cap is AGENT_LINK_CMD_RESP_MAX bytes. A larger answer must be paged by the
+     *       command's own protocol.
      */
     bool (*on_command)(uint16_t cmd, const uint8_t* payload, size_t len,
                        uint8_t* resp, size_t resp_cap, size_t* resp_len, void* ctx);
 
-     /**
-     * @brief Custom/private command handler (fire-and-forget, no response)
-     * @param cmd     Command ID
-     * @param payload Command payload
-     * @param len     Payload length
-     * @param ctx     User context
-     * @note SDK automatically replies with empty ACK
-     */
-    void (*on_custom)(uint16_t cmd, const uint8_t* payload, size_t len, void* ctx);
 
     /**
      * @brief Start/stop microphone capture on request from the Agent (App-initiated "listen").
-     * @param start  true = begin capturing and stream ASR audio; false = stop.
+     * @param start  true = begin capturing and streaming mic audio; false = stop.
      * @param max_ms Suggested max capture duration in ms (0 = until stopped); board-specific.
      * @param ctx    User context.
-     * @note Optional; set only if AGENT_CAP_MIC is advertised. On start, the board drives its
-     *       mic → agent_link_asr_start()/asr_push()/asr_end() loop. Triggered by command 0x3C/0x3D.
+     * @note Optional; set only if AGENT_CAP_MIC is advertised. On start, the board opens an
+     *       AGENT_STREAM_AUDIO stream and pumps its mic into it. Triggered by command 0x3C/0x3D.
      */
     void (*on_listen)(bool start, uint32_t max_ms, void* ctx);
 
@@ -217,23 +230,11 @@ agent_state_t agent_link_state(void);
 
 
 /**
- * @brief Push voice input stream
- * @param pcm16 PCM16 audio data (16kHz, 16-bit, mono)
- * @param bytes Data size in bytes
- * @note Call agent_link_voice_end() at the end of an utterance
- */
-esp_err_t agent_link_push_voice(const uint8_t* pcm16, size_t bytes);
-
-/** @brief Mark the end of a voice utterance */
-esp_err_t agent_link_voice_end(void);
-
-/**
- * @brief Declare how many milliseconds of downlink audio this board can hold.
+ * @brief Declare how many milliseconds of downlink audio this board can hold for playback.
  *
  * The App sends a spoken reply as fast as the link allows and only stops when the device says
- * so (event 0x20 AudioFlowControl), so the SDK has to throttle it to whatever the board can
- * actually buffer. It measures how far ahead of real time it has pushed and pauses the App
- * before that exceeds this figure.
+ * so, so the SDK has to throttle it to whatever the board can actually buffer. It measures how
+ * far ahead of real time it has pushed and pauses the App before that exceeds this figure.
  *
  * Call once during board setup with the size of your play buffer. The default is deliberately
  * small (400ms); a board with a deeper buffer that does not say so simply gets less margin
@@ -241,59 +242,9 @@ esp_err_t agent_link_voice_end(void);
  *
  * @param playable_ms Milliseconds of PCM16 the board's play buffer holds (e.g. a 16KB buffer
  *                    at 16kHz/16-bit/mono = 512).
- * @note A board that never calls this still plays correctly
+ * @note A board that never calls this still plays correctly.
  */
-void agent_link_audio_set_buffer_ms(uint32_t playable_ms);
-
-/**
- * @brief Start a real-time ASR audio stream (device → App).
- *
- * Opens the record-stream channel. The App transcribes the streamed audio live (ASR).
- * agent_link is a transparent pipe: it transports exactly the bytes you push and
- * owns only the transfer_id, the 0x52/0x53 framing, and L2CAP chunking + backpressure.
- * feed whatever audio format the App's ASR expects
- *
- * @param name Stream label carried in the 0x52 event (UTF-8, no NUL). May be NULL.
- * @return ESP_OK once the stream is open; ESP_ERR_INVALID_STATE if the link / L2CAP channel is not ready.
- * @note Requires the App to have opened the L2CAP CoC (PSM 0x0081) after connecting. BLE transport only,
- *       one stream at a time. Push audio with agent_link_asr_push(), then close with agent_link_asr_end().
- */
-esp_err_t agent_link_asr_start(const char* name);
-
-/** @brief Push a chunk of ASR audio, streamed to the App over L2CAP (call agent_link_asr_start() first). */
-esp_err_t agent_link_asr_push(const uint8_t* audio, size_t bytes);
-
-/**
- * @brief End the ASR audio stream (BLE: event 0x53 StreamEnd with status + valid_bytes).
- * @param complete true = clean end (status=0); false = aborted/truncated (status=1).
- */
-esp_err_t agent_link_asr_end(bool complete);
-
-/** @brief Wire format of the bytes handed to agent_link_send_image(). */
-typedef enum {
-    AGENT_IMG_JPEG      = 0,  ///< JPEG-encoded (recommended over BLE; ~10-30KB per 240x240 frame)
-    AGENT_IMG_RGB565_BE = 1,  ///< Raw big-endian RGB565, width*height*2 bytes (large; BLE-slow)
-} agent_image_format_t;
-
-/**
- * @brief Send a single still image (snapshot) to the App.
- *
- * A transparent, fire-and-forget one-shot: the SDK owns the transfer_id, the 0x54/0x55 framing,
- * and L2CAP chunking + backpressure; it does NOT encode — feed it whatever bytes the App expects
- * (encode to JPEG on the board, e.g. via esp_jpeg, before calling). The call returns as soon as the
- * image is queued; a background worker streams it and emits 0x55 StreamEnd when done.
- *
- * @param data  Image bytes (JPEG or raw RGB565 per @p fmt).
- * @param bytes Size of @p data in bytes.
- * @param fmt   Pixel/encoding format carried in the 0x54 event so the App can decode.
- * @param w     Image width in pixels (carried in 0x54; 0 if unknown).
- * @param h     Image height in pixels (carried in 0x54; 0 if unknown).
- * @return ESP_OK once queued; ESP_ERR_INVALID_STATE if the link / L2CAP image channel is not ready;
- *         ESP_ERR_INVALID_ARG on empty input.
- * @note BLE transport only.One image at a time, but independent of (concurrent with) the ASR audio stream.
- */
-esp_err_t agent_link_send_image(const uint8_t* data, size_t bytes,
-                                agent_image_format_t fmt, uint16_t w, uint16_t h);
+void agent_link_playback_set_buffer_ms(uint32_t playable_ms);
 
 /**
  * @brief Push a device→Agent event
@@ -323,8 +274,7 @@ esp_err_t agent_link_push_event(agent_event_t type, const uint8_t* data, size_t 
  *         ESP_ERR_INVALID_ARG if utf8 is NULL or empty.
  *         ESP_ERR_INVALID_SIZE if it exceeds the current single-frame budget: BLE = negotiated
  *         ATT_MTU − 9, capped at 480B (≈238B at the recommended MTU 247; only ≈14B if the App
- *         has not yet performed MTU exchange — see docs/agent_link_ble.md §2.2); WiFi = 1024B.
- *         See docs/agent_link_ble.md 6.10 for the exact formula and byte/character guidance.
+ *         has not yet performed MTU exchange); WiFi = 1024B.
  * @note a dropped frame is not resent.
  */
 esp_err_t agent_link_push_prompt(const char* utf8);
@@ -345,21 +295,6 @@ esp_err_t agent_link_report_battery(uint8_t percent, bool charging);
  * @param agent_id The selected Agent ID
  */
 esp_err_t agent_link_report_selected_agent(const char* agent_id);
-
-/**
- * @brief Push an encoded video frame
- * @param frame    Encoded video frame (JPEG/H264, format negotiated)
- * @param bytes    Frame size in bytes
- * @param pts_ms   Presentation timestamp in milliseconds
- * @param keyframe true if this is an I-frame (keyframe)
- */
-esp_err_t agent_link_push_video(const uint8_t* frame, size_t bytes, uint32_t pts_ms, bool keyframe);
-
-/**
- * @brief End a video session (e.g., a call)
- * @return ESP_OK on success, otherwise an error code
- */
-esp_err_t agent_link_video_end(void);
 
 #ifdef __cplusplus
 }

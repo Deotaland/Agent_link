@@ -95,7 +95,7 @@ public:
 
     // Same PCB as rorolee-s3 and as the mass-produced unit, so it reports the production model
     // string: that is what lets the App offer this firmware to an existing product, and what
-    // stops a build for different hardware being pushed here. See docs/agent_link_ota.md.
+    // stops a build for different hardware being pushed here.
     const char* Model() const override { return "RRL-01"; }
 
     // A badge shows things and watches its own battery. No mic, speaker or motor is claimed:

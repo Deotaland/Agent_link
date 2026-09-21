@@ -4,8 +4,8 @@
  * @details Defines the interface for transport backends (BLE, WiFi) and the
  *          stream types used for data-plane communication.
  *          Control-plane frames (commands/responses/events) are sent via
- *          send_ctrl(). Data-plane streams (voice, video, recording, file)
- *          are sent via stream_start/send_stream/stream_end.
+ *          send_ctrl(). Data-plane streams of every kind (see agent_stream_t) go through
+ *          stream_start/send_stream/stream_end.
  */
 
 
@@ -16,22 +16,13 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
+// agent_stream_t and the stream vocabulary are part of the public API, not of this backend
+// interface: a backend implements the kinds the API defines, never the other way round.
+#include "agent_link_stream.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @brief Data‑plane stream type
- * @note The transport backend selects the appropriate media channel:
- *       BLE uses different L2CAP channels, WiFi uses different WebRTC tracks
- */
-typedef enum {
-    AGENT_STREAM_VOICE = 0,    ///< Voice (microphone uplink / TTS downlink)
-    AGENT_STREAM_VIDEO,        ///< Video (camera uplink / remote downlink) — WiFi only
-    AGENT_STREAM_RECORDING,    ///< Recording file upload / real-time ASR audio (BLE L2CAP PSM 0x0081)
-    AGENT_STREAM_FILE,         ///< File transfer / OTA
-    AGENT_STREAM_IMAGE,        ///< Still-image snapshot (device → App); BLE L2CAP PSM 0x0082, events 0x54/0x55
-} agent_stream_t;
 
 /**
  * @brief Transport backend operation table
@@ -66,7 +57,7 @@ typedef struct agent_transport_s {
     /**
      * @brief Start a data‑plane stream session
      * @param impl     Backend private context
-     * @param type     Stream type (voice/video/recording/file)
+     * @param type     Stream kind (see agent_stream_t)
      * @param meta     Optional metadata (e.g., codec, sample rate)
      * @param meta_len Length of meta
      * @return ESP_OK on success, error code otherwise
@@ -81,8 +72,8 @@ typedef struct agent_transport_s {
      * @param data Data buffer
      * @param len  Data length
      * @return ESP_OK on success, error code otherwise
-     * @note For BLE voice, this uses GATT Notify 0xFFA1 (event 0x40 VoiceChunk)
-     *       Recording/files use L2CAP CoC; video is WiFi only
+     * @note BLE carries VOICE on GATT Notify 0xFFA1 (event 0x40 VoiceChunk) and the bulk kinds
+     *       on L2CAP CoC; VIDEO needs a WiFi transport
      */
     esp_err_t (*send_stream)(void* impl, agent_stream_t type, const uint8_t* data, size_t len);
 
@@ -113,8 +104,8 @@ typedef struct agent_transport_s {
  * @brief Get the BLE transport instance
  * @return Pointer to the BLE transport operation table
  * @note Control plane is fully implemented.
- *       Data plane (send_stream) is ready for voice via GATT Notify,
- *       recording/file via L2CAP (pending)
+ *       Data plane: VOICE via GATT Notify, AUDIO and IMAGE via L2CAP CoC; FILE and VIDEO
+ *       are declared but not yet carried by this backend
  */
 agent_transport_t* agent_transport_ble(void);
 

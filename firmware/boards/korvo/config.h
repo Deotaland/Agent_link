@@ -5,7 +5,6 @@
 // read as 0 and put the touch controller and the codec on the wrong I2C port.
 #include "sdkconfig.h"
 
-// Board doc: https://github.com/Kevincoooool/esp-idf-docs/blob/master/docs/Korvo开发板介绍.md
 //
 // GC2145 camera + ST7789 touch LCD + ES8311/ES7210 audio + a TF card, driven from a home screen
 // you swipe between apps on.

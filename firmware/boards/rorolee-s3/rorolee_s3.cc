@@ -95,11 +95,11 @@ private:
             play_buf_ = xStreamBufferCreate(16 * 1024, /*trigger=*/1);
             if (!play_buf_) { ESP_LOGE(TAG, "play buffer alloc failed"); return; }
             ESP_LOGW(TAG, "no PSRAM — play buffer is 16KB (0.5s); long replies will stutter");
-            agent_link_audio_set_buffer_ms(16 * 1024 / 32);
+            agent_link_playback_set_buffer_ms(16 * 1024 / 32);
         } else {
             // Tell the SDK what we can hold so it throttles the App (event 0x20) before this
             // overflows. 32 bytes per ms at PCM16/16kHz/mono.
-            agent_link_audio_set_buffer_ms(kPlayBufBytes / 32);
+            agent_link_playback_set_buffer_ms(kPlayBufBytes / 32);
         }
         xTaskCreate(&RoRoLeeS3Board::PlayTaskEntry, "spk_play", 4096, this, 5, &play_task_);
     }
@@ -142,11 +142,12 @@ private:
 
     static void PttTaskEntry(void* arg) { static_cast<RoRoLeeS3Board*>(arg)->PttLoop(); }
 
-    // Hold to talk: press (GPIO0=0) starts capture, read 20ms frames in a loop and push_voice; release (=1) calls voice_end.
+    // Hold to talk: press (GPIO0=0) starts capture, read 20ms frames in a loop and write into an AGENT_STREAM_VOICE stream; release (=1) closes it.
     void PttLoop() {
         constexpr size_t kFrame = AUDIO_SAMPLE_RATE / 50;  // 20ms @ 16k = 320 samples
         int16_t buf[kFrame];
         bool talking = false;
+        agent_stream_handle_t voice_ = nullptr;
         while (true) {
             const int pressed = (gpio_get_level(BUTTON_BOOT_PIN) == 0);  // low = pressed
             if (!talking) {
@@ -159,23 +160,26 @@ private:
                     continue;                                      // wait for release to avoid log spam
                 }
                 if (codec_.StartMic() != ESP_OK) { ESP_LOGE(TAG, "mic start failed"); continue; }
+                if (agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &voice_) != ESP_OK) {
+                    ESP_LOGW(TAG, "voice stream would not open"); codec_.StopMic(); continue;
+                }
                 talking = true;
                 ESP_LOGI(TAG, "PTT pressed, starting voice uplink");
             } else {
                 // wrap up if the link dropped
                 if (agent_link_state() != AGENT_STATE_READY) {
-                    agent_link_voice_end(); codec_.StopMic(); talking = false;
+                    agent_link_stream_close(voice_, true); codec_.StopMic(); talking = false;
                     ESP_LOGW(TAG, "connection lost, ending voice");
                     continue;
                 }
                 size_t got = 0;
                 if (codec_.ReadPcm(buf, kFrame, &got) == ESP_OK && got > 0) {  // blocks ~20ms
-                    agent_link_push_voice(reinterpret_cast<const uint8_t*>(buf), got * sizeof(int16_t));
+                    agent_link_stream_write(voice_, buf, got * sizeof(int16_t));
                 }
                 if (gpio_get_level(BUTTON_BOOT_PIN) != 0) {        // released
                     vTaskDelay(pdMS_TO_TICKS(20));                 // debounce
                     if (gpio_get_level(BUTTON_BOOT_PIN) != 0) {
-                        agent_link_voice_end(); codec_.StopMic(); talking = false;
+                        agent_link_stream_close(voice_, true); codec_.StopMic(); talking = false;
                         ESP_LOGI(TAG, "PTT released, ending voice");
                     }
                 }

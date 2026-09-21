@@ -168,8 +168,11 @@ private:
             ESP_LOGE(TAG, "snapshot: frame2jpg failed");
             return;
         }
-        esp_err_t r = agent_link_send_image(jpg, jpg_len, AGENT_IMG_JPEG,
-                                            static_cast<uint16_t>(fb->width), static_cast<uint16_t>(fb->height));
+        agent_stream_opts_t o = {};
+        o.encoding = AGENT_ENC_JPEG;
+        o.width    = static_cast<uint16_t>(fb->width);
+        o.height   = static_cast<uint16_t>(fb->height);
+        esp_err_t r = agent_link_stream_send(AGENT_STREAM_IMAGE, &o, jpg, jpg_len);
         ESP_LOGI(TAG, "snapshot: %ux%u -> %uB jpeg, send=%s",
                  (unsigned)fb->width, (unsigned)fb->height, (unsigned)jpg_len, esp_err_to_name(r));
         free(jpg);

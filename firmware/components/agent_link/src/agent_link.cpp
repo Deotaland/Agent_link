@@ -7,7 +7,7 @@
 // Control plane (already wired):
 //   - start()   -> s_tx->start() (BLE: NimBLE advertising + GATT Service C 0xFFC0).
 //   - downlink commands -> transport receives write -> OnCtrlFrame decodes ->
-//     on_custom (device-specific commands) + automatic ACK.
+//     the SDK's built-ins, else the board's on_command, else a 1001 answer.
 //   - uplink events -> report_battery etc. -> protocol frames -> s_tx->send_ctrl
 //     (notify 0xFFC4 events / 0xFFC1 responses).
 //   - connection state -> OnConn -> on_state.
@@ -16,8 +16,7 @@
 //     BLE backend: GATT Notify 0xFFA1, event 0x40 VoiceChunk (see transport_ble.cpp voice uploader).
 //   - generic I/O (register_io/push_reading/actuate) — self-describing manifest (event 0x18),
 //     reading reports (event 0x19), actuator downlink (command 0x33), manifest fetch (command 0x34).
-//     See docs/device-io.md.
-// To be wired: recording_* / video push — needs L2CAP (BLE) / WebRTC (WiFi).
+// Not yet carried by any backend: AGENT_STREAM_FILE (BLE L2CAP) and AGENT_STREAM_VIDEO (WiFi).
 #include "agent_link.h"
 #include "agent_link_ota.h"
 #include "audio_downlink.h"
@@ -39,6 +38,13 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
+// Definition of the type agent_link_stream.h forward-declares. Global scope on purpose: an
+// anonymous-namespace copy would be a different type from the one in the public handle.
+struct agent_stream_session {
+    agent_stream_t kind;
+    bool           open;
+};
+
 namespace {
 constexpr const char* TAG = "agent_link";
 
@@ -47,8 +53,12 @@ agent_output_cb_t   s_out   = {};
 bool                s_have_out = false;
 agent_state_t       s_state = AGENT_STATE_DISCONNECTED;
 agent_transport_t*  s_tx    = nullptr;
-bool                s_voice_started = false;  // whether a voice session is currently open
-bool                s_asr_started   = false;  // whether an ASR / record-stream session is currently open
+// One slot per agent_stream_t. The handle a caller holds is the address of its slot, which is why
+// reopening a kind is harmless and why a disconnect can invalidate every stream at once.
+agent_stream_session s_streams[AGENT_STREAM_KIND_COUNT] = {
+    {AGENT_STREAM_VOICE, false}, {AGENT_STREAM_AUDIO, false}, {AGENT_STREAM_IMAGE, false},
+    {AGENT_STREAM_VIDEO, false}, {AGENT_STREAM_FILE,  false},
+};
 
 // The SDK only notifies when the battery level changes / charging state changes / a
 // low-battery edge occurs. The cache is updated only on a successful send; a failed
@@ -84,7 +94,7 @@ uint32_t s_manifest_rev = 1;      // manifest revision; bumped by agent_link_not
 // zero-initialized IoEntry keeps the pre-existing "forward every push_reading" behavior.
 enum { IO_POLICY_PASSTHROUGH = 0, IO_POLICY_OFF = 1, IO_POLICY_PERIODIC = 2, IO_POLICY_ONCHANGE = 3 };
 
-// Single exit point for data-plane calls that are not wired yet (push_voice / recording_*).
+// Single exit point for data-plane calls made before the link is usable.
 esp_err_t not_ready(const char* what) {
     if (s_tx && s_tx->is_ready && s_tx->is_ready(s_tx->impl)) {
         ESP_LOGD(TAG, "%s: transport ready but not wired yet (data plane TODO)", what);
@@ -213,7 +223,7 @@ void RegisterSyntheticEndpoints() {
         agent_link_register_io(&kSynthScreen, SynthScreenCb, nullptr);
 }
 
-// Serialize the manifest as an object envelope {proto, rev, caps, io:[...]} (see docs/agent_link_ble.md §6.2).
+// Serialize the manifest as an object envelope: {proto, rev, caps, io:[...]}.
 std::string BuildManifestJson() {
     std::string s = "{\"proto\":";
     s += std::to_string(AGENT_LINK_PROTO_VERSION);
@@ -454,13 +464,23 @@ void HandleStartOta(const std::vector<uint8_t>& pl, uint8_t* status, uint16_t* e
 }
 
 // Transport -> core: connection state change.
+// Everything that becomes meaningless the moment the peer is gone. Shared by the disconnect path
+// and by agent_link_stop(), which otherwise left stream slots marked open against sessions the
+// transport had already torn down — the next write would target a session nobody remembers.
+void ResetLinkState() {
+    s_manifest_sent = false;
+    for (auto& st : s_streams) st.open = false;
+}
+
 void OnConn(bool connected) {
     // The protocol is plaintext with no encryption gate, so the link is usable as soon as it connects -> go READY.
     s_state = connected ? AGENT_STATE_READY : AGENT_STATE_DISCONNECTED;
-    s_manifest_sent = false;      // reset on connect and disconnect: re-send after 0xFFC4 subscribe (BLE) / after connect (WiFi)
+    // Cleared on connect too, not just disconnect: the manifest is re-sent after the peer
+    // subscribes (BLE) or connects (WiFi), and any stream slot left over from a previous peer
+    // names a session this one has never heard of.
+    ResetLinkState();
     if (!connected) {
-        s_voice_started = false;  // on disconnect: the next push_voice reopens the session
-        s_asr_started   = false;  // and the next asr_start reopens the ASR stream
+        // nothing further: ResetLinkState already dropped the stale sessions
     } else {
         // Clear the battery cache on connect so the next report_battery force-resends the current value (initial sync for the App).
         s_bat_pct = -1; s_bat_chg = -1; s_bat_low_armed = true;
@@ -477,40 +497,6 @@ void OnConn(bool connected) {
     if (s_cfg.on_state) s_cfg.on_state(s_state, s_cfg.state_ctx);
 }
 
-// Commands the RoRoLee production firmware implements and this SDK does not. The App talks to
-// both device families over one protocol, so it will send these to us too (its very first
-// exchange after connecting includes 0x09 and 0x0B). Answering them with the empty success ACK
-// that the escape hatch produces is worse than useless - the App would believe the time was set,
-// the recordings were listed, or (0x60) that translation had started and then stream full-duplex
-// audio at a device doing nothing with it. Production answers 1001 for *our* commands it lacks
-// and its own docs tell the App to tolerate that and degrade; this is the same contract back.
-bool IsProductionOnlyCommand(uint8_t id) {
-    switch (id) {
-    case 0x02:  // FactoryReset
-    case 0x04:  // ListRecordings
-    case 0x06:  // StartRecordingDownload
-    case 0x07:  // DeleteRecording
-    case 0x08:  // StartWifiFileServer
-    case 0x09:  // StopWifiFileServer
-    case 0x0A:  // GetStorageInfo
-    case 0x0B:  // SetDeviceTime
-    case 0x20:  // SetAppCryptoKey
-    case 0x30:  // SetVolume
-    case 0x31:  // GetVolume
-    case 0x32:  // SetAgentList
-    case 0x39:  // SetUsbMscMode
-    case 0x3A:  // SetWakeWord
-    case 0x3B:  // GetWakeWord
-    case 0x43:  // StopRecording
-    case 0x55:  // AbortRecordingDownload
-    case 0x60:  // StartTranslation
-    case 0x61:  // StopTranslation
-        return true;
-    default:
-        return false;
-    }
-}
-
 // Transport -> core: a control frame arrived (peer wrote the command channel 0xFFC1).
 void OnCtrlFrame(const uint8_t* data, size_t len) {
     agentlink::Frame f;
@@ -524,7 +510,8 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
              f.command_id, f.sequence, static_cast<unsigned>(f.payload.size()));
 
     // ── Command dispatch + response (may carry data) ────────────────────────────
-    // Priority: SDK built-ins (standard commands with data) > device on_command (may return data) > on_custom (fire-and-forget).
+    // Priority: SDK built-ins > the board's on_command > 1001 UnknownCommand. Nothing fabricates
+    // a success for a command no layer implements.
     uint8_t  extra[128];
     size_t   extra_len = 0;
     uint8_t  status = 0;   // 0 = success
@@ -533,7 +520,7 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
     if (f.command_id == 0x01) {
         // 0x01 RequestDeviceInfo: identity + battery + firmware version + model. The App reads the
         // version and model from here to decide whether it has an OTA to offer this unit, so it is
-        // answered in the mass-production wire layout (payload is ignored, as there).
+        // Payload is ignored.
         extra_len = BuildDeviceInfo(extra, sizeof(extra));
         if (extra_len == 0) { status = 1; error = 1005; }   // response buffer too small
     } else if (f.command_id == 0x37) {
@@ -549,8 +536,7 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
         //   status=2 -> an audio reply follows on the data channel; arm the downlink stage.
         //   status=3 -> the App finished pushing; tell the board, release the App from flow control.
         // The optional 6th byte picks the wire format of that audio (0 = raw PCM16, 1 = IMA-ADPCM)
-        // and is sticky for the connection - the same contract the production firmware implements,
-        // and the reason we can decode what the App actually sends. See docs/agent_link_ble.md 5.7.
+        // and is sticky for the connection, which is what lets us decode whatever the App sends.
         if (f.payload.size() != 5 && f.payload.size() != 6) {
             status = 1; error = 1004;
         } else if (f.payload.size() == 6 && !agentlink::audio::SetCodec(f.payload[5])) {
@@ -670,14 +656,16 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
                s_out.on_command(f.command_id, f.payload.data(), f.payload.size(),
                                 extra, sizeof(extra), &extra_len, s_out.ctx)) {
         // handled by the device (extra may carry response data); status stays 0.
-    } else if (IsProductionOnlyCommand(f.command_id)) {
-        // A production-firmware command we do not implement, and the board did not claim it
-        // either. Say so instead of faking success - see IsProductionOnlyCommand.
+    } else {
+        // Nobody implements this command: not the SDK, and not the board. Say so.
+        //
+        // The alternative — an empty success ACK for anything unrecognised — is strictly worse for
+        // the App. Told "done", it proceeds as though the thing happened: it believes the setting
+        // took, or starts streaming at a device that will do nothing with the data. Told 1001, it
+        // knows the feature is absent and can degrade around it. A board that wants a command
+        // implements it through on_command, which is consulted above and wins.
         status = 1; error = 1001;   // UnknownCommand
-        ESP_LOGD(TAG, "cmd 0x%02X is production-only and unimplemented here -> 1001", f.command_id);
-    } else if (s_have_out && s_out.on_custom) {
-        // escape hatch: fire-and-forget, reply with an empty ACK.
-        s_out.on_custom(f.command_id, f.payload.data(), f.payload.size(), s_out.ctx);
+        ESP_LOGD(TAG, "cmd 0x%02X unimplemented -> 1001", f.command_id);
     }
 
     // Reply (request-response pairing); a query command carrying extra_data returns its data to the App here.
@@ -714,12 +702,45 @@ void AudioEventSink(uint8_t event_id, const uint8_t* payload, size_t len) {
 }  // namespace
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────────
+// A capability bit is a promise to the App: advertise AGENT_CAP_SPEAKER and it will send audio.
+// The promise is only kept if the matching callback is actually wired, and nothing else in the
+// system notices when it is not — the App just sends into silence and the symptom shows up as
+// "the hardware does not work". Say it once, loudly, at init.
+//
+// Only the bits that map to a single callback can be checked here. Ones the board drives itself
+// (CAMERA, RECORDING, BATTERY, SENSOR) have nothing to point at, so they are left alone rather
+// than half-checked.
+void CheckCapabilityWiring() {
+    struct Wiring { uint32_t cap; const void* cb; const char* cap_name; const char* cb_name; };
+    const Wiring kWiring[] = {
+        {AGENT_CAP_SPEAKER,  reinterpret_cast<const void*>(s_out.on_audio_out), "SPEAKER",  "on_audio_out"},
+        {AGENT_CAP_SCREEN,   reinterpret_cast<const void*>(s_out.on_show_text), "SCREEN",   "on_show_text"},
+        {AGENT_CAP_HAPTIC,   reinterpret_cast<const void*>(s_out.on_haptic),    "HAPTIC",   "on_haptic"},
+        {AGENT_CAP_LED,      reinterpret_cast<const void*>(s_out.on_led),       "LED",      "on_led"},
+        {AGENT_CAP_ACTUATOR, reinterpret_cast<const void*>(s_out.on_actuate),   "ACTUATOR", "on_actuate"},
+        {AGENT_CAP_MIC,      reinterpret_cast<const void*>(s_out.on_listen),    "MIC",      "on_listen"},
+    };
+    for (const auto& w : kWiring) {
+        const bool declared = (s_cfg.caps & w.cap) != 0;
+        const bool wired    = s_have_out && w.cb != nullptr;
+        if (declared && !wired) {
+            ESP_LOGE(TAG, "caps declares %s but %s is NULL — the App will use this and nothing "
+                          "will happen", w.cap_name, w.cb_name);
+        } else if (!declared && wired) {
+            ESP_LOGW(TAG, "%s is wired but caps does not declare %s — the App will never call it",
+                     w.cb_name, w.cap_name);
+        }
+    }
+}
+
 esp_err_t agent_link_init(const agent_link_config_t* cfg) {
     if (!cfg || !cfg->device_name) {
         return ESP_ERR_INVALID_ARG;
     }
     s_cfg = *cfg;
     if (cfg->output) { s_out = *cfg->output; s_have_out = true; }
+
+    CheckCapabilityWiring();
 
     // Transport backend selection ("two transports"). Both wire their uplink callbacks to the
     // same core (OnCtrlFrame/OnConn), so the upper-layer push_*/on_* stay transport-independent.
@@ -732,7 +753,11 @@ esp_err_t agent_link_init(const agent_link_config_t* cfg) {
         agent_transport_wifi_set_conn(&OnConn);
         agent_transport_wifi_set_stream_recv(&OnStreamData);
         break;
-    case AGENT_TRANSPORT_BOTH:  // TODO(P5): BLE control + WiFi media together; start with BLE for now.
+    case AGENT_TRANSPORT_BOTH:
+        // Not implemented: falls back to BLE alone. Say so rather than let a caller believe it
+        // asked for a hybrid link and got one.
+        ESP_LOGW(TAG, "transport BOTH is not implemented — using BLE only");
+        [[fallthrough]];
     case AGENT_TRANSPORT_BLE:
     default:
         s_tx = agent_transport_ble();
@@ -768,7 +793,7 @@ esp_err_t agent_link_init(const agent_link_config_t* cfg) {
 
 esp_err_t agent_link_start(void) {
     ESP_LOGI(TAG,
-             "start: caps=0x%04x out{audio=%d text=%d image=%d video=%d haptic=%d led=%d actuate=%d agentlist=%d command=%d custom=%d} io=%d",
+             "start: caps=0x%04x out{audio=%d text=%d image=%d video=%d haptic=%d led=%d actuate=%d agentlist=%d command=%d} io=%d",
              static_cast<unsigned>(s_cfg.caps),
              s_have_out && s_out.on_audio_out  ? 1 : 0,
              s_have_out && s_out.on_show_text  ? 1 : 0,
@@ -779,10 +804,9 @@ esp_err_t agent_link_start(void) {
              s_have_out && s_out.on_actuate    ? 1 : 0,
              s_have_out && s_out.on_agent_list ? 1 : 0,
              s_have_out && s_out.on_command    ? 1 : 0,
-             s_have_out && s_out.on_custom     ? 1 : 0,
              s_io_count);
     // Start the transport backend (BLE: NimBLE advertising + GATT Service C). Control plane
-    // (commands/events) is wired; the data plane (voice/recording) still needs L2CAP.
+    // (commands/events) is wired; the data plane rides whatever channels the backend provides.
     if (!s_tx || !s_tx->start) return ESP_ERR_INVALID_STATE;
     return s_tx->start(s_tx->impl);
 }
@@ -790,6 +814,9 @@ esp_err_t agent_link_start(void) {
 void agent_link_stop(void) {
     if (s_tx && s_tx->stop) s_tx->stop(s_tx->impl);
     s_state = AGENT_STATE_DISCONNECTED;
+    // stop() does not go through the transport's disconnect callback, so it has to do this itself
+    // or a later start() comes up believing streams from the previous session are still open.
+    ResetLinkState();
 }
 
 agent_state_t agent_link_state(void) { return s_state; }
@@ -824,12 +851,35 @@ esp_err_t agent_link_report_selected_agent(const char* agent_id) {
     (void)agent_id;
     return not_ready("report_selected_agent");  // TODO: 0x16 event (needs index + name_len + name format)
 }
+// Largest control-plane payload that fits one frame on the active transport.
+//
+// Every control-plane send is a single frame: there is no fragmentation on this path, so a payload
+// that does not fit is not "slow", it is lost or silently cut. BLE gives us ATT_MTU - 3 for the
+// notification minus the 6-byte frame header; the 480 ceiling keeps one frame inside a single mbuf
+// even when a peer negotiates a large MTU.
+static size_t SingleFramePayloadBudget() {
+    if (s_cfg.transport == AGENT_TRANSPORT_WIFI) return 1024;
+    const uint16_t mtu = agent_transport_ble_att_mtu();
+    // 14 = the unnegotiated default MTU (23) - 3 - 6, i.e. what is safe before the peer exchanges.
+    size_t budget = (mtu > 3 + 6) ? static_cast<size_t>(mtu - 3 - 6) : 14;
+    return budget > 480 ? 480 : budget;
+}
+
 esp_err_t agent_link_push_event(agent_event_t type, const uint8_t* data, size_t len) {
     if (!s_tx || !s_tx->send_ctrl) return ESP_ERR_INVALID_STATE;
     if (!(s_tx->is_ready && s_tx->is_ready(s_tx->impl))) return not_ready("push_event");
     // The event_id on the wire is the agent_event_t value: AGENT_EVT_BUTTON/SENSOR/WAKEWORD, or
     // AGENT_EVT_CUSTOM (0x64) for device-private packets — the board owns the payload and the App
     // matches on event_id 0x64 (best-effort, like other events; a dropped frame is not resent).
+    // Refuse rather than hand the transport a frame it cannot send in one piece. Without this the
+    // caller gets either an opaque failure or, worse, a frame the ATT layer quietly truncates and
+    // a success return.
+    const size_t budget = SingleFramePayloadBudget();
+    if (len > budget) {
+        ESP_LOGW(TAG, "push_event 0x%02X: %uB payload exceeds the single-frame budget (%uB) — not sent",
+                 static_cast<unsigned>(type), static_cast<unsigned>(len), static_cast<unsigned>(budget));
+        return ESP_ERR_INVALID_SIZE;
+    }
     auto ev = agentlink::BuildEvent(static_cast<uint8_t>(type), data, len);
     return s_tx->send_ctrl(s_tx->impl, ev.data(), ev.size());
 }
@@ -842,17 +892,7 @@ esp_err_t agent_link_push_prompt(const char* utf8) {
 
     const size_t len = strlen(utf8);
 
-    // Single-frame budget: BLE notify <= ATT_MTU-3, minus the 6-byte frame header.
-    // Same WiFi/BLE split as SendManifest,the same 480B safety ceiling as its chunk budget.
-    size_t budget;
-    if (s_cfg.transport == AGENT_TRANSPORT_WIFI) {
-        budget = 1024;
-    } else {
-        const uint16_t mtu = agent_transport_ble_att_mtu();
-        budget = (mtu > 3 + 6) ? static_cast<size_t>(mtu - 3 - 6) : 14;  // 14 = default unnegotiated MTU(23)-3-6
-    }
-    if (budget > 480) budget = 480;
-
+    const size_t budget = SingleFramePayloadBudget();
     if (len > budget) {
         ESP_LOGW(TAG, "push_prompt: %uB text exceeds single-frame budget (%uB) — not sent, call again per chunk",
                  static_cast<unsigned>(len), static_cast<unsigned>(budget));
@@ -862,7 +902,7 @@ esp_err_t agent_link_push_prompt(const char* utf8) {
     return agent_link_push_event(AGENT_EVT_PROMPT, reinterpret_cast<const uint8_t*>(utf8), len);
 }
 
-// ── Generic I/O: sensors / actuators (see docs/device-io.md; generic channel that does not grow per sensor kind) ──
+// ── Generic I/O: sensors / actuators — one channel that does not grow a new API per sensor kind ──
 esp_err_t agent_link_register_io(const agent_link_io_desc_t* desc,
                                  agent_io_actuate_cb_t cb, void* ctx) {
     if (!desc || !desc->id || !desc->kind) return ESP_ERR_INVALID_ARG;
@@ -930,8 +970,18 @@ esp_err_t agent_link_push_reading(const char* id, const void* value, size_t len)
         break;                                                 // passthrough
     }
 
+    // [id_len][id][val_type][value] must also fit one frame — a long BLOB or STR reading is the
+    // realistic way to exceed it.
+    const size_t payload_len = 1 + id_len + 1 + len;
+    const size_t budget      = SingleFramePayloadBudget();
+    if (payload_len > budget) {
+        ESP_LOGW(TAG, "push_reading '%s': %uB payload exceeds the single-frame budget (%uB) — not sent",
+                 id, static_cast<unsigned>(payload_len), static_cast<unsigned>(budget));
+        return ESP_ERR_INVALID_SIZE;
+    }
+
     std::vector<uint8_t> p;
-    p.reserve(1 + id_len + 1 + len);
+    p.reserve(payload_len);
     p.push_back(static_cast<uint8_t>(id_len));
     const uint8_t* idb = reinterpret_cast<const uint8_t*>(id);
     p.insert(p.end(), idb, idb + id_len);
@@ -961,87 +1011,122 @@ esp_err_t agent_link_notify_manifest_changed(void) {
     return ESP_OK;
 }
 
-// ── Data plane: voice uplink (BLE: GATT Notify 0xFFA1, event 0x40 VoiceChunk) ─────
-// Feed clean PCM continuously (16kHz/16bit/mono); the first frame lazily opens the session,
-// and voice_end is called at the end of an utterance. Slicing/framing/session-number/congestion
-// retry all live in the transport backend (transport_ble's voice uploader); the core only
-// lazily opens the session and forwards.
-esp_err_t agent_link_push_voice(const uint8_t* pcm16, size_t bytes) {
-    if (!pcm16 || bytes == 0) return ESP_ERR_INVALID_ARG;
-    if (!s_tx || !s_tx->send_stream) return ESP_ERR_INVALID_STATE;
-    if (!(s_tx->is_ready && s_tx->is_ready(s_tx->impl))) return not_ready("push_voice");
-    if (!s_voice_started) {                       // first frame: open the voice session (allocate session_id + start worker)
-        if (s_tx->stream_start) {
-            esp_err_t r = s_tx->stream_start(s_tx->impl, AGENT_STREAM_VOICE, nullptr, 0);
-            if (r != ESP_OK) return r;
-        }
-        s_voice_started = true;
+// ── Data plane: one open/write/close for every stream kind (agent_link_stream.h) ──────────────
+//
+// This layer owns only session bookkeeping and the per-kind metadata blob. Everything that makes a
+// kind different on the wire — which channel it rides, session ids, slicing, framing, backpressure
+// — belongs to the transport backend, which is what lets the same three calls serve speech, audio,
+// images, video and files.
+
+namespace {
+
+// Pack the open-time metadata a kind's protocol expects. Kinds not listed carry none.
+size_t BuildStreamMeta(agent_stream_t kind, const agent_stream_opts_t* o,
+                       uint8_t* buf, size_t cap) {
+    if (!o) return 0;
+    switch (kind) {
+    case AGENT_STREAM_AUDIO:
+    case AGENT_STREAM_FILE: {
+        // A label the App shows or files the payload under.
+        if (!o->name) return 0;
+        const size_t n = strlen(o->name);
+        if (n == 0 || n > cap) return 0;
+        memcpy(buf, o->name, n);
+        return n;
     }
-    return s_tx->send_stream(s_tx->impl, AGENT_STREAM_VOICE, pcm16, bytes);
+    case AGENT_STREAM_IMAGE: {
+        // [encoding(1)][width(2 LE)][height(2 LE)][total_bytes(4 LE)] — sent before any pixel so
+        // the App knows how to decode it and how much to expect.
+        if (cap < 9) return 0;
+        buf[0] = static_cast<uint8_t>(o->encoding);
+        buf[1] = static_cast<uint8_t>(o->width  & 0xFF);
+        buf[2] = static_cast<uint8_t>((o->width  >> 8) & 0xFF);
+        buf[3] = static_cast<uint8_t>(o->height & 0xFF);
+        buf[4] = static_cast<uint8_t>((o->height >> 8) & 0xFF);
+        buf[5] = static_cast<uint8_t>(o->total_bytes & 0xFF);
+        buf[6] = static_cast<uint8_t>((o->total_bytes >>  8) & 0xFF);
+        buf[7] = static_cast<uint8_t>((o->total_bytes >> 16) & 0xFF);
+        buf[8] = static_cast<uint8_t>((o->total_bytes >> 24) & 0xFF);
+        return 9;
+    }
+    default:
+        return 0;
+    }
 }
-esp_err_t agent_link_voice_end(void) {
-    if (!s_voice_started) return ESP_OK;
-    s_voice_started = false;
-    if (s_tx && s_tx->stream_end) return s_tx->stream_end(s_tx->impl, AGENT_STREAM_VOICE, /*complete=*/true, nullptr, 0);
+
+const char* StreamName(agent_stream_t k) {
+    switch (k) {
+    case AGENT_STREAM_VOICE: return "voice";
+    case AGENT_STREAM_AUDIO: return "audio";
+    case AGENT_STREAM_IMAGE: return "image";
+    case AGENT_STREAM_VIDEO: return "video";
+    case AGENT_STREAM_FILE:  return "file";
+    default:                 return "?";
+    }
+}
+
+}  // namespace
+
+esp_err_t agent_link_stream_open(agent_stream_t kind, const agent_stream_opts_t* opts,
+                                 agent_stream_handle_t* out) {
+    if (!out || kind < 0 || kind >= AGENT_STREAM_KIND_COUNT) return ESP_ERR_INVALID_ARG;
+    *out = nullptr;
+    if (!s_tx || !s_tx->stream_start || !s_tx->send_stream || !s_tx->stream_end)
+        return ESP_ERR_INVALID_STATE;
+    if (!(s_tx->is_ready && s_tx->is_ready(s_tx->impl))) return not_ready(StreamName(kind));
+
+    agent_stream_session* st = &s_streams[kind];
+    if (st->open) { *out = st; return ESP_OK; }   // idempotent, see the header
+
+    uint8_t meta[32];
+    const size_t meta_len = BuildStreamMeta(kind, opts, meta, sizeof(meta));
+
+    const esp_err_t r = s_tx->stream_start(s_tx->impl, kind, meta_len ? meta : nullptr, meta_len);
+    if (r != ESP_OK) {
+        ESP_LOGW(TAG, "stream open(%s) rejected by transport: %s", StreamName(kind), esp_err_to_name(r));
+        return r;
+    }
+    st->open = true;
+    *out = st;
     return ESP_OK;
 }
 
-// Data plane: real-time ASR audio uplink
-// A device to App stream the App transcribes live. agent_link only transports the caller's bytes over the
-// record-stream channel: transfer_id + 0x52/0x53 framing + L2CAP chunking/backpressure.
-// Requires the App to have opened the L2CAP CoC (PSM 0x0081). One stream at a time; close with asr_end.
-esp_err_t agent_link_asr_start(const char* name) {
-    if (!s_tx || !s_tx->stream_start) return ESP_ERR_INVALID_STATE;
-    if (!(s_tx->is_ready && s_tx->is_ready(s_tx->impl))) return not_ready("asr_start");
-    if (s_asr_started) return ESP_OK;  // idempotent: already streaming
-    esp_err_t r = s_tx->stream_start(s_tx->impl, AGENT_STREAM_RECORDING,
-                                     reinterpret_cast<const uint8_t*>(name), name ? strlen(name) : 0);
-    if (r != ESP_OK) return r;
-    s_asr_started = true;
-    return ESP_OK;
-}
-esp_err_t agent_link_asr_push(const uint8_t* audio, size_t bytes) {
-    if (!audio || bytes == 0) return ESP_ERR_INVALID_ARG;
-    if (!s_asr_started) return ESP_ERR_INVALID_STATE;  // call agent_link_asr_start() first
+esp_err_t agent_link_stream_write(agent_stream_handle_t h, const void* data, size_t bytes) {
+    if (!h || !data || bytes == 0) return ESP_ERR_INVALID_ARG;
+    if (!h->open) return ESP_ERR_INVALID_STATE;
     if (!s_tx || !s_tx->send_stream) return ESP_ERR_INVALID_STATE;
-    return s_tx->send_stream(s_tx->impl, AGENT_STREAM_RECORDING, audio, bytes);
-}
-esp_err_t agent_link_asr_end(bool complete) {
-    if (!s_asr_started) return ESP_OK;
-    s_asr_started = false;
-    if (s_tx && s_tx->stream_end) return s_tx->stream_end(s_tx->impl, AGENT_STREAM_RECORDING, complete, nullptr, 0);
-    return ESP_OK;
+    return s_tx->send_stream(s_tx->impl, h->kind, static_cast<const uint8_t*>(data), bytes);
 }
 
-// Data plane: still-image snapshot uplink
-// One-shot transparent pipe: pack the 0x54 metadata, open the image stream, queue the bytes, close it.
-// The transport owns transfer_id + 0x54/0x55 framing + L2CAP chunking/backpressure and streams async.
-esp_err_t agent_link_send_image(const uint8_t* data, size_t bytes,
-                                agent_image_format_t fmt, uint16_t w, uint16_t h) {
+esp_err_t agent_link_stream_close(agent_stream_handle_t h, bool complete) {
+    if (!h) return ESP_ERR_INVALID_ARG;
+    if (!h->open) return ESP_OK;
+    h->open = false;
+    if (!s_tx || !s_tx->stream_end) return ESP_ERR_INVALID_STATE;
+    return s_tx->stream_end(s_tx->impl, h->kind, complete, nullptr, 0);
+}
+
+esp_err_t agent_link_stream_send(agent_stream_t kind, const agent_stream_opts_t* opts,
+                                 const void* data, size_t bytes) {
     if (!data || bytes == 0) return ESP_ERR_INVALID_ARG;
-    if (!s_tx || !s_tx->stream_start || !s_tx->send_stream || !s_tx->stream_end) return ESP_ERR_INVALID_STATE;
-    if (!(s_tx->is_ready && s_tx->is_ready(s_tx->impl))) return not_ready("send_image");
 
-    // 0x54 metadata: [format(1)][width(2,LE)][height(2,LE)][total_len(4,LE)].
-    // Sent before any image byte so the App learns the format/size and how many bytes to expect on the L2CAP channel.
-    const uint32_t total = static_cast<uint32_t>(bytes);
-    const uint8_t meta[9] = {
-        static_cast<uint8_t>(fmt),
-        static_cast<uint8_t>(w & 0xFF), static_cast<uint8_t>((w >> 8) & 0xFF),
-        static_cast<uint8_t>(h & 0xFF), static_cast<uint8_t>((h >> 8) & 0xFF),
-        static_cast<uint8_t>(total & 0xFF), static_cast<uint8_t>((total >> 8) & 0xFF),
-        static_cast<uint8_t>((total >> 16) & 0xFF), static_cast<uint8_t>((total >> 24) & 0xFF),
-    };
-    esp_err_t r = s_tx->stream_start(s_tx->impl, AGENT_STREAM_IMAGE, meta, sizeof(meta));
+    // total_bytes is knowable here even when the caller did not fill it in, and the App needs it
+    // to show progress, so supply it rather than make every caller remember.
+    agent_stream_opts_t o = opts ? *opts : agent_stream_opts_t{};
+    if (o.total_bytes == 0) o.total_bytes = static_cast<uint32_t>(bytes);
+
+    agent_stream_handle_t h = nullptr;
+    esp_err_t r = agent_link_stream_open(kind, &o, &h);
     if (r != ESP_OK) return r;
-    r = s_tx->send_stream(s_tx->impl, AGENT_STREAM_IMAGE, data, bytes);
-    // Always close so the worker emits 0x55; `complete` reflects whether all bytes were queued.
-    esp_err_t e = s_tx->stream_end(s_tx->impl, AGENT_STREAM_IMAGE, r == ESP_OK, nullptr, 0);
+
+    r = agent_link_stream_write(h, data, bytes);
+    // Close either way: the App is waiting for an end marker, and `complete` is what tells it
+    // whether the payload it got is the whole thing.
+    const esp_err_t e = agent_link_stream_close(h, r == ESP_OK);
     return (r != ESP_OK) ? r : e;
 }
 
-// ── Data plane: video (WiFi only; see transport_wifi.cpp)
-esp_err_t agent_link_push_video(const uint8_t* frame, size_t bytes, uint32_t pts_ms, bool keyframe) {
-    (void)frame; (void)bytes; (void)pts_ms; (void)keyframe; return not_ready("push_video");
+bool agent_link_stream_is_open(agent_stream_t kind) {
+    if (kind < 0 || kind >= AGENT_STREAM_KIND_COUNT) return false;
+    return s_streams[kind].open;
 }
-esp_err_t agent_link_video_end(void) { return not_ready("video_end"); }

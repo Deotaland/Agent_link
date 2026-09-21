@@ -103,6 +103,7 @@ public:
     bool OnCommand(uint16_t cmd, const uint8_t* payload, size_t len,
                    uint8_t* resp, size_t resp_cap, size_t* resp_len) override {
         if (cmd != 0x04) return false;
+        ESP_LOGI(TAG, "cmd 0x%02X ListRecordings (%uB payload)", cmd, static_cast<unsigned>(len));
         uint16_t error = 0;
         if (recordings_.HandleList(payload, len, resp, resp_cap, resp_len, &error)) return true;
         // HandleList failed. Returning false would make the SDK answer 1001 UnknownCommand, which
@@ -255,9 +256,11 @@ private:
             ESP_LOGE(TAG, "snapshot: frame2jpg failed");
             return;
         }
-        const esp_err_t r = agent_link_send_image(jpg, jpg_len, AGENT_IMG_JPEG,
-                                                  static_cast<uint16_t>(fb->width),
-                                                  static_cast<uint16_t>(fb->height));
+        agent_stream_opts_t o = {};
+        o.encoding = AGENT_ENC_JPEG;
+        o.width    = static_cast<uint16_t>(fb->width);
+        o.height   = static_cast<uint16_t>(fb->height);
+        const esp_err_t r = agent_link_stream_send(AGENT_STREAM_IMAGE, &o, jpg, jpg_len);
         ESP_LOGI(TAG, "snapshot: %ux%u -> %uB jpeg, send=%s",
                  (unsigned)fb->width, (unsigned)fb->height, (unsigned)jpg_len, esp_err_to_name(r));
         free(jpg);

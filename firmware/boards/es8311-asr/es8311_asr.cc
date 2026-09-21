@@ -1,7 +1,7 @@
 // ES8311 ASR (ESP32-S3) — minimal real-time ASR example board
 //
 // One button, two gestures:
-//   Long-press >=1s : toggle mic upload (agent_link_asr_*). While on, 20ms PCM16 frames stream to the
+//   Long-press >=1s : toggle mic upload (AGENT_STREAM_AUDIO). While on, 20ms PCM16 frames stream to the
 //                       App over L2CAP and the App transcribes them live (ASR). Long-press again to stop.
 //   Short-press     : while streaming, toggle "forward to agent" and tell the App via a board-private
 //                       event (0x64, payload [subtype=0x01][state][seq LE]). state=1 -> App forwards the
@@ -80,16 +80,18 @@ private:
             if (agent_link_state() != AGENT_STATE_READY) {
                 ESP_LOGW(TAG, "long-press but not connected, ignoring"); return;
             }
-            if (agent_link_asr_start("asr") != ESP_OK) {   // needs the App's L2CAP CoC (PSM 0x0081) open
-                ESP_LOGW(TAG, "asr_start failed — App must open the L2CAP channel (PSM 0x0081) first"); return;
+            agent_stream_opts_t o = {};
+            o.name = "mic";
+            if (agent_link_stream_open(AGENT_STREAM_AUDIO, &o, &audio_) != ESP_OK) {   // needs the App's L2CAP CoC open
+                ESP_LOGW(TAG, "audio stream failed to open — App must open the L2CAP channel (PSM 0x0081) first"); return;
             }
             if (codec_.StartMic() != ESP_OK) {
-                ESP_LOGE(TAG, "mic start failed"); agent_link_asr_end(false); return;
+                ESP_LOGE(TAG, "mic start failed"); agent_link_stream_close(audio_, false); return;
             }
             streaming = true; forward = false;
             ESP_LOGI(TAG, "ASR streaming started (long-press); forward-to-agent OFF");
         } else {
-            agent_link_asr_end(true); codec_.StopMic();
+            agent_link_stream_close(audio_, true); codec_.StopMic();
             streaming = false; forward = false;
             ESP_LOGI(TAG, "ASR streaming stopped (long-press)");
         }
@@ -148,17 +150,17 @@ private:
             // ── 2) While streaming: pump one 20ms mic frame up the ASR channel ──
             if (streaming) {
                 if (agent_link_state() != AGENT_STATE_READY) {      // link dropped mid-stream
-                    agent_link_asr_end(false); codec_.StopMic();
+                    agent_link_stream_close(audio_, false); codec_.StopMic();
                     streaming = false; forward = false;
                     ESP_LOGW(TAG, "connection lost, ending ASR");
                     continue;
                 }
                 size_t got = 0;
                 if (codec_.ReadPcm(buf, kFrame, &got) == ESP_OK && got > 0) {  // blocks ~20ms -> also the poll tick
-                    const esp_err_t r = agent_link_asr_push(reinterpret_cast<const uint8_t*>(buf), got * sizeof(int16_t));
+                    const esp_err_t r = agent_link_stream_write(audio_, buf, got * sizeof(int16_t));
                     if (r == ESP_ERR_NO_MEM) {                      // truncated by backpressure -> stop this segment
                         ESP_LOGW(TAG, "ASR truncated (link can't keep up), stopping");
-                        agent_link_asr_end(false); codec_.StopMic();
+                        agent_link_stream_close(audio_, false); codec_.StopMic();
                         streaming = false; forward = false;
                     }
                 } else {
@@ -170,6 +172,7 @@ private:
         }
     }
 
+    agent_stream_handle_t audio_ = nullptr;   // open while the mic is streaming to the App
     Es8311Codec  codec_;
     bool         codec_ok_ = false;
     TaskHandle_t asr_task_ = nullptr;

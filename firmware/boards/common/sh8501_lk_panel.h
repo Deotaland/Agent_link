@@ -8,7 +8,6 @@
 //   - the init sequence is the short code: standard user commands only, with power and
 //     gamma coming from the panel's OTP. A panel whose OTP was never burned stays black on this
 //     path and needs Sh8501Panel (full vendor sequence) instead.
-// See components/esp_lcd_sh8501_lk/README.md for the full comparison.
 //
 // Same interface as Sh8501Panel, so a board swaps one type name and nothing else. Draws are
 // synchronous: DrawBitmap returns once the pixels are on the wire, and the source may live in

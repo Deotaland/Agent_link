@@ -22,6 +22,7 @@
 #include <cstdint>
 
 #include "driver/gpio.h"
+#include "agent_link_stream.h"
 #include "driver/i2c_types.h"
 #include "es_codec.h"
 #include "esp_err.h"
@@ -69,10 +70,9 @@ public:
     void StopAsr();
     bool AsrActive() const { return asr_on_.load(std::memory_order_acquire); }
 
-    // Uplink over the GATT voice channel instead: agent_link_push_voice() slices PCM into 0x40
-    // VoiceChunk notifications (session + sequence + <=205B of PCM each), the first frame opening
-    // the session lazily and StopCommand() closing it with agent_link_voice_end(). No L2CAP needed,
-    // so this works as soon as the link is READY.
+    // Uplink over AGENT_STREAM_VOICE instead: the SDK slices PCM into 0x40 VoiceChunk
+    // notifications (session + sequence + <=205B of PCM each) and the App relays the speech on to
+    // the Agent. No L2CAP channel involved, so this works as soon as the link is READY.
     void StartCommand();
     void StopCommand();
     bool CommandActive() const { return cmd_on_.load(std::memory_order_acquire); }
@@ -86,6 +86,7 @@ public:
     const char* LastFile() const { return last_file_; }
 
 private:
+    esp_err_t OpenAudioStream();
     static void PlayTaskEntry(void* arg);
     static void MicTaskEntry(void* arg);
     void PlayLoop();
@@ -99,6 +100,10 @@ private:
     bool         codec_ok_ = false;
 
     StreamBufferHandle_t play_buf_ = nullptr;
+
+    // Open while the corresponding uplink is running; both may be open at once.
+    agent_stream_handle_t audio_stream_ = nullptr;   // bulk mic audio for the App
+    agent_stream_handle_t voice_stream_ = nullptr;   // speech relayed on to the Agent
 
     // Desired state, set by any task; reconciled by the mic task.
     std::atomic<bool> want_asr_{false};

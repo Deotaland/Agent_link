@@ -15,3 +15,8 @@ idf_component_register(
                   app_update esp_partition esp_app_format mbedtls
     EMBED_TXTFILES "portal/portal.html" "portal/connecting.html"
 )
+
+# Designated-initializer structs here deliberately set only the fields they care about and leave the
+# rest zero-initialised. Without this the build prints a screenful of -Wmissing-field-initializers
+# for every one of them, which drowns out warnings that matter. main/CMakeLists.txt does the same.
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)

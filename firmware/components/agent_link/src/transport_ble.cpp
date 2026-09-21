@@ -13,7 +13,7 @@
 // Data plane:
 //    Voice uplink (device -> App): Service A 0xFFA0, GATT Notify 0xFFA1 (event 0x40 VoiceChunk).
 //    TTS downlink (App -> device): L2CAP CoC (PSM 0x0081) receive, forwarded to the core.
-//    ASR/recording uplink (device -> App): L2CAP CoC (PSM 0x0081) send + control events 0x52/0x53.
+//    bulk audio uplink (device -> App): L2CAP CoC (PSM 0x0081) send + control events 0x52/0x53.
 //    Image snapshot uplink (device -> App): L2CAP CoC (PSM 0x0082) send + control events 0x54/0x55.
 //    OTA firmware downlink (App -> device): the same L2CAP CoC (PSM 0x0081); while an upgrade is
 //     receiving, incoming bytes go to the OTA engine instead of the TTS path, and peer credit is
@@ -126,7 +126,7 @@ bool s_l2cap_connected = false;
 std::atomic<bool> s_l2cap_stalled{false};  // ble_l2cap_send returned ESTALLED; wait for COC_TX_UNSTALLED before the next send
 
 // L2CAP CoC ( image snapshot uplink, PSM 0x0082)
-// A separate PSM from audio so image snapshots and ASR audio can stream concurrently without interleaving on a single byte channel.
+// A separate PSM from audio so image snapshots and audio can stream concurrently without interleaving on a single byte channel.
 constexpr uint16_t kImgPsm = 0x0082;
 struct ble_l2cap_chan* s_img_chan = nullptr;
 bool s_img_connected = false;
@@ -254,7 +254,7 @@ struct VoiceState {
 VoiceState s_voice;
 uint32_t   s_voice_counter = 0;
 
-// ── ASR / recording uplink (L2CAP CoC data plane + control events 0x52/0x53) ──
+// ── bulk audio uplink (L2CAP CoC data plane + control events 0x52/0x53) ──
 // device -> App real-time audio: 0x52 StreamStart opens, raw bytes flow over L2CAP CoC, 0x53 StreamEnd closes.
 // Transparent pipe: the caller supplies the audio bytes (+ optional 60-byte final_header for 0x53); this
 // layer owns transfer_id, framing, MPS-sized chunking with credit backpressure, and honest valid_bytes/status.
@@ -262,7 +262,7 @@ constexpr size_t   kRecMaxSdu       = kL2capMps;      // one MPS-sized SDU per s
 constexpr size_t   kRecQueueHardCap = 128 * 1024;    // backstop: on overflow, truncate the stream (0x53 status=1)
 constexpr uint32_t kRecStallWaitMs  = 3000;          // give up (truncate) if the L2CAP tx stays stalled this long
 constexpr uint32_t kRecStartDelayMs = 120;           // hold the first L2CAP send so 0x52 StreamStart lands first (App registers the session before audio)
-struct RecordingState {
+struct AudioStreamState {
     std::atomic<bool>     active{false};
     std::atomic<bool>     end_req{false};
     std::atomic<bool>     truncated{false};   // overflow / disconnect / send failure -> 0x53 status=1
@@ -275,11 +275,11 @@ struct RecordingState {
     std::vector<uint8_t>  final_header;        // 60 B for 0x53 (empty -> all zeros)
     TaskHandle_t          task = nullptr;
 };
-RecordingState s_rec;
+AudioStreamState s_rec;
 uint32_t       s_rec_counter = 0;
 
 // Image snapshot uplink (L2CAP CoC PSM 0x0082 + control events 0x54/0x55)
-// its own PSM and state so it runs concurrently with the ASR audio stream. One image at a time.
+// its own PSM and state so it runs concurrently with the audio stream. One image at a time.
 // 0x54 ImageStart carries format/size; raw bytes flow over L2CAP; 0x55 ImageEnd reports status/valid_bytes.
 constexpr size_t kImgQueueHardCap = 256 * 1024;   // one snapshot fits easily; cap backstops a stuck link
 struct ImageState {
@@ -486,7 +486,7 @@ int L2capEvent(struct ble_l2cap_event* event, void* arg) {
         } else {
             s_l2cap_chan = nullptr;
             s_l2cap_connected = false;
-            s_l2cap_stalled.store(false, std::memory_order_release); // unblock a stalled recording worker so it can exit
+            s_l2cap_stalled.store(false, std::memory_order_release); // unblock a stalled audio worker so it can exit
             s_rec.truncated.store(true, std::memory_order_release);  // channel gone mid-stream -> truncate (0x53 status=1 still goes over GATT)
             s_rec.end_req.store(true, std::memory_order_release);
             s_l2cap_rearm_pending.store(false, std::memory_order_release);
@@ -528,7 +528,7 @@ int L2capEvent(struct ble_l2cap_event* event, void* arg) {
     }
     case BLE_L2CAP_EVENT_COC_TX_UNSTALLED:
         if (is_img) s_img_stalled.store(false, std::memory_order_release);   // tx credits restored
-        else        s_l2cap_stalled.store(false, std::memory_order_release); // recording worker may send again
+        else        s_l2cap_stalled.store(false, std::memory_order_release); // audio worker may send again
         return 0;
     default:
         return 0;
@@ -536,11 +536,11 @@ int L2capEvent(struct ble_l2cap_event* event, void* arg) {
 }
 
 esp_err_t StartL2capServer() {
-    // Audio channel (PSM 0x0081): downlink TTS + uplink ASR/recording
+    // Audio channel (PSM 0x0081): downlink playback + uplink bulk audio
     int rc = ble_l2cap_create_server(kL2capPsm, kL2capMtu, L2capEvent,
                                      reinterpret_cast<void*>(static_cast<uintptr_t>(kL2capPsm)));
     if (rc != 0) { ESP_LOGE(TAG, "l2cap_create_server(audio) rc=%d", rc); return ESP_FAIL; }
-    ESP_LOGI(TAG, "L2CAP CoC server on PSM 0x%04X (MTU=%d MPS=%d) — App opens this for audio (TTS/ASR)",
+    ESP_LOGI(TAG, "L2CAP CoC server on PSM 0x%04X (MTU=%d MPS=%d) — App opens this for audio",
              kL2capPsm, kL2capMtu, kL2capMps);
     // Image channel (PSM 0x0082): uplink still-image snapshots, independent of audio.
     rc = ble_l2cap_create_server(kImgPsm, kL2capMtu, L2capEvent,
@@ -550,7 +550,7 @@ esp_err_t StartL2capServer() {
     return ESP_OK;
 }
 
-// ASR / recording uplink implementation
+// bulk audio uplink implementation
 // 0x52 StreamStart: payload = transfer_id(4, LE) + filename(N). Notify on 0xFFC4 (DEVICE_EVENT).
 bool RecSendStreamStart(uint32_t tid, const char* name, size_t name_len) {
     std::vector<uint8_t> f;
@@ -599,8 +599,8 @@ int RecL2capSend(const uint8_t* data, size_t len) {
 
 // Worker: drain the queue to L2CAP in <=MPS SDUs (credit backpressure via ESTALLED/UNSTALLED),
 // then emit 0x53 with the final status + valid_bytes. One stream at a time.
-void RecordingTask(void*) {
-    ESP_LOGI(TAG, "recording/ASR worker started (transfer_id=%u)", static_cast<unsigned>(s_rec.transfer_id));
+void AudioStreamTask(void*) {
+    ESP_LOGI(TAG, "audio stream worker started (transfer_id=%u)", static_cast<unsigned>(s_rec.transfer_id));
     // Head start for 0x52 StreamStart: the App opens the stream session from that GATT event and must have
     // it BEFORE the first L2CAP byte. 0x52 (GATT) and the L2CAP data race on separate channels, and flooding
     // L2CAP immediately starves/drops the 0x52 notify (shared ACL/msys buffers) — then the App discards all
@@ -649,7 +649,7 @@ void RecordingTask(void*) {
     const uint8_t status = ok ? 0x00 : 0x01;
     const uint8_t* hdr = (status == 0 && !s_rec.final_header.empty()) ? s_rec.final_header.data() : nullptr;
     RecSendStreamEnd(s_rec.transfer_id, status, s_rec.sent_bytes.load(std::memory_order_acquire), hdr);
-    ESP_LOGI(TAG, "recording/ASR stream %u ended (status=%u valid_bytes=%u)",
+    ESP_LOGI(TAG, "audio stream %u ended (status=%u valid_bytes=%u)",
              static_cast<unsigned>(s_rec.transfer_id), status,
              static_cast<unsigned>(s_rec.sent_bytes.load(std::memory_order_acquire)));
     s_rec.active.store(false, std::memory_order_release);
@@ -657,11 +657,11 @@ void RecordingTask(void*) {
     vTaskDelete(nullptr);
 }
 
-esp_err_t RecordingStart(const char* name, size_t name_len) {
+esp_err_t AudioStreamStart(const char* name, size_t name_len) {
     if (s_rec.active.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;  // one stream at a time
     if (!s_connected) return ESP_ERR_INVALID_STATE;
     if (!s_l2cap_connected) {  // "保障通道": the App must have opened the L2CAP CoC before we can push
-        ESP_LOGW(TAG, "recording: L2CAP CoC not open — App must connect PSM 0x%04X first", kL2capPsm);
+        ESP_LOGW(TAG, "audio stream: L2CAP CoC not open — App must connect PSM 0x%04X first", kL2capPsm);
         return ESP_ERR_INVALID_STATE;
     }
     {
@@ -677,21 +677,21 @@ esp_err_t RecordingStart(const char* name, size_t name_len) {
     s_rec.final_header.clear();
     s_rec.transfer_id = ++s_rec_counter;
     if (!RecSendStreamStart(s_rec.transfer_id, name, name_len)) {
-        ESP_LOGE(TAG, "recording: 0x52 StreamStart notify failed");
+        ESP_LOGE(TAG, "audio stream: 0x52 StreamStart notify failed");
         return ESP_FAIL;
     }
     s_rec.active.store(true, std::memory_order_release);
-    if (xTaskCreate(RecordingTask, "agentlink_rec", 6144, nullptr, 5, &s_rec.task) != pdPASS) {
+    if (xTaskCreate(AudioStreamTask, "agentlink_audio", 6144, nullptr, 5, &s_rec.task) != pdPASS) {
         s_rec.active.store(false, std::memory_order_release);
-        ESP_LOGE(TAG, "recording: task create failed");
+        ESP_LOGE(TAG, "audio stream: task create failed");
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "recording/ASR stream %u started (%u-byte name)",
+    ESP_LOGI(TAG, "audio stream %u started (%u-byte name)",
              static_cast<unsigned>(s_rec.transfer_id), static_cast<unsigned>(name_len));
     return ESP_OK;
 }
 
-esp_err_t RecordingEnqueue(const uint8_t* data, size_t len) {
+esp_err_t AudioStreamEnqueue(const uint8_t* data, size_t len) {
     if (!s_rec.active.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
     if (!data || len == 0) return ESP_ERR_INVALID_ARG;
     // Once truncated, refuse new bytes: the L2CAP stream is an ordered byte run, so we must not resume
@@ -701,7 +701,7 @@ esp_err_t RecordingEnqueue(const uint8_t* data, size_t len) {
     if (s_rec.queued_bytes.load(std::memory_order_acquire) + len > kRecQueueHardCap) {
         s_rec.truncated.store(true, std::memory_order_release);  // link can't keep up -> truncate here (bounded loss)
         s_rec.end_req.store(true, std::memory_order_release);    // drain what's queued (still contiguous), then emit 0x53 status=1
-        ESP_LOGW(TAG, "recording queue cap (%uKB) — truncating stream %u",
+        ESP_LOGW(TAG, "audio queue cap (%uKB) — truncating stream %u",
                  static_cast<unsigned>(kRecQueueHardCap / 1024), static_cast<unsigned>(s_rec.transfer_id));
         return ESP_ERR_NO_MEM;
     }
@@ -710,7 +710,7 @@ esp_err_t RecordingEnqueue(const uint8_t* data, size_t len) {
     return ESP_OK;
 }
 
-esp_err_t RecordingEnd(bool complete, const uint8_t* final_header, size_t hdr_len) {
+esp_err_t AudioStreamEnd(bool complete, const uint8_t* final_header, size_t hdr_len) {
     if (!s_rec.active.load(std::memory_order_acquire)) return ESP_OK;
     s_rec.complete.store(complete, std::memory_order_release);
     if (final_header && hdr_len >= 60) s_rec.final_header.assign(final_header, final_header + 60);
@@ -720,7 +720,7 @@ esp_err_t RecordingEnd(bool complete, const uint8_t* final_header, size_t hdr_le
 }
 
 // Image snapshot uplink implementation
-// Mirrors the recording path; reuses kRecMaxSdu / kRecStallWaitMs / kRecStartDelayMs (generic L2CAP params).
+// Mirrors the audio path; reuses kRecMaxSdu / kRecStallWaitMs / kRecStartDelayMs (generic L2CAP params).
 // 0x54 ImageStart: payload(13) = transfer_id(4) + format(1) + width(2) + height(2) + total_len(4). Notify 0xFFC4.
 bool ImgSendStreamStart(uint32_t tid, uint8_t fmt, uint16_t w, uint16_t h, uint32_t total) {
     uint8_t f[6 + 13];
@@ -767,7 +767,7 @@ int ImgL2capSend(const uint8_t* data, size_t len) {
 // Worker: drain the image queue to L2CAP in <=MPS SDUs (credit backpressure), then emit 0x55. One image at a time.
 void ImageTask(void*) {
     ESP_LOGI(TAG, "image worker started (transfer_id=%u)", static_cast<unsigned>(s_img.transfer_id));
-    // Head start for 0x54 ImageStart (same race as ASR 0x52): let the App register the session before bytes arrive.
+    // Head start for 0x54 ImageStart (same race as the audio stream 0x52): let the App register the session before bytes arrive.
     vTaskDelay(pdMS_TO_TICKS(kRecStartDelayMs));
     while (true) {
         if (!s_connected) { s_img.truncated.store(true, std::memory_order_release); break; }
@@ -934,7 +934,7 @@ int GapEvent(struct ble_gap_event* event, void* /*arg*/) {
         s_l2cap_stalled.store(false, std::memory_order_release);
         s_l2cap_rearm_pending.store(false, std::memory_order_release);
         s_voice.end_req.store(true, std::memory_order_release);  // tell the voice worker to wrap up ASAP
-        s_rec.truncated.store(true, std::memory_order_release);  // and the recording worker
+        s_rec.truncated.store(true, std::memory_order_release);  // and the audio worker
         s_rec.end_req.store(true, std::memory_order_release);
         ESP_LOGI(TAG, "disconnected (reason=%d) — re-advertising", event->disconnect.reason);
         if (s_on_conn) s_on_conn(false);
@@ -1082,10 +1082,10 @@ void ble_stop(void* /*impl*/) {
 // this stateless and matches the App's own channel split.
 bool IsFileChannelCmd(uint8_t command_id) {
     switch (command_id) {
-    case 0x06:  // StartRecordingDownload
-    case 0x08:  // StartWifiFileServer
+    case 0x06:  // start file download
+    case 0x08:  // start WiFi file server
     case 0x37:  // StartOtaUpgrade
-    case 0x55:  // AbortRecordingDownload
+    case 0x55:  // abort file download
     case 0x56:  // AbortOtaUpgrade
         return true;
     default:
@@ -1104,11 +1104,12 @@ esp_err_t ble_send_ctrl(void* /*impl*/, const uint8_t* frame, size_t len) {
     return Notify(handle, frame, len);
 }
 
-// Data plane: voice over GATT Notify 0xFFA1 (implemented); recording/file over L2CAP, video WiFi-only (to do).
+// Data plane: VOICE over GATT Notify 0xFFA1, AUDIO and IMAGE over L2CAP CoC. FILE and VIDEO are
+// declared in agent_stream_t but this backend does not carry them yet.
 esp_err_t ble_stream_start(void* /*impl*/, agent_stream_t type, const uint8_t* meta, size_t meta_len) {
     if (type == AGENT_STREAM_VOICE) return VoiceStart();
-    if (type == AGENT_STREAM_RECORDING)                          // ASR / record-stream: 0x52 + L2CAP uplink
-        return RecordingStart(reinterpret_cast<const char*>(meta), meta_len);
+    if (type == AGENT_STREAM_AUDIO)                          // bulk audio: 0x52 + L2CAP uplink
+        return AudioStreamStart(reinterpret_cast<const char*>(meta), meta_len);
     if (type == AGENT_STREAM_IMAGE) {                            // image snapshot: 0x54 + L2CAP uplink (PSM 0x0082)
         // meta = [format(1)][width(2,LE)][height(2,LE)][total_len(4,LE)] (packed by agent_link_send_image).
         if (!meta || meta_len < 9) return ESP_ERR_INVALID_ARG;
@@ -1123,13 +1124,13 @@ esp_err_t ble_stream_start(void* /*impl*/, agent_stream_t type, const uint8_t* m
 }
 esp_err_t ble_send_stream(void* /*impl*/, agent_stream_t type, const uint8_t* data, size_t len) {
     if (type == AGENT_STREAM_VOICE) return VoiceEnqueue(data, len);
-    if (type == AGENT_STREAM_RECORDING) return RecordingEnqueue(data, len);
+    if (type == AGENT_STREAM_AUDIO) return AudioStreamEnqueue(data, len);
     if (type == AGENT_STREAM_IMAGE) return ImageEnqueue(data, len);
     return ESP_ERR_NOT_SUPPORTED;
 }
 esp_err_t ble_stream_end(void* /*impl*/, agent_stream_t type, bool complete, const uint8_t* meta, size_t meta_len) {
     if (type == AGENT_STREAM_VOICE) return VoiceEnd();
-    if (type == AGENT_STREAM_RECORDING) return RecordingEnd(complete, meta, meta_len);  // 0x53 (meta = final_header)
+    if (type == AGENT_STREAM_AUDIO) return AudioStreamEnd(complete, meta, meta_len);  // 0x53 (meta = final_header)
     if (type == AGENT_STREAM_IMAGE) return ImageEnd(complete);                          // 0x55
     return ESP_ERR_NOT_SUPPORTED;
 }

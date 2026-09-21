@@ -34,7 +34,7 @@ constexpr uint32_t kColOk      = 0x35D07F;
 constexpr uint32_t kColWarn    = 0xFF5C5C;
 
 // Fonts. These are Montserrat, so the badge renders Latin text and the LVGL symbols only -
-// see boards/work-badge/README.md for dropping in a CJK font when the names are Chinese.
+// a Chinese name needs a CJK font compiled in first.
 #define BADGE_FONT_NAME  (&lv_font_montserrat_28)
 #define BADGE_FONT_MID   (&lv_font_montserrat_20)
 #define BADGE_FONT_SMALL (&lv_font_montserrat_14)

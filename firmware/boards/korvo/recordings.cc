@@ -89,14 +89,13 @@ bool Recordings::HandleList(const uint8_t* payload, size_t len,
         // back as the rel_path of a download or delete without the App re-assembling it.
         // Sized for the worst case d_name (255 bytes) plus that prefix, which is also what keeps
         // -Wformat-truncation quiet.
-        char rel[sizeof("messages/") + 256];
-        if (scope == 1) snprintf(rel, sizeof(rel), "messages/%s", e->d_name);
-        else            snprintf(rel, sizeof(rel), "%s", e->d_name);
+        if (scope == 1) snprintf(rel_, sizeof(rel_), "messages/%s", e->d_name);
+        else            snprintf(rel_, sizeof(rel_), "%s", e->d_name);
 
         // name_len on the wire is a single byte. A name that will not fit is skipped, not
         // truncated: the App sends this string straight back as the rel_path of a download or a
         // delete, so a shortened one is worse than an absent one — it would just miss.
-        const size_t name_len = strlen(rel);
+        const size_t name_len = strlen(rel_);
         if (name_len > 255) {
             ESP_LOGW(TAG, "skipping a %u-byte name: too long for the wire format",
                      static_cast<unsigned>(name_len));
@@ -104,19 +103,18 @@ bool Recordings::HandleList(const uint8_t* payload, size_t len,
             continue;
         }
 
-        char abs[384];
-        if (snprintf(abs, sizeof(abs), "%s/%s", dir, e->d_name) >= static_cast<int>(sizeof(abs))) {
+        if (snprintf(abs_, sizeof(abs_), "%s/%s", dir, e->d_name) >= static_cast<int>(sizeof(abs_))) {
             ++consumed;
             continue;                                          // path too long to even stat
         }
         struct stat st = {};
-        if (stat(abs, &st) != 0) { ++consumed; continue; }     // vanished between readdir and stat
+        if (stat(abs_, &st) != 0) { ++consumed; continue; }     // vanished between readdir and stat
 
         const size_t need = 1 + name_len + 4 + 4 + 4;
         if (used + need > budget) { has_more = true; continue; }   // keep counting for total_count
 
         out[used++] = static_cast<uint8_t>(name_len);
-        memcpy(out + used, rel, name_len);                      used += name_len;
+        memcpy(out + used, rel_, name_len);                      used += name_len;
         Put32(out + used, static_cast<uint32_t>(st.st_size));   used += 4;
         // No RTC and no 0x0B SetDeviceTime here (the SDK answers that 1001), so this is whatever
         // FATFS stamped — usually a fixed epoch. Reported honestly rather than faked.
