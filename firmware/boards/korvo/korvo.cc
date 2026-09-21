@@ -17,6 +17,7 @@
 #include "gc2145_camera.h"
 #include "korvo_audio.h"
 #include "korvo_ui.h"
+#include "recordings.h"
 #include "st7789_lcd.h"
 
 #include "agent_link.h"
@@ -51,6 +52,7 @@ public:
 
         InitTouch();                // shares the I2C bus esp_camera_init() just created
         audio_ok_ = (audio_.Init(MakeAudioConfig()) == ESP_OK);
+        InitRecordings();
         RegisterCaptureEndpoint();  // Agent/App -> snapshot (MCP actuator "camera0")
 
         if (korvo_ui::Start(&lcd_, touch_ok_ ? &touch_ : nullptr,
@@ -94,6 +96,28 @@ public:
     }
 
     void OnLinkState(bool connected) override { korvo_ui::SetLinkState(connected); }
+
+    // The SDK consults this before falling back to its own answer, which for the RoRoLee
+    // production command IDs is a deliberate 1001. Claiming 0x04 is what lets the App list what is
+    // on this card. Everything else stays unclaimed so the SDK keeps answering honestly.
+    bool OnCommand(uint16_t cmd, const uint8_t* payload, size_t len,
+                   uint8_t* resp, size_t resp_cap, size_t* resp_len) override {
+        if (cmd != 0x04) return false;
+        uint16_t error = 0;
+        if (recordings_.HandleList(payload, len, resp, resp_cap, resp_len, &error)) return true;
+        // HandleList failed. Returning false would make the SDK answer 1001 UnknownCommand, which
+        // is the wrong story — the command IS implemented, this attempt failed. There is no way to
+        // hand a specific error code back through on_command, so report success with an empty
+        // listing: the App sees zero recordings, which is what a missing card actually means.
+        ESP_LOGW(TAG, "ListRecordings failed (error=%u) — answering with an empty page", error);
+        if (resp_cap < 7) { *resp_len = 0; return true; }
+        resp[0] = 0; resp[1] = 0;        // entry_count = 0
+        resp[2] = 0;                     // has_more = 0
+        resp[3] = 0; resp[4] = 0;        // total_count = 0
+        resp[5] = 0; resp[6] = 0;        // next_offset = 0
+        *resp_len = 7;
+        return true;
+    }
 
 private:
     static St7789LcdConfig MakeLcdConfig() {
@@ -169,6 +193,8 @@ private:
         c.sd_d0       = SD_PIN_D0;
         c.sd_mount    = SD_MOUNT_POINT;
         c.rec_dir     = SD_REC_DIR;
+        c.msg_dir     = SD_MSG_DIR;
+        c.rec_format  = REC_FORMAT_ADPCM ? WavRecorder::Format::kAdpcm : WavRecorder::Format::kPcm16;
         return c;
     }
 
@@ -188,6 +214,15 @@ private:
         touch_ok_ = (touch_.Init(c) == ESP_OK);
         if (!touch_ok_) ESP_LOGW(TAG, "touch unavailable — the home screen would be a dead end, "
                                       "so the camera preview will run on its own");
+    }
+
+    void InitRecordings() {
+        Recordings::Config rc = {};
+        rc.dir          = SD_REC_DIR;
+        rc.messages_dir = SD_MSG_DIR;
+        rc.sample_rate  = AUDIO_SAMPLE_RATE;
+        rc.format       = REC_FORMAT_ADPCM ? WavRecorder::Format::kAdpcm : WavRecorder::Format::kPcm16;
+        recordings_.Init(rc);
     }
 
     void RegisterCaptureEndpoint() {
@@ -266,6 +301,7 @@ private:
     Gc2145Camera cam_;
     Cst816Touch  touch_;
     KorvoAudio   audio_;
+    Recordings   recordings_;
     bool         lcd_ok_   = false;
     bool         cam_ok_   = false;
     bool         touch_ok_ = false;

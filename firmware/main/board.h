@@ -34,6 +34,17 @@ public:
     // suggested cap, 0 meaning "until stopped". Only reached when AGENT_CAP_MIC is advertised.
     virtual void OnListen(bool start, uint32_t max_ms) { (void)start; (void)max_ms; }
 
+    // A control command the SDK does not handle itself. Return true to claim it (filling resp /
+    // resp_len with any response data), false to let the SDK answer. Claiming is how a board
+    // implements a command the SDK deliberately leaves alone — the RoRoLee production commands
+    // such as 0x04 ListRecordings, which the SDK otherwise answers 1001 rather than fake.
+    // resp_cap is small (128 bytes today), so a listing has to page.
+    virtual bool OnCommand(uint16_t cmd, const uint8_t* payload, size_t len,
+                           uint8_t* resp, size_t resp_cap, size_t* resp_len) {
+        (void)cmd; (void)payload; (void)len; (void)resp; (void)resp_cap; (void)resp_len;
+        return false;
+    }
+
     // The App link came up or went down. Override to reflect it locally (status icon, idle
     // screen, powering something down while disconnected). Default: nothing.
     virtual void OnLinkState(bool connected) { (void)connected; }

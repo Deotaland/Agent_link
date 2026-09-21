@@ -63,6 +63,7 @@ esp_err_t KorvoAudio::Init(const Config& cfg) {
     sc.mount_point = cfg_.sd_mount;
     if (sd_.Init(sc) == ESP_OK) {
         mkdir(cfg_.rec_dir, 0775);   // fails harmlessly when it already exists
+        if (cfg_.msg_dir) mkdir(cfg_.msg_dir, 0775);
         ESP_LOGI(TAG, "recordings go to %s (%lluMB free)", cfg_.rec_dir,
                  static_cast<unsigned long long>(sd_.FreeMb()));
     } else {
@@ -113,7 +114,7 @@ void KorvoAudio::StopRecording() { want_rec_.store(false, std::memory_order_rele
 bool KorvoAudio::OpenRecordingFile() {
     char path[128];
     snprintf(path, sizeof(path), "%s/rec-%04u.wav", cfg_.rec_dir, static_cast<unsigned>(++rec_seq_));
-    if (wav_.Start(path, static_cast<uint32_t>(cfg_.sample_rate), 1) != ESP_OK) return false;
+    if (wav_.Start(path, static_cast<uint32_t>(cfg_.sample_rate), cfg_.rec_format) != ESP_OK) return false;
     snprintf(last_file_, sizeof(last_file_), "%s", path);
     return true;
 }

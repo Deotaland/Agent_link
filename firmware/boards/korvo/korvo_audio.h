@@ -49,7 +49,9 @@ public:
         // TF card (1-line SDMMC). Recording is simply unavailable if no card is present.
         gpio_num_t  sd_clk, sd_cmd, sd_d0;
         const char* sd_mount;       // e.g. "/sdcard"
-        const char* rec_dir;        // e.g. "/sdcard/rec" — created if missing
+        const char* rec_dir;        // e.g. "/sdcard/records" — created if missing
+        const char* msg_dir;        // e.g. "/sdcard/records/messages" — created if missing
+        WavRecorder::Format rec_format;
     };
 
     esp_err_t Init(const Config& cfg);

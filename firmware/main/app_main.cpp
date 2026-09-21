@@ -15,6 +15,10 @@ void on_show_text(const char* utf8, void*) { Board::GetInstance().ShowText(utf8)
 void on_haptic(uint32_t duration_ms, void*) { Board::GetInstance().Vibrate(duration_ms); }
 void on_led(uint32_t rgb, void*) { Board::GetInstance().SetLed(rgb); }
 void on_listen(bool start, uint32_t max_ms, void*) { Board::GetInstance().OnListen(start, max_ms); }
+bool on_command(uint16_t cmd, const uint8_t* payload, size_t len,
+                uint8_t* resp, size_t resp_cap, size_t* resp_len, void*) {
+    return Board::GetInstance().OnCommand(cmd, payload, len, resp, resp_cap, resp_len);
+}
 
 void on_state(agent_state_t state, void*) {
     ESP_LOGI(TAG, "[state] %s",
@@ -37,6 +41,7 @@ extern "C" void app_main(void) {
     out.on_haptic    = on_haptic;
     out.on_led       = on_led;
     out.on_listen    = on_listen;   // App-initiated listen (0x3C/0x3D); no-op on boards without a mic
+    out.on_command   = on_command;  // board-claimed control commands; consulted before the SDK's 1001
 
     agent_link_config_t cfg = {};
     cfg.device_name = board.Name();

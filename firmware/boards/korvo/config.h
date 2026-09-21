@@ -10,7 +10,7 @@
 // GC2145 camera + ST7789 touch LCD + ES8311/ES7210 audio + a TF card, driven from a home screen
 // you swipe between apps on.
 
-// ── The one I2C bus ───────────────────────────────────────────────────────────
+// The one I2C bus
 // Three chips share GPIO17/18 on this board: the camera's SCCB, the CST816 touch controller and
 // the audio codec pair. esp32-camera creates the bus (on the port its Kconfig selects) and the
 // other two attach to it — a second bus on the same pins is not possible. That is also why the
@@ -141,4 +141,11 @@
 #define SD_PIN_CMD              GPIO_NUM_7
 #define SD_PIN_D0               GPIO_NUM_4
 #define SD_MOUNT_POINT          "/sdcard"
-#define SD_REC_DIR              "/sdcard/rec"
+// The App's 0x04 ListRecordings contract names these two directories: recordings sit flat in
+// records/, and messages in the subdirectory below it. The .wav filter is what keeps a flat scan
+// of records/ from also picking up the messages.
+#define SD_REC_DIR              "/sdcard/records"
+#define SD_MSG_DIR              "/sdcard/records/messages"
+// Recordings are IMA-ADPCM (WAV fmt_tag 0x0011): 4:1 over PCM16, the same format agent_link already
+// decodes on the downlink, and openable by any desktop player.
+#define REC_FORMAT_ADPCM        1
