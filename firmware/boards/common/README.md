@@ -12,6 +12,9 @@ the include path `../boards/common` lets a board `#include "xxx.h"` directly.
 | `es8311_audio.{h,cc}`                      | ES8311-only full-duplex codec: one chip does both speaker (DAC) and mic (ADC), standard I2S                                                                         | `esp_codec_dev`, `esp_driver_i2c`, `esp_driver_i2s`                 |
 | `co5300_panel.{h,cc}` + `co5300_hal.{c,h}` | CO5300 466x466 AMOLED (MIPI-DSI); ESP32-P4 only (stubbed out on other targets)                                                                                      | `esp_lcd`, `esp_lcd_co5300`                                         |
 | `bq27220.{h,cc}`                           | BQ27220 fuel gauge (I2C); reuses an I2C bus another driver already created                                                                                          | `esp_driver_i2c`                                                    |
+| `st7789_lcd.{h,cc}`                        | ST7789 SPI LCD: init + solid fill + `DrawBitmap` blitting in stripes through an internal DMA buffer (so a PSRAM source works). Rotation/offset via `swap_xy`/`mirror_*`/`gap_*` | `esp_lcd`, `esp_driver_spi`, `esp_driver_gpio`                      |
+| `gc2145_camera.{h,cc}`                     | GC2145 DVP camera on top of `esp32-camera`, owning the sensor's quirks: the capture-engine kick without which it never streams, the noisy top rows, the AEC/AWB freeze | `esp32_camera` (see the gating note below)                          |
+| `cst816_touch.{h,cc}`                      | CST816S/T/D capacitive touch (I2C), polled — no INT line needed. Attaches to a bus somebody else created, for panels sharing SDA/SCL with another chip               | `esp_driver_i2c`                                                    |
 
 ## Usage (from a board)
 
@@ -33,6 +36,12 @@ panel.FillSolid(rgb565::kBlue);   // fill the whole screen
 - **Board-independent**: pass pin/address differences in through a parameter/Config; don't hardcode one board's pins here.
 - **Only put things that are genuinely reused.** A private driver used by a single board belongs in that board's own directory (`boards/<board>/`).
 - If a new driver needs a new ESP-IDF component, add it to `REQUIRES` in `main/CMakeLists.txt`.
+- **A driver whose component is not required by every board must gate itself.** Everything here is
+  GLOB-compiled for every board, but a component only reaches the include path on boards that list
+  it in main's `REQUIRES` (or pulls it in through `main/idf_component.yml`). `gc2145_camera.cc` wraps its whole body in `#if __has_include("esp_camera.h")`
+  so it compiles to nothing on boards without a camera — the same "stub out where unsupported" idea
+  `co5300_hal.c` uses for MIPI, but keyed on the component rather than the chip, since two different
+  ESP32-S3 boards can disagree about whether they have a camera.
 
 ## Note: two SH8501 panel drivers, pick by hardware
 

@@ -15,7 +15,6 @@
 
 namespace {
 constexpr const char* TAG = "st7789_lcd";
-constexpr uint16_t kStripeRows = 40;  // 240 * 40 * 2B = 19200B blit stripe
 
 bool ColorTransDone(esp_lcd_panel_io_handle_t /*io*/,
                     esp_lcd_panel_io_event_data_t* /*edata*/,
@@ -149,7 +148,7 @@ esp_err_t St7789Lcd::EnsureStripe(size_t bytes) {
 esp_err_t St7789Lcd::FillSolid(uint16_t color) {
     if (!panel_) return ESP_ERR_INVALID_STATE;
 
-    const size_t stripe_bytes = static_cast<size_t>(cfg_.width) * kStripeRows * 2u;
+    const size_t stripe_bytes = static_cast<size_t>(cfg_.width) * cfg_.stripe_rows * 2u;
     ESP_RETURN_ON_ERROR(EnsureStripe(stripe_bytes), TAG, "stripe alloc");
 
     uint8_t* buf = stripe_[0];   // solid color: one buffer is enough (no ping-pong needed)
@@ -159,8 +158,8 @@ esp_err_t St7789Lcd::FillSolid(uint16_t color) {
 
     const uint16_t w = cfg_.width;
     const uint16_t h = cfg_.height;
-    for (uint16_t row = 0; row < h; row = static_cast<uint16_t>(row + kStripeRows)) {
-        const uint16_t rows_this = std::min<uint16_t>(kStripeRows, static_cast<uint16_t>(h - row));
+    for (uint16_t row = 0; row < h; row = static_cast<uint16_t>(row + cfg_.stripe_rows)) {
+        const uint16_t rows_this = std::min<uint16_t>(cfg_.stripe_rows, static_cast<uint16_t>(h - row));
         const uint32_t expect = done_count_.load(std::memory_order_acquire) + 1;
         ESP_RETURN_ON_ERROR(
             esp_lcd_panel_draw_bitmap(panel_, 0, row, w, static_cast<uint16_t>(row + rows_this), buf),
@@ -176,14 +175,14 @@ esp_err_t St7789Lcd::FillSolid(uint16_t color) {
 esp_err_t St7789Lcd::DrawBitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const void* pixels) {
     if (!panel_ || !pixels) return ESP_ERR_INVALID_STATE;
 
-    const size_t stripe_bytes = static_cast<size_t>(w) * kStripeRows * 2u;
+    const size_t stripe_bytes = static_cast<size_t>(w) * cfg_.stripe_rows * 2u;
     ESP_RETURN_ON_ERROR(EnsureStripe(stripe_bytes), TAG, "stripe alloc");
 
     const uint8_t* src = static_cast<const uint8_t*>(pixels);
     const size_t row_bytes = static_cast<size_t>(w) * 2u;   // esp_lcd end coords are exclusive
     int i = 0;
-    for (uint16_t row = 0; row < h; row = static_cast<uint16_t>(row + kStripeRows)) {
-        const uint16_t rows_this = std::min<uint16_t>(kStripeRows, static_cast<uint16_t>(h - row));
+    for (uint16_t row = 0; row < h; row = static_cast<uint16_t>(row + cfg_.stripe_rows)) {
+        const uint16_t rows_this = std::min<uint16_t>(cfg_.stripe_rows, static_cast<uint16_t>(h - row));
         memcpy(stripe_[i], src + static_cast<size_t>(row) * row_bytes,
                static_cast<size_t>(rows_this) * row_bytes);
         ESP_RETURN_ON_ERROR(

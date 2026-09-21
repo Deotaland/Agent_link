@@ -29,6 +29,11 @@ public:
     virtual void Vibrate(uint32_t duration_ms) { (void)duration_ms; }
     virtual void SetLed(uint32_t rgb) { (void)rgb; }   // RGB 0x00RRGGBB; the SDK's led0 endpoint routes here
 
+    // The Agent asks the board to start or stop listening (commands 0x3C/0x3D). Override on a board
+    // with a mic to drive its agent_link_asr_start() / asr_push() / asr_end() loop; max_ms is a
+    // suggested cap, 0 meaning "until stopped". Only reached when AGENT_CAP_MIC is advertised.
+    virtual void OnListen(bool start, uint32_t max_ms) { (void)start; (void)max_ms; }
+
     // The App link came up or went down. Override to reflect it locally (status icon, idle
     // screen, powering something down while disconnected). Default: nothing.
     virtual void OnLinkState(bool connected) { (void)connected; }

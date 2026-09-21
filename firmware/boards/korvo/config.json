@@ -1,0 +1,5 @@
+{
+    "manufacturer": "espressif",
+    "type": "korvo",
+    "target": "esp32s3"
+}

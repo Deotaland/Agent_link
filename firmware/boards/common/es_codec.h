@@ -21,6 +21,8 @@
 #include "esp_err.h"
 
 struct EsCodecConfig {
+    // pin_sda/pin_scl = GPIO_NUM_NC attaches to the bus somebody else already created on i2c_port
+    // instead of making a new one. Needed wherever the codec shares SDA/SCL with another chip.
     i2c_port_t i2c_port;
     gpio_num_t pin_sda;
     gpio_num_t pin_scl;

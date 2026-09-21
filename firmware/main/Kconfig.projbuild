@@ -20,6 +20,8 @@ choice BOARD_TYPE
         bool "ESP32-S3 ES8311 ASR (minimal real-time ASR example)"
     config BOARD_TYPE_ESP32S3_GC2145_CAMERA
         bool "ESP32-S3 GC2145 Camera (DVP camera preview on ST7789 LCD)"
+    config BOARD_TYPE_ESP32S3_KORVO
+        bool "ESP32-S3 Korvo (GC2145 DVP camera preview on the 240x280 ST7789 LCD)"
     config BOARD_TYPE_ESP32S3_WORK_BADGE
         bool "ESP32-S3 Work Badge (electronic staff ID card, rorolee-s3 hardware, LVGL UI)"
         select LV_FONT_MONTSERRAT_20

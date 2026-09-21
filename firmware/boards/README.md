@@ -28,6 +28,8 @@ boards/rorolee-s3/
 | `PlayAudio(pcm16, bytes)` / `AudioEnd()` | Agent to device | a speaker                                                                        |
 | `ShowText(utf8)`                         | Agent to device | a screen                                                                         |
 | `Vibrate(ms)`                            | Agent to device | a motor                                                                          |
+| `SetLed(rgb)`                            | Agent to device | a controllable LED (the SDK synthesises a `led0` endpoint for it)                |
+| `OnListen(start, max_ms)`                | Agent to device | a mic the App can switch on (commands 0x3C/0x3D) — drive your `agent_link_asr_*` loop from it |
 | `GetBatteryLevel()` / `IsCharging()`     | device to Agent | a fuel gauge                                                                     |
 
 Set a capability bit only when you implement its method; anything you leave out keeps the base no-op.
@@ -70,7 +72,7 @@ Say `my-board` on an ESP32-C6:
 5. Register it in three places:
    - add `config BOARD_TYPE_MY_BOARD` to the `choice BOARD_TYPE` in [`../main/Kconfig.projbuild`](../main/Kconfig.projbuild). `select` there works for a plain bool the board needs (`work-badge` selects the two extra `LV_FONT_MONTSERRAT_*` sizes its UI draws with), but **not** for a value that is a member of a Kconfig `choice` — see the next bullet;
    - add `elseif(CONFIG_BOARD_TYPE_MY_BOARD) set(BOARD_DIR "my-board")` to the board-select chain in [`../main/CMakeLists.txt`](../main/CMakeLists.txt). If the board needs a value that only _this_ board wants and that value is itself a member of a Kconfig `choice` (an external RTC crystal, a non-default console, ...), also add `BOARD_TYPE_MY_BOARD` (and its wanted `CONFIG_..._SRC=y`-style lines) to the per-board tables at the top of the repo-root [`../CMakeLists.txt`](../CMakeLists.txt) — plain Kconfig `select` on a choice member silently does nothing (kconfiglib: "select/imply has no effect on choice symbols"; verified against this project's own tree), so the values are patched directly into `sdkconfig` before Kconfig reads it instead. This reruns on every configure, so it self-corrects after switching `Board Type` in menuconfig, no manual `sdkconfig` editing needed. If instead the whole chip family shares the value (like PSRAM mode/speed for every ESP32-S3 board here), put it in `sdkconfig.defaults.<target>` instead — see the last bullet below.
-   - If you use peripherals beyond what is already required, add their driver components (`esp_driver_i2c`, `esp_lcd`, `esp_codec_dev`) to `REQUIRES` in `main/CMakeLists.txt`.
+   - If you use peripherals beyond what is already required, add their driver components (`esp_driver_i2c`, `esp_lcd`, `esp_codec_dev`) to the **unconditional** `REQUIRES` in `main/CMakeLists.txt` — or, for a managed component, to `main/idf_component.yml` (with a `rules:` target gate if it only exists on one chip). **Do not wrap a `REQUIRES` entry in `if(CONFIG_BOARD_TYPE_...)`:** ESP-IDF collects REQUIRES in an early-expansion pass that runs the file in script mode with no sdkconfig loaded, so every `CONFIG_*` is empty there and the entry is silently dropped. `SRCS` is not affected — it is re-evaluated in the normal pass, which is why the board-select chain above works.
    - If the board is on a chip target that isn't built yet (a new `esp32c6`, say), add a `sdkconfig.defaults.<target>` at the repo root for whatever _every_ board on that chip needs (flash size, PSRAM on/off, ...) — ESP-IDF merges it automatically on `idf.py set-target <target>`, the same way [`../sdkconfig.defaults.esp32p4`](../sdkconfig.defaults.esp32p4) already does for the P4 board. Plain `select` in `main/Kconfig.projbuild` is still the right tool for a board-specific value that is a plain bool, not a choice member (not common so far in this repo).
 
 Then build:
@@ -94,6 +96,7 @@ The Board Type menu currently offers:
 | `es8311-voice/`     | ESP32-S3 | Minimal example: one ES8311 codec doing full-duplex speaker + mic |
 | `es8311-asr/`       | ESP32-S3 | Minimal example: one ES8311 codec, mic-only, streams PCM to the App for live ASR |
 | `gc2145-camera/`    | ESP32-S3 | GC2145 DVP camera live preview on an ST7789 240x240 LCD      |
+| `korvo/`            | ESP32-S3 | Korvo (ESP32-S3-Korvo-2 V3 pinout): swipeable LVGL home screen on a CST816 touch ST7789 240x280 driven rotated 90° CCW, with three apps — live GC2145 preview, ES8311/ES7210 voice up the Agent's ASR channel, and WAV recording to the TF card |
 | `work-badge/`       | ESP32-S3 | Electronic staff badge on the **mass-production** board (pins from the shipping firmware; factory short code SH8501 panel): an LVGL name card the App fills in ([README](work-badge/README.md)) |
 | `esp32p4-waveshare/`| ESP32-P4 | Waveshare board with a CO5300 466x466 AMOLED                 |
 

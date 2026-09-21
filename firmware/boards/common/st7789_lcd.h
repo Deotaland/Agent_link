@@ -35,6 +35,12 @@ struct St7789LcdConfig {
     int      gap_x          = 0;
     int      gap_y          = 0;
     bool     bl_active_high = true;
+    // Height of one blit stripe. Two buffers of width*stripe_rows*2 are allocated in INTERNAL DMA
+    // RAM and ping-ponged, so this is a direct trade of internal RAM against transfer count:
+    // 40 rows x 280px = 22KB each. Turn it down on a board that needs the RAM elsewhere (Korvo
+    // runs BLE + LVGL + a camera off the same 150KB); the DMA cost of more, smaller transfers is
+    // minor, since the blit is dominated by the memcpy out of PSRAM rather than by the SPI.
+    uint16_t stripe_rows    = 40;
 };
 
 class St7789Lcd {

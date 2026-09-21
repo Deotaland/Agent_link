@@ -24,6 +24,14 @@ esp_err_t EsCodec::Init(const EsCodecConfig& cfg) {
 }
 
 esp_err_t EsCodec::InitI2c() {
+    // Shared bus: another driver already owns this port. Look its handle up rather than creating a second bus on the same wires, which would just fail.
+    if (cfg_.pin_sda == GPIO_NUM_NC || cfg_.pin_scl == GPIO_NUM_NC) {
+        ESP_RETURN_ON_ERROR(i2c_master_get_bus_handle(cfg_.i2c_port, &i2c_bus_), TAG,
+                            "I2C port %d has no bus yet - its owner must init first", (int)cfg_.i2c_port);
+        ESP_LOGI(TAG, "reusing the I2C bus already on port %d", (int)cfg_.i2c_port);
+        return ESP_OK;
+    }
+
     i2c_master_bus_config_t bus = {};
     bus.i2c_port          = cfg_.i2c_port;
     bus.sda_io_num        = cfg_.pin_sda;
