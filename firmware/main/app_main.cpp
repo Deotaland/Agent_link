@@ -20,6 +20,12 @@ bool on_command(uint16_t cmd, const uint8_t* payload, size_t len,
     return Board::GetInstance().OnCommand(cmd, payload, len, resp, resp_cap, resp_len);
 }
 
+void on_status(const agent_link_status_t* st, void*) {
+    if (!st) return;
+    ESP_LOGI(TAG, "[link] %s: %s", st->title, st->hint);
+    Board::GetInstance().OnLinkStatus(*st);
+}
+
 void on_state(agent_state_t state, void*) {
     ESP_LOGI(TAG, "[state] %s",
              state == AGENT_STATE_READY     ? "READY" :
@@ -48,9 +54,16 @@ extern "C" void app_main(void) {
     cfg.caps        = board.Capabilities();
     cfg.output      = &out;
     cfg.on_state    = on_state;
+    cfg.on_status   = on_status;       // link progress, same shape on BLE and WiFi
     cfg.model       = board.Model();   // OTA model check + DIS 0x2A24 (firmware_rev: SDK reads PROJECT_VER)
+    cfg.platform    = board.Platform();   // WiFi needs it; BLE ignores it — set it either way
+
+    // The single transport-aware line in the application: which backend to run. Everything above
+    // is set unconditionally and each backend takes what it needs, so a board never branches on it.
 #if CONFIG_AGENT_LINK_TRANSPORT_WIFI
-    cfg.transport   = AGENT_TRANSPORT_WIFI;  // WiFi station + captive-portal provisioning
+    cfg.transport   = AGENT_TRANSPORT_WIFI;
+#else
+    cfg.transport   = AGENT_TRANSPORT_BLE;
 #endif
 
     ESP_ERROR_CHECK(agent_link_init(&cfg));     //agent_link initialization

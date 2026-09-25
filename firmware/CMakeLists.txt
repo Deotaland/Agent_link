@@ -22,7 +22,7 @@ if(EXISTS "${_sdkconfig}")
     set(_s3_boards
         BOARD_TYPE_ROROLEE_S3 BOARD_TYPE_ESP32S3_TEM_MONITOR
         BOARD_TYPE_ESP32S3_ES8311_VOICE BOARD_TYPE_ESP32S3_ES8311_ASR BOARD_TYPE_ESP32S3_GC2145_CAMERA
-        BOARD_TYPE_ESP32S3_WORK_BADGE BOARD_TYPE_ESP32S3_KORVO)
+        BOARD_TYPE_ESP32S3_WORK_BADGE BOARD_TYPE_ESP32S3_KORVO BOARD_TYPE_ESP32S3_KORVO_CLOUD)
     set(_ext_crys_boards BOARD_TYPE_ROROLEE_S3 BOARD_TYPE_ESP32S3_TEM_MONITOR BOARD_TYPE_ESP32S3_WORK_BADGE)
 
     set(_board_forced_options "")
@@ -32,6 +32,11 @@ if(EXISTS "${_sdkconfig}")
             list(APPEND _board_forced_options "CONFIG_RTC_CLK_SRC_EXT_CRYS=y")
         else()
             list(APPEND _board_forced_options "CONFIG_RTC_CLK_SRC_INT_RC=y")
+        endif()
+        if("${_selected_board}" STREQUAL "BOARD_TYPE_ESP32S3_KORVO_CLOUD")
+            list(APPEND _board_forced_options "CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y")
+        else()
+            list(APPEND _board_forced_options "CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC=y")
         endif()
     endif()
 
@@ -49,9 +54,7 @@ if(EXISTS "${_sdkconfig}")
     endif()
 endif()
 
-# Firmware version -> app descriptor (esp_app_get_description()->version). The SDK reports it
-# over BLE (0x01 RequestDeviceInfo, DIS 0x2A26) and the App compares it against the release it
-# holds to decide whether to offer an OTA. Override per build with: idf.py build -DPROJECT_VER=x.y.z
+# Firmware version
 set(PROJECT_VER "2.0.0")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

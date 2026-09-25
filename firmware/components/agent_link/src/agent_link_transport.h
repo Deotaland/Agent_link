@@ -18,6 +18,8 @@
 
 // agent_stream_t and the stream vocabulary are part of the public API, not of this backend
 // interface: a backend implements the kinds the API defines, never the other way round.
+#include "agent_link.h"        // agent_link_status_t / agent_platform_t / agent_wifi_config_t
+#include "agent_link_caps.h"   // agent_state_t
 #include "agent_link_stream.h"
 
 #ifdef __cplusplus
@@ -82,11 +84,9 @@ typedef struct agent_transport_s {
      * @param impl     Backend private context
      * @param type     Stream type
      * @param complete true if the stream ended normally, false if aborted
-     * @return ESP_OK on success, error code otherwise
-     */
-    /**
      * @param meta     Optional trailing metadata (60-byte final_header for the 0x53 event); NULL if none
      * @param meta_len Length of meta
+     * @return ESP_OK on success, error code otherwise
      */
     esp_err_t (*stream_end)(void* impl, agent_stream_t type, bool complete, const uint8_t* meta, size_t meta_len);
 
@@ -133,14 +133,14 @@ void agent_transport_ble_set_conn(void (*cb)(bool connected));
 /**
  * @brief Register callback for incoming data frames
  * @param cb Function called when a data frame is received
- * @note Called by agent_link_init() to wire the core's OnStreamRecv
+ * @note Called by agent_link_init() to wire the core's OnStreamData
  */
 void agent_transport_ble_set_stream_recv(void (*cb)(agent_stream_t type, const uint8_t* data, size_t len));
 
 /**
  * @brief Register callback for transport readiness
  * @param cb Function called when the transport becomes ready
- * @note Called by agent_link_init() to wire the core's OnReady
+ * @note Called by agent_link_init() to wire the core's OnLinkReady
  */
 void agent_transport_ble_set_ready(void (*cb)(void));
 
@@ -183,20 +183,23 @@ bool agent_transport_ble_get_mac(uint8_t out[6]);
 void agent_transport_ble_update_battery(uint8_t percent);
 
 /**
+ * @brief Erase all stored bonds; the App has to pair again.
+ * @note The BLE side of agent_link_forget(). A peer connected right now stays connected.
+ */
+esp_err_t agent_transport_ble_forget(void);
+
+/**
  * @brief Get the WiFi transport instance.
  * @return Pointer to the WiFi transport operation table.
  */
 agent_transport_t* agent_transport_wifi(void);
 
-/** Forward declaration of WiFi config structure (defined in agent_link.h). */
-struct agent_wifi_config_s;
-
 /**
- * @brief Set WiFi connection parameters.
- * @param cfg Pointer to the WiFi configuration structure.
- * @note Called by agent_link_init() to pass the wifi config.
+ * @brief Preset station credentials.
+ * @param cfg Usually NULL: the backend then uses the credentials saved by its captive portal.
+ * @note Called by agent_link_init().
  */
-void agent_transport_wifi_set_config(const struct agent_wifi_config_s* cfg);
+void agent_transport_wifi_set_config(const agent_wifi_config_t* cfg);
 
 /**
  * @brief Set the device name used as the SoftAP SSID prefix for WiFi provisioning.
@@ -215,7 +218,7 @@ void agent_transport_wifi_set_recv(void (*cb)(const uint8_t* data, size_t len));
 /**
  * @brief Register callback for connection state changes.
  * @param cb Function called when WiFi connects or disconnects.
- * @note Called by agent_link_init() to wire the core's OnConn.
+ * @note Not used by the core, which registers agent_transport_wifi_set_state() instead.
  */
 void agent_transport_wifi_set_conn(void (*cb)(bool connected));
 
@@ -225,6 +228,38 @@ void agent_transport_wifi_set_conn(void (*cb)(bool connected));
  * @note Called by agent_link_init() to wire the core's OnStreamData.
  */
 void agent_transport_wifi_set_stream_recv(void (*cb)(agent_stream_t type, const uint8_t* data, size_t len));
+
+/**
+ * @brief Register the link-state callback.
+ *
+ * Replaces set_conn on this backend, because WiFi has two "up" states: CONNECTED (authenticated,
+ * heartbeat running) and READY (data plane up as well). Only the backend knows which applies.
+ *
+ * @note Called by agent_link_init().
+ */
+void agent_transport_wifi_set_state(void (*cb)(agent_state_t state));
+
+/**
+ * @brief Platform identity, needed to claim and authenticate the device.
+ * @note Called by agent_link_init(). With NULL, only the station link is brought up.
+ */
+void agent_transport_wifi_set_platform(const agent_platform_t* platform);
+
+/**
+ * @brief Register the link status callback.
+ *
+ * The backend translates its cloud session state (cloud/cloud_status.h) into agent_link_status_t;
+ * the core passes it on to agent_link_config_t::on_status unchanged.
+ *
+ * @note Called by agent_link_init().
+ */
+void agent_transport_wifi_set_status(void (*cb)(const agent_link_status_t* st));
+
+/**
+ * @brief Erase the platform credential, so the device asks for a new activation code.
+ * @note The WiFi side of agent_link_forget().
+ */
+esp_err_t agent_transport_wifi_forget(void);
 
 #ifdef __cplusplus
 }

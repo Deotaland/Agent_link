@@ -3,7 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "agent_link_caps.h"  // agent_cap_t：The Board shares a "vocabulary list" with the platform
+#include "agent_link.h"        // agent_platform_t / agent_link_status_t
+#include "agent_link_caps.h"   // agent_cap_t：The Board shares a "vocabulary list" with the platform
 
 void* create_board();
 
@@ -45,9 +46,25 @@ public:
         return false;
     }
 
-    // The App link came up or went down. Override to reflect it locally (status icon, idle
-    // screen, powering something down while disconnected). Default: nothing.
+    // ── The link. Nothing below depends on which transport the build selected. ─────────────────
+
+    // The link came up or went down. Override to reflect it locally (status icon, idle screen,
+    // powering something down while disconnected). Default: nothing.
     virtual void OnLinkState(bool connected) { (void)connected; }
+
+    // The link's progress in words a user can act on, identical in shape on BLE and WiFi: "open
+    // the app", "join the hotspot", an activation code to type in, "no agent attached", online.
+    // A board with a screen draws st.title and st.hint (plus st.code when st.phase is PAIRING)
+    // and is done — the SDK writes the words, so it never needs to know which transport it is on.
+    // Switch on st.phase instead only if the board wants its own wording. Runs on a transport
+    // task: copy and return. Default: nothing.
+    virtual void OnLinkStatus(const agent_link_status_t& st) { (void)st; }
+
+    // Which Deotaland platform product this hardware is. Used when the device reaches the platform
+    // itself (WiFi) and ignored when the App does it for us (BLE) — so return it regardless, and
+    // the same board builds for both. Point at a static; the SDK keeps the pointer. The default
+    // NULL is right for a board that will only ever ship on BLE.
+    virtual const agent_platform_t* Platform() const { return nullptr; }
 
     // Device → Agent: Status Query & Reporting
     virtual int GetBatteryLevel() { return -1; }

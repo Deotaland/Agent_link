@@ -81,6 +81,18 @@ public:
 
     void Release(camera_fb_t* fb);
 
+    // Stop / restart capture on the ESP32 side (DVP DMA and VSYNC interrupt), for boards that show
+    // the camera only part of the time. Otherwise the driver keeps receiving and dropping frames
+    // ("EV-VSYNC-OVF"). The sensor keeps running, so AEC/AWB stay converged and Resume() is fast.
+    //
+    // esp_camera_deinit() is not used because it also releases the SCCB bus, which other devices
+    // may share (e.g. a touch panel or an audio codec).
+    //
+    // Call both from the task that calls Capture(). While paused, Capture() returns nullptr.
+    void Pause();
+    void Resume();
+    bool Paused() const { return paused_; }
+
     // Swap every pixel's two bytes in place (little-endian RGB565 -> big-endian).
     static void SwapBytes(camera_fb_t* fb);
 
@@ -93,4 +105,6 @@ private:
     bool         ready_     = false;
     bool         ae_locked_ = false;
     uint32_t     frames_    = 0;
+    bool         paused_    = false;
+    int          discard_   = 0;   // frames to drop after Resume(): they may predate the pause
 };

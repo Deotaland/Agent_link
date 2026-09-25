@@ -10,6 +10,13 @@
 // The web UI lives in editable files under portal/ (embedded via CMakeLists EMBED_TXTFILES), so
 // downstream users can restyle/translate the pages without touching C. The firmware only injects the
 // scanned network list at the {{SSIDS}} marker; language switching is pure CSS inside the page.
+//
+// Only built where SOC_WIFI_SUPPORTED, like transport_wifi.cpp (esp_wifi.h does not compile on
+// targets without WiFi).
+#include "soc/soc_caps.h"
+
+#if SOC_WIFI_SUPPORTED
+
 #include "wifi_provision.h"
 
 #include <cstring>
@@ -427,3 +434,5 @@ extern "C" void al_wifi_prov_stop(void) {
 }
 
 extern "C" bool al_wifi_prov_active(void) { return s_httpd != nullptr; }
+
+#endif  // SOC_WIFI_SUPPORTED

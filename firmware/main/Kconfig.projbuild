@@ -22,6 +22,16 @@ choice BOARD_TYPE
         bool "ESP32-S3 GC2145 Camera (DVP camera preview on ST7789 LCD)"
     config BOARD_TYPE_ESP32S3_KORVO
         bool "ESP32-S3 Korvo (GC2145 DVP camera preview on the 240x280 ST7789 LCD)"
+    config BOARD_TYPE_ESP32S3_KORVO_CLOUD
+        bool "ESP32-S3 korvo-cloud (WiFi channel: no App)"
+        select LV_FONT_MONTSERRAT_28
+        select MBEDTLS_DYNAMIC_BUFFER
+        select MBEDTLS_DYNAMIC_FREE_CONFIG_DATA
+        select SPIRAM_TRY_ALLOCATE_WIFI_LWIP
+        help
+            Built for the WiFi channel (Transport backend = WiFi below), but written against the
+            transport-neutral link status, so it also builds and runs on BLE — its home screen
+            then says "open the app" instead of showing an activation code.
     config BOARD_TYPE_ESP32S3_WORK_BADGE
         bool "ESP32-S3 Work Badge (electronic staff ID card, rorolee-s3 hardware, LVGL UI)"
         select LV_FONT_MONTSERRAT_20

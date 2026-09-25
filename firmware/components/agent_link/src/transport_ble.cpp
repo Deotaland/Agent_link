@@ -1179,6 +1179,9 @@ extern "C" bool agent_transport_ble_l2cap_ready(void) { return s_connected && s_
 // LSB-first internally, hence the reversal. false if the stack has no address yet.
 extern "C" bool agent_transport_ble_get_mac(uint8_t out[6]) {
     if (!out) return false;
+    // ble_hs_id_copy_addr() takes the host lock, which does not exist before nimble_port_init().
+    // ble_hs_synced() is a plain read and safe at any time.
+    if (!ble_hs_synced()) return false;
     uint8_t addr[6] = {};
     if (ble_hs_id_copy_addr(s_own_addr_type, addr, nullptr) != 0) return false;
     for (int i = 0; i < 6; ++i) out[i] = addr[5 - i];
@@ -1189,4 +1192,21 @@ extern "C" bool agent_transport_ble_get_mac(uint8_t out[6]) {
 extern "C" void agent_transport_ble_update_battery(uint8_t percent) {
     s_batt_level = (percent > 100) ? 100 : percent;
     if (s_connected && s_h_batt) (void)Notify(s_h_batt, &s_batt_level, 1);
+}
+
+// BLE side of agent_link_forget(). ble_store_clear() erases all bonds and CCCDs, from NVS too when
+// CONFIG_BT_NIMBLE_NVS_PERSIST is set. A peer connected right now is left connected.
+extern "C" esp_err_t agent_transport_ble_forget(void) {
+    // The store callbacks are installed when the host starts; same guard as get_mac.
+    if (!ble_hs_synced()) {
+        ESP_LOGW(TAG, "forget: BLE stack not running yet — call it after agent_link_start()");
+        return ESP_ERR_INVALID_STATE;
+    }
+    const int rc = ble_store_clear();
+    if (rc != 0) {
+        ESP_LOGE(TAG, "ble_store_clear failed: %d", rc);
+        return ESP_FAIL;
+    }
+    ESP_LOGW(TAG, "all bonds erased — the App has to pair again");
+    return ESP_OK;
 }

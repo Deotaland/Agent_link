@@ -19,20 +19,45 @@ boards/rorolee-s3/
 
 `Board` (in [`../main/board.h`](../main/board.h)) is capability-level, not driver-level. `Name()` and `Capabilities()` are required; the rest are optional overrides that default to no-ops.
 
-| Method                                   | Direction       | Override when the board has                                                      |
-| ---------------------------------------- | --------------- | -------------------------------------------------------------------------------- |
-| `Name()`                                 | —               | required: display and BLE advertising name                                       |
-| `Capabilities()`                         | —               | required: bitwise OR of the `AGENT_CAP_*` bits you support                       |
-| `Model()`                                | —               | a hardware model string the App checks before pushing an OTA (default: `Name()`) |
-| `OnLinkState(connected)`                 | —               | something to show or shut down when the App link comes and goes                  |
-| `PlayAudio(pcm16, bytes)` / `AudioEnd()` | Agent to device | a speaker                                                                        |
-| `ShowText(utf8)`                         | Agent to device | a screen                                                                         |
-| `Vibrate(ms)`                            | Agent to device | a motor                                                                          |
-| `SetLed(rgb)`                            | Agent to device | a controllable LED (the SDK synthesises a `led0` endpoint for it)                |
-| `OnListen(start, max_ms)`                | Agent to device | a mic the App can switch on (commands 0x3C/0x3D) — open an `AGENT_STREAM_AUDIO` stream from it |
-| `GetBatteryLevel()` / `IsCharging()`     | device to Agent | a fuel gauge                                                                     |
+| Method                                   | Direction       | Override when the board has                                                                                                                   |
+| ---------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Name()`                                 | —               | required: display and BLE advertising name                                                                                                    |
+| `Capabilities()`                         | —               | required: bitwise OR of the `AGENT_CAP_*` bits you support                                                                                    |
+| `Model()`                                | —               | a hardware model string the App checks before pushing an OTA (default: `Name()`)                                                              |
+| `OnLinkState(connected)`                 | —               | something to show or shut down when the link comes and goes                                                                                   |
+| `OnLinkStatus(st)`                       | —               | a screen: draw `st.title` / `st.hint` (and `st.code` while pairing) — the SDK writes the words, identically shaped on BLE and WiFi. See below |
+| `Platform()`                             | —               | always, if the board might ever ship on WiFi: which platform product this hardware is. Ignored on BLE, so returning it costs nothing          |
+| `PlayAudio(pcm16, bytes)` / `AudioEnd()` | Agent to device | a speaker                                                                                                                                     |
+| `ShowText(utf8)`                         | Agent to device | a screen                                                                                                                                      |
+| `Vibrate(ms)`                            | Agent to device | a motor                                                                                                                                       |
+| `SetLed(rgb)`                            | Agent to device | a controllable LED (the SDK synthesises a `led0` endpoint for it)                                                                             |
+| `OnListen(start, max_ms)`                | Agent to device | a mic the App can switch on (commands 0x3C/0x3D) — open an `AGENT_STREAM_AUDIO` stream from it                                                |
+| `GetBatteryLevel()` / `IsCharging()`     | device to Agent | a fuel gauge                                                                                                                                  |
 
 Set a capability bit only when you implement its method; anything you leave out keeps the base no-op.
+
+### One board, both transports
+
+Nothing in the `Board` interface depends on which transport the build selects (`menuconfig` → Agent Link Device → Transport backend). A board written against it builds and runs on BLE and on WiFi unchanged — `korvo-cloud/` is the worked example, and builds both ways.
+
+The one place the transports genuinely differ is how the device gets connected: over BLE a user opens the App; over WiFi they join a hotspot, then type an activation code into the console. The SDK folds both into one status, `agent_link_status_t`, delivered through `OnLinkStatus()`:
+
+| `st.phase`   | BLE                       | WiFi                                                                  |
+| ------------ | ------------------------- | --------------------------------------------------------------------- |
+| `SETUP`      | advertising: open the app | captive portal up: join the `<Name>-XXXX` hotspot                     |
+| `CONNECTING` | App connected, pairing    | joining WiFi / signing in / platform unreachable, retrying            |
+| `PAIRING`    | —                         | activation code in `st.code`, seconds left in `st.expires_s`          |
+| `BLOCKED`    | —                         | the platform refused: already bound, no agent attached, gateway error |
+| `CONNECTED`  | —                         | authenticated, heartbeat running, no data plane yet                   |
+| `READY`      | App subscribed            | (once the WiFi data plane exists)                                     |
+
+`st.title` and `st.hint` are already written for the situation in English.A board that draws them gets correct instructions on either transport and never learns which it is on. Switch on `st.phase` only to choose layout and colour, or to replace the wording.
+
+Three more calls work the same on both:
+
+- `agent_link_device_id()` — the device's identity, a UUIDv4 — one value on both transports: the `uuid` the App reads from 0x01 over BLE is the `device_sn` the platform lists over WiFi. For a settings or support screen.
+- `agent_link_forget()` — a board's factory reset: BLE erases its bonds, WiFi drops its platform credential. The identity above is kept, so the platform still recognises the unit afterwards.
+- `agent_link_state()` — still the data-plane gate: open a stream only when it is `AGENT_STATE_READY`.
 
 `Model()` is worth a second look: it is the string an incoming OTA image must claim, so the App
 cannot flash a build for other hardware onto this board. **Boards that share a PCB must return the
@@ -89,16 +114,17 @@ idf.py build flash
 
 The Board Type menu currently offers:
 
-| Directory           | Target   | Notes                                                        |
-| ------------------- | -------- | ------------------------------------------------------------ |
-| `rorolee-s3/`       | ESP32-S3 | Reference board: SH8501 AMOLED (factory short-code bring-up), ES8311/ES7210 codec, push-to-talk mic, BQ27220 fuel gauge, external 32kHz crystal |
-| `tem-monitor/`      | ESP32-S3 | Sensor board: SPA06 pressure/temperature and SHT30 temperature/humidity over I2C; a worked example of the device-I/O path; external 32kHz crystal |
-| `es8311-voice/`     | ESP32-S3 | Minimal example: one ES8311 codec doing full-duplex speaker + mic |
-| `es8311-asr/`       | ESP32-S3 | Minimal example: one ES8311 codec, mic-only, streams PCM to the App for live ASR |
-| `gc2145-camera/`    | ESP32-S3 | GC2145 DVP camera live preview on an ST7789 240x240 LCD      |
-| `korvo/`            | ESP32-S3 | Korvo (ESP32-S3-Korvo-2 V3 pinout): swipeable LVGL home screen on a CST816 touch ST7789 240x280 driven rotated 90° CCW, with three apps — live GC2145 preview, ES8311/ES7210 voice up the Agent's ASR channel, and WAV recording to the TF card |
-| `work-badge/`       | ESP32-S3 | Electronic staff badge on the **mass-production** board (pins from the shipping firmware; factory short code SH8501 panel): an LVGL name card the App fills in ([README](work-badge/README.md)) |
-| `esp32p4-waveshare/`| ESP32-P4 | Waveshare board with a CO5300 466x466 AMOLED                 |
+| Directory            | Target   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rorolee-s3/`        | ESP32-S3 | Reference board: SH8501 AMOLED (factory short-code bring-up), ES8311/ES7210 codec, push-to-talk mic, BQ27220 fuel gauge, external 32kHz crystal                                                                                                                                                                                                                                                                                                                                                    |
+| `tem-monitor/`       | ESP32-S3 | Sensor board: SPA06 pressure/temperature and SHT30 temperature/humidity over I2C; a worked example of the device-I/O path; external 32kHz crystal                                                                                                                                                                                                                                                                                                                                                  |
+| `es8311-voice/`      | ESP32-S3 | Minimal example: one ES8311 codec doing full-duplex speaker + mic                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `es8311-asr/`        | ESP32-S3 | Minimal example: one ES8311 codec, mic-only, streams PCM to the App for live ASR                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `gc2145-camera/`     | ESP32-S3 | GC2145 DVP camera live preview on an ST7789 240x240 LCD                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `korvo/`             | ESP32-S3 | Korvo (ESP32-S3-Korvo-2 V3 pinout): swipeable LVGL home screen on a CST816 touch ST7789 240x280 driven rotated 90° CCW, with three apps — live GC2145 preview, ES8311/ES7210 voice up the Agent's ASR channel, and WAV recording to the TF card                                                                                                                                                                                                                                                    |
+| `korvo-cloud/`       | ESP32-S3 | Same PCB as `korvo/`, built for the **WiFi channel**: the home screen is the link status — join the hotspot, the activation code to type into the console, online — and the camera is launched from an icon on the second page. No TF card (WiFi and TLS want that internal RAM). Written only against `agent_link_status_t`, so it also builds and runs on BLE, where the same screen says "open the app". Deliberately does **not** share `korvo`'s `Model()` — see the note in `korvo_cloud.cc` |
+| `work-badge/`        | ESP32-S3 | Electronic staff badge on the **mass-production** board (pins from the shipping firmware; factory short code SH8501 panel): an LVGL name card the App fills in ([README](work-badge/README.md))                                                                                                                                                                                                                                                                                                    |
+| `esp32p4-waveshare/` | ESP32-P4 | Waveshare board with a CO5300 466x466 AMOLED                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 Drivers used by more than one board live in [`common/`](common/)
 

@@ -167,16 +167,66 @@ typedef enum {
 } agent_transport_kind_t;
 
 /**
- * @brief WiFi transport configuration
+ * @brief Preset WiFi station credentials (optional).
  *
- * Used when transport includes WIFI. May be NULL and provisioned later via BLE.
+ * Usually left NULL: the WiFi backend then uses the credentials saved by its captive portal, and
+ * starts the portal if there are none. Ignored on BLE.
  */
 typedef struct agent_wifi_config_s {
-    const char* ssid;      // WiFi SSID
-    const char* password;  // WiFi password (can be NULL for open networks)
-    const char* endpoint;  // Deotaland cloud endpoint (signaling/media), e.g., "wss://agent.deotaland.ai/..."
-    const char* token;     // Device authentication token (can be NULL)
+    const char* ssid;
+    const char* password;
 } agent_wifi_config_t;
+
+/**
+ * @brief Identifies this hardware to the platform.
+ *
+ * Required over WiFi, where the device talks to the platform itself; unused over BLE, where the
+ * App does. Set it on every build so one board works on both transports.
+ */
+typedef struct {
+    const char* base_url;    ///< Platform root, no trailing slash, e.g. "https://api.example.com"
+    int         product_id;  ///< Platform product id for this hardware
+    const char* chip_type;   ///< e.g. "esp32-s3"
+} agent_platform_t;
+
+/**
+ * @brief Link progress for display, the same on every transport.
+ *
+ * Not the same as agent_state_t, which gates the data plane: while connecting, the state stays
+ * DISCONNECTED and the phase tells why.
+ */
+typedef enum {
+    AGENT_LINK_PHASE_IDLE = 0,    ///< Not started
+    AGENT_LINK_PHASE_SETUP,       ///< Needs the user: open the App (BLE) / join the hotspot (WiFi)
+    AGENT_LINK_PHASE_CONNECTING,  ///< In progress, no user action needed
+    AGENT_LINK_PHASE_PAIRING,     ///< Show @c code; the user enters it on the other side
+    AGENT_LINK_PHASE_BLOCKED,     ///< Refused by the peer; @c hint says what to do
+    AGENT_LINK_PHASE_CONNECTED,   ///< Peer reached, no data plane yet
+    AGENT_LINK_PHASE_READY,       ///< Fully usable: streams, events, OTA
+} agent_link_phase_t;
+
+/**
+ * @brief Link status with display text.
+ *
+ * @c title and @c hint are written by the SDK in English (the bundled fonts have no CJK glyphs).
+ * A board can show them as they are, or switch on @c phase and use its own wording.
+ */
+typedef struct {
+    agent_link_phase_t     phase;
+    agent_transport_kind_t transport;   ///< Rarely needed; boards should not depend on it
+    char                   title[32];   ///< Short headline, e.g. "Activation code"
+    char                   hint[112];   ///< What the user should do next
+    char                   code[8];     ///< PAIRING only: the code to display
+    uint32_t               expires_s;   ///< PAIRING only: seconds until the code expires
+    int                    detail;      ///< Transport-specific reason code (WiFi: platform code), or 0
+} agent_link_status_t;
+
+/**
+ * @brief Link status callback.
+ * @note Runs on a transport task (the NimBLE host or the WiFi cloud session). Copy what you need
+ *       and return, as with every agent_link callback.
+ */
+typedef void (*agent_link_status_cb_t)(const agent_link_status_t* st, void* ctx);
 
 /**
  * @brief Agent link configuration
@@ -189,8 +239,15 @@ typedef struct {
     const agent_output_cb_t* output;       ///< Agent→Device callbacks (NULL for pure sensor devices)
     agent_state_cb_t         on_state;     ///< Connection state callback (can be NULL)
     void*                    state_ctx;    ///< Context passed to on_state
+    agent_link_status_cb_t   on_status;    ///< Link status callback for display (can be NULL)
+    void*                    status_ctx;   ///< Context passed to on_status
     agent_transport_kind_t   transport;    ///< Transport backend (default 0 = BLE)
-    const agent_wifi_config_t* wifi;        ///< WiFi config (when transport includes WIFI; can be NULL for later provisioning)
+    /**
+     * @brief Platform identity (see agent_platform_t). Required for WiFi, ignored on BLE.
+     * @note The pointer is stored, not copied; point at a static.
+     */
+    const agent_platform_t*  platform;
+    const agent_wifi_config_t* wifi;        ///< Preset station credentials; NULL = use the captive portal
     const char*              manufacturer;  ///< Manufacturer name (0x2A29); NULL → "Deotaland"
     /**
      * @brief Hardware model (0x2A24, reported in 0x01); NULL → device_name.
@@ -220,6 +277,40 @@ void          agent_link_stop(void);
 
 /** Get current connection state */
 agent_state_t agent_link_state(void);
+
+// The next three functions are safe to call from any task, even before agent_link_init() (boards
+// are constructed before init and may call them from their constructors).
+
+/**
+ * @brief Current link status (the same snapshot on_status receives).
+ * @note Before init: phase IDLE, everything else zero.
+ */
+void agent_link_get_status(agent_link_status_t* out);
+
+/**
+ * @brief Device identity: a UUIDv4 in canonical 36-char form.
+ *
+ * The same value on both transports: the uuid field of the BLE 0x01 RequestDeviceInfo response,
+ * and the device_sn sent to the platform over WiFi. Stored in NVS, so it survives OTA;
+ * agent_link_forget() keeps it.
+ *
+ * @return NULL on a new unit until agent_link_start() creates it (the hardware RNG is only truly
+ *         random once RF is running).
+ */
+const char* agent_link_device_id(void);
+
+/**
+ * @brief Forget the pairing so the device can be set up again, e.g. from a factory-reset gesture.
+ *
+ * BLE: erases all stored bonds; the App has to pair again.
+ * WiFi: erases the platform credential; the device requests a new activation code. The platform
+ *       refuses it (AGENT_LINK_PHASE_BLOCKED) until the device is unbound in the console.
+ *
+ * Call it after agent_link_start(); it takes effect on the next connection attempt.
+ *
+ * @return ESP_OK, ESP_ERR_INVALID_STATE if called too early, or an error from the backend.
+ */
+esp_err_t agent_link_forget(void);
 
 // ============================================================================
 // Device → Agent: Input / Event / Status

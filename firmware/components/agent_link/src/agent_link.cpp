@@ -21,6 +21,7 @@
 #include "agent_link_ota.h"
 #include "audio_downlink.h"
 #include "agent_link_transport.h"
+#include "device_identity.h"
 #include "ota_service.h"
 #include "protocol.h"
 
@@ -31,12 +32,9 @@
 #include <vector>
 #include "esp_log.h"
 #include "esp_mac.h"
-#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "nvs.h"
-#include "nvs_flash.h"
 
 // Definition of the type agent_link_stream.h forward-declares. Global scope on purpose: an
 // anonymous-namespace copy would be a different type from the one in the public handle.
@@ -53,6 +51,12 @@ agent_output_cb_t   s_out   = {};
 bool                s_have_out = false;
 agent_state_t       s_state = AGENT_STATE_DISCONNECTED;
 agent_transport_t*  s_tx    = nullptr;
+
+// Last published link status, for agent_link_get_status(). Written from transport tasks, so locked.
+agent_link_status_t s_link_status = {};
+portMUX_TYPE        s_link_status_lock = portMUX_INITIALIZER_UNLOCKED;
+
+void PublishBle(agent_link_phase_t phase);   // defined with the other link-status code below
 // One slot per agent_stream_t. The handle a caller holds is the address of its slot, which is why
 // reopening a kind is harmless and why a disconnect can invalidate every stream at once.
 agent_stream_session s_streams[AGENT_STREAM_KIND_COUNT] = {
@@ -271,8 +275,8 @@ std::string BuildManifestJson() {
 // Send the manifest, fragmented into 0x18 IoManifest events over the control plane (send_ctrl).
 //   Each chunk payload = [chunk_idx(1)] [last(1: 0/1)] [json fragment...]; the App concatenates
 //   chunks in order until last=1, then parses the whole JSON.
-// Triggered: after the BLE peer subscribes to 0xFFC4 (OnLinkReady) / after WiFi connects (OnConn) /
-//   on the App's 0x34 fetch command.
+// Triggered: after the BLE peer subscribes to 0xFFC4 (OnLinkReady) / when WiFi reaches READY
+//   (SetLinkState) / on the App's 0x34 fetch command.
 void SendManifest(bool force) {
     if (s_io_count == 0) return;                    // no endpoints: no manifest
     if (!force && s_manifest_sent) return;          // already sent in this connection
@@ -322,40 +326,10 @@ void SendManifest(bool force) {
 
 // BLE: fired after the peer subscribes to the event channel 0xFFC4 (notifications are only
 // delivered from that point on) -> send the manifest.
-void OnLinkReady() { SendManifest(/*force=*/false); }
-
-// ── Device identity (0x01 RequestDeviceInfo) ───────────────────────────────────
-// A 16-byte identifier that survives reflashing, so the App keeps recognising the unit across
-// an OTA. Random on first boot, then kept in NVS
-// which stores a UUID v4 and puts its 16 raw bytes on the wire.
-constexpr const char* kNvsNamespace = "agent_link";
-constexpr const char* kNvsKeyUuid   = "dev_uuid";
-uint8_t s_device_uuid[16] = {};
-bool    s_device_uuid_ready = false;
-
-void EnsureDeviceUuid() {
-    if (s_device_uuid_ready) return;
-    nvs_handle_t h;
-    if (nvs_open(kNvsNamespace, NVS_READWRITE, &h) == ESP_OK) {
-        size_t len = sizeof(s_device_uuid);
-        if (nvs_get_blob(h, kNvsKeyUuid, s_device_uuid, &len) == ESP_OK && len == sizeof(s_device_uuid)) {
-            s_device_uuid_ready = true;
-        } else {
-            esp_fill_random(s_device_uuid, sizeof(s_device_uuid));
-            s_device_uuid[6] = static_cast<uint8_t>((s_device_uuid[6] & 0x0F) | 0x40);  // UUID v4
-            s_device_uuid[8] = static_cast<uint8_t>((s_device_uuid[8] & 0x3F) | 0x80);  // RFC 4122 variant
-            if (nvs_set_blob(h, kNvsKeyUuid, s_device_uuid, sizeof(s_device_uuid)) == ESP_OK) nvs_commit(h);
-            s_device_uuid_ready = true;
-            ESP_LOGI(TAG, "generated device UUID (persisted in NVS)");
-        }
-        nvs_close(h);
-        return;
-    }
-    // NVS unavailable: fall back to the MAC so the field is still stable for this boot.
-    esp_fill_random(s_device_uuid, sizeof(s_device_uuid));
-    esp_read_mac(s_device_uuid, ESP_MAC_BT);
-    s_device_uuid_ready = true;
-    ESP_LOGW(TAG, "NVS unavailable — device UUID is not persistent this boot");
+// BLE: the App subscribed to the event channel; notifications are delivered from here on.
+void OnLinkReady() {
+    SendManifest(/*force=*/false);
+    PublishBle(AGENT_LINK_PHASE_READY);
 }
 
 const char* FirmwareVersion() {
@@ -371,7 +345,13 @@ const char* DeviceModel() {
 //   uuid(16) mac(6) battery(1) voltage_mv(2 LE) wifi_state(1)
 //   ver_len(1) version  profile_len(1) profile  model_len(1) model
 size_t BuildDeviceInfo(uint8_t* out, size_t cap) {
-    EnsureDeviceUuid();
+    // Same identity the WiFi channel reports (device_identity.h). Minting is safe: 0x01 only arrives
+    // over a live BLE connection, so RF is running. Without NVS, send the nil UUID rather than a
+    // random one that would change every boot.
+    uint8_t uuid[16] = {};
+    if (dev_identity_load(/*allow_mint=*/true) != ESP_OK || !dev_identity_uuid(uuid)) {
+        memset(uuid, 0, sizeof uuid);
+    }
     const char* ver   = FirmwareVersion();
     const char* model = DeviceModel();
     const size_t ver_len   = strnlen(ver, 255);
@@ -380,7 +360,7 @@ size_t BuildDeviceInfo(uint8_t* out, size_t cap) {
     if (cap < need) return 0;
 
     size_t k = 0;
-    memcpy(out + k, s_device_uuid, 16); k += 16;
+    memcpy(out + k, uuid, 16); k += 16;
     uint8_t mac[6] = {};
     if (!agent_transport_ble_get_mac(mac)) esp_read_mac(mac, ESP_MAC_BT);  // MSB-first either way
     memcpy(out + k, mac, 6); k += 6;
@@ -472,29 +452,100 @@ void ResetLinkState() {
     for (auto& st : s_streams) st.open = false;
 }
 
-void OnConn(bool connected) {
-    // The protocol is plaintext with no encryption gate, so the link is usable as soon as it connects -> go READY.
-    s_state = connected ? AGENT_STATE_READY : AGENT_STATE_DISCONNECTED;
+// Transport -> core: the link state changed. BLE reports a bool (see OnConn); WiFi reports the state
+// itself, since CONNECTED (platform reachable) and READY (data plane up) are separate steps there.
+void SetLinkState(agent_state_t state) {
+    const bool was_up = (s_state != AGENT_STATE_DISCONNECTED);
+    const bool is_up  = (state   != AGENT_STATE_DISCONNECTED);
+    s_state = state;
+
     // Cleared on connect too, not just disconnect: the manifest is re-sent after the peer
-    // subscribes (BLE) or connects (WiFi), and any stream slot left over from a previous peer
-    // names a session this one has never heard of.
+    // subscribes (BLE) or the data plane comes up (WiFi), and any stream slot left over from a
+    // previous peer names a session this one has never heard of.
     ResetLinkState();
-    if (!connected) {
-        // nothing further: ResetLinkState already dropped the stale sessions
-    } else {
-        // Clear the battery cache on connect so the next report_battery force-resends the current value (initial sync for the App).
+
+    if (is_up && !was_up) {
+        // Clear the battery cache so the next report_battery force-resends the current value
+        // (initial sync for the peer).
         s_bat_pct = -1; s_bat_chg = -1; s_bat_low_armed = true;
-        // WiFi: notifications work as soon as the WS connects -> send the manifest immediately.
-        // BLE: must wait for the peer to subscribe to 0xFFC4; OnLinkReady sends it (otherwise the notify is dropped).
-        if (s_cfg.transport == AGENT_TRANSPORT_WIFI) SendManifest(/*force=*/false);
     }
-    // Link up confirms a freshly OTA'd image (the link is the only upgrade path, so it is the
-    // self-test that matters); link down aborts an upgrade that was mid-flight.
-    agentlink::ota::OnLinkState(connected);
-    // Downlink audio: link down disarms the session and resets the codec to raw PCM, which is
-    // the documented per-connection default.
-    agentlink::audio::OnLinkState(connected);
+    // The manifest needs a control plane (READY). On BLE it is sent from OnLinkReady instead, once
+    // the peer has subscribed to 0xFFC4; before that the notify would be dropped.
+    if (state == AGENT_STATE_READY && s_cfg.transport == AGENT_TRANSPORT_WIFI) {
+        SendManifest(/*force=*/false);
+    }
+    if (was_up != is_up) {
+        // Link up confirms a freshly OTA'd image (the link is the only upgrade path, so it is the
+        // self-test that matters); link down aborts an upgrade that was mid-flight.
+        agentlink::ota::OnLinkState(is_up);
+        // Downlink audio: link down disarms the session and resets the codec to raw PCM, which is
+        // the documented per-connection default.
+        agentlink::audio::OnLinkState(is_up);
+    }
     if (s_cfg.on_state) s_cfg.on_state(s_state, s_cfg.state_ctx);
+}
+
+// ── Link status ─────────────────────────────────────────────────────────────────
+// Boards get agent_link_status_t whatever the transport. The WiFi backend composes it itself
+// (Compose() in transport_wifi.cpp), since its steps don't fit conn/ready; for BLE it is derived
+// here from start, OnConn and OnLinkReady.
+
+// Compared field by field: the struct is built in several places and its padding may differ.
+bool SameStatus(const agent_link_status_t& a, const agent_link_status_t& b) {
+    return a.phase == b.phase && a.transport == b.transport && a.detail == b.detail &&
+           a.expires_s == b.expires_s && strcmp(a.title, b.title) == 0 &&
+           strcmp(a.hint, b.hint) == 0 && strcmp(a.code, b.code) == 0;
+}
+
+void PublishStatus(const agent_link_status_t& st) {
+    taskENTER_CRITICAL(&s_link_status_lock);
+    const bool same = SameStatus(s_link_status, st);
+    s_link_status = st;
+    taskEXIT_CRITICAL(&s_link_status_lock);
+    // Drop repeats (e.g. "no agent" after every WiFi retry). Countdown ticks still pass, since
+    // their hint changes.
+    if (same) return;
+    if (s_cfg.on_status) s_cfg.on_status(&st, s_cfg.status_ctx);
+}
+
+void PublishBle(agent_link_phase_t phase) {
+    agent_link_status_t st = {};
+    st.phase     = phase;
+    st.transport = AGENT_TRANSPORT_BLE;
+    const char* name = (s_cfg.device_name && s_cfg.device_name[0]) ? s_cfg.device_name : "this device";
+    switch (phase) {
+    case AGENT_LINK_PHASE_SETUP:
+        snprintf(st.title, sizeof st.title, "Open the app");
+        snprintf(st.hint,  sizeof st.hint,  "Open the Deotaland app on your phone and connect to %s", name);
+        break;
+    case AGENT_LINK_PHASE_CONNECTING:
+        snprintf(st.title, sizeof st.title, "Connecting");
+        snprintf(st.hint,  sizeof st.hint,  "Pairing with the app");
+        break;
+    case AGENT_LINK_PHASE_READY:
+        snprintf(st.title, sizeof st.title, "Connected");
+        snprintf(st.hint,  sizeof st.hint,  "Connected to the app");
+        break;
+    default:
+        break;
+    }
+    PublishStatus(st);
+}
+
+void OnConn(bool connected) {
+    // BLE: the protocol is plaintext with no encryption gate, so the link is usable as soon as it
+    // connects -> straight to READY.
+    SetLinkState(connected ? AGENT_STATE_READY : AGENT_STATE_DISCONNECTED);
+    // The phase only reaches READY once the App subscribes (OnLinkReady); pairing may still be in
+    // progress until then. On disconnect, advertising resumes.
+    PublishBle(connected ? AGENT_LINK_PHASE_CONNECTING : AGENT_LINK_PHASE_SETUP);
+}
+
+void OnWifiState(agent_state_t state) { SetLinkState(state); }
+
+// Already an agent_link_status_t (the backend translated it); pass it through.
+void OnWifiStatus(const agent_link_status_t* st) {
+    if (st) PublishStatus(*st);
 }
 
 // Transport -> core: a control frame arrived (peer wrote the command channel 0xFFC1).
@@ -748,9 +799,12 @@ esp_err_t agent_link_init(const agent_link_config_t* cfg) {
     case AGENT_TRANSPORT_WIFI:
         s_tx = agent_transport_wifi();
         agent_transport_wifi_set_config(s_cfg.wifi);
+        agent_transport_wifi_set_platform(s_cfg.platform);
         agent_transport_wifi_set_name(s_cfg.device_name);  // SoftAP SSID prefix for captive-portal provisioning
         agent_transport_wifi_set_recv(&OnCtrlFrame);
-        agent_transport_wifi_set_conn(&OnConn);
+        // set_state rather than set_conn: WiFi distinguishes CONNECTED from READY (see SetLinkState).
+        agent_transport_wifi_set_state(&OnWifiState);
+        agent_transport_wifi_set_status(&OnWifiStatus);   // -> agent_link_config_t::on_status
         agent_transport_wifi_set_stream_recv(&OnStreamData);
         break;
     case AGENT_TRANSPORT_BOTH:
@@ -808,7 +862,14 @@ esp_err_t agent_link_start(void) {
     // Start the transport backend (BLE: NimBLE advertising + GATT Service C). Control plane
     // (commands/events) is wired; the data plane rides whatever channels the backend provides.
     if (!s_tx || !s_tx->start) return ESP_ERR_INVALID_STATE;
-    return s_tx->start(s_tx->impl);
+    // BLE reports "open the app" here; the WiFi backend reports its first step from inside start().
+    if (s_cfg.transport != AGENT_TRANSPORT_WIFI) PublishBle(AGENT_LINK_PHASE_SETUP);
+    const esp_err_t r = s_tx->start(s_tx->impl);
+
+    // RF is running once start() returns (BLE enabled the controller, WiFi called
+    // esp_wifi_start()), so a new identity can be minted from a true random source.
+    if (r == ESP_OK) (void)dev_identity_load(/*allow_mint=*/true);
+    return r;
 }
 
 void agent_link_stop(void) {
@@ -817,6 +878,36 @@ void agent_link_stop(void) {
     // stop() does not go through the transport's disconnect callback, so it has to do this itself
     // or a later start() comes up believing streams from the previous session are still open.
     ResetLinkState();
+
+    agent_link_status_t st = {};
+    st.phase     = AGENT_LINK_PHASE_IDLE;
+    st.transport = s_cfg.transport;
+    PublishStatus(st);
+}
+
+void agent_link_get_status(agent_link_status_t* out) {
+    if (!out) return;
+    taskENTER_CRITICAL(&s_link_status_lock);
+    *out = s_link_status;
+    taskEXIT_CRITICAL(&s_link_status_lock);
+}
+
+// The shared device identity (device_identity.h); no backend is involved. Read-only, so it is safe
+// before agent_link_init() (boards are constructed first and may call this from their constructor).
+// NULL on a new unit until agent_link_start() mints the identity.
+const char* agent_link_device_id(void) {
+    if (dev_identity_load(/*allow_mint=*/false) != ESP_OK) return nullptr;
+    const char* sn = dev_identity_sn();
+    return (sn && sn[0]) ? sn : nullptr;
+}
+
+// Factory reset, the same call on both transports: each backend forgets the credential its peer
+// knows. The device identity is kept, so the platform still recognises the unit.
+esp_err_t agent_link_forget(void) {
+    // Before init s_cfg is all zeros, which reads as AGENT_TRANSPORT_BLE; refuse rather than guess.
+    if (!s_tx) return ESP_ERR_INVALID_STATE;
+    return s_cfg.transport == AGENT_TRANSPORT_WIFI ? agent_transport_wifi_forget()
+                                                   : agent_transport_ble_forget();
 }
 
 agent_state_t agent_link_state(void) { return s_state; }

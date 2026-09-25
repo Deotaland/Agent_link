@@ -13,6 +13,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+extern "C" void cam_stop(void);
+extern "C" void cam_start(void);
+
 namespace {
 constexpr const char* TAG = "gc2145";
 }  // namespace
@@ -107,10 +110,33 @@ void Gc2145Camera::SwapBytes(camera_fb_t* fb) {
     for (size_t i = 0, n = fb->len / 2; i < n; ++i) p[i] = __builtin_bswap16(p[i]);
 }
 
+void Gc2145Camera::Pause() {
+    if (!ready_ || paused_) return;
+    cam_stop();
+    paused_ = true;
+    ESP_LOGI(TAG, "capture paused");
+}
+
+void Gc2145Camera::Resume() {
+    if (!ready_ || !paused_) return;
+    // Frames queued before the pause are still in the driver's queue, and the next fb_get would hand
+    // one back: a preview would flash the scene as it was minutes ago, and a snapshot would send it.
+    // There can be no more of them than there are frame buffers.
+    discard_ = cfg_.fb_count;
+    cam_start();
+    paused_ = false;
+    ESP_LOGI(TAG, "capture resumed");
+}
+
 camera_fb_t* Gc2145Camera::Capture() {
-    if (!ready_) return nullptr;
+    if (!ready_ || paused_) return nullptr;
 
     camera_fb_t* fb = esp_camera_fb_get();
+    while (fb && discard_ > 0) {   // see Resume()
+        --discard_;
+        esp_camera_fb_return(fb);
+        fb = esp_camera_fb_get();
+    }
     if (!fb) {
         ESP_LOGW(TAG, "fb_get failed");
         return nullptr;

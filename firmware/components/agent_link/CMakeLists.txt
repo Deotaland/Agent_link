@@ -7,12 +7,17 @@ idf_component_register(
         "src/ota_service.cpp"
         "src/audio_downlink.cpp"
         "src/protocol.cpp"
+        "src/device_identity.cc"
+        "src/cloud/cloud_credential.cc"
+        "src/cloud/cloud_api.cc"
+        "src/cloud/cloud_session.cc"
     INCLUDE_DIRS "include"
-    PRIV_INCLUDE_DIRS "src"
+    PRIV_INCLUDE_DIRS "src" "src/cloud"
     REQUIRES esp_common
     PRIV_REQUIRES log bt nvs_flash freertos
                   esp_wifi esp_netif esp_event esp_http_server esp_timer lwip
                   app_update esp_partition esp_app_format mbedtls
+                  esp_http_client json
     EMBED_TXTFILES "portal/portal.html" "portal/connecting.html"
 )
 
