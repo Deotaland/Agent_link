@@ -23,3 +23,7 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # once a board does real work in an agent_output_cb_t callback — those run on this task, and a
 # directory scan through VFS/FATFS/SDMMC overflowed it. See agent_link.h's note on callback context.
 CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=6144
+
+# Dynamic: freed once the socket is up.
+CONFIG_WS_BUFFER_SIZE=2048
+CONFIG_WS_DYNAMIC_BUFFER=y

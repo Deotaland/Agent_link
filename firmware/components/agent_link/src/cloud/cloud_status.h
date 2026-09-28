@@ -3,7 +3,7 @@
 // agent_link_status_t before anything outside the component sees them.
 //
 //   no IP -> claim-code -> show code -> poll bind-status -> (user claims it in the console)
-//         -> auth_key saved -> auth -> online
+//         -> auth_key saved -> auth -> online (heartbeat; mqtt-token -> MQTT)
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -20,7 +20,7 @@ typedef enum {
     AGENT_CLOUD_NO_NETWORK,   ///< No usable network (joining, or the portal is up)
     AGENT_CLOUD_CLAIMING,     ///< Showing an activation code, waiting for it to be claimed
     AGENT_CLOUD_BOUND,        ///< Has an auth_key, authenticating
-    AGENT_CLOUD_ONLINE,       ///< Authenticated, heartbeat running
+    AGENT_CLOUD_ONLINE,       ///< Authenticated: heartbeat running, MQTT up or coming up
     AGENT_CLOUD_FAULT,        ///< Refused or unreachable; see api_code
 
     // Refusals that retrying cannot clear; they need action in the console.

@@ -45,4 +45,16 @@ config AGENT_LINK_OTA_RX_BUFFER_KB
 
 endif # AGENT_LINK_OTA_ENABLE
 
+config AGENT_LINK_MQTT_TOKEN_RENEW_S
+    int "WiFi: renew the MQTT token this many seconds after issue (0 = before it expires)"
+    range 0 86400
+    default 0
+    help
+        0 (the default, and the value to ship): an MQTT token is renewed a tenth of its lifetime
+        before it expires, about six days into the platform's 7-day tokens, and at once whenever
+        the broker refuses it.
+
+        A small value such as 120 has the device renew that long after each token is issued and
+        reconnect MQTT with the new one, so the renewal can be watched on the bench.
+
 endmenu

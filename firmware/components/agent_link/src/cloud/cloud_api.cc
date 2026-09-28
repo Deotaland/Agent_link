@@ -181,7 +181,7 @@ esp_err_t PostJson(const char* path, const char* body, cJSON** root_out, cJSON**
 }
 
 // data is {} on a business error and null on a validation error, so never assume an object.
-const cJSON* Obj(cJSON* data, const char* key) {
+cJSON* Obj(cJSON* data, const char* key) {
     if (!cJSON_IsObject(data)) return nullptr;
     return cJSON_GetObjectItemCaseSensitive(data, key);
 }
@@ -195,6 +195,21 @@ bool Str(cJSON* data, const char* key, char* out, size_t cap) {
     const cJSON* j = Obj(data, key);
     if (!cJSON_IsString(j) || !j->valuestring) return false;
     snprintf(out, cap, "%s", j->valuestring);
+    return true;
+}
+
+// Like Str, for a value that is no use cut short. Absent is not an error here (out stays empty);
+// too long for out is.
+bool StrWhole(cJSON* data, const char* key, char* out, size_t cap) {
+    const cJSON* j = Obj(data, key);
+    if (!cJSON_IsString(j) || !j->valuestring) return true;
+    const size_t n = strlen(j->valuestring);
+    if (n >= cap) {
+        ESP_LOGE(TAG, "\"%s\" is %uB, room for %uB — refusing to truncate it",
+                 key, static_cast<unsigned>(n), static_cast<unsigned>(cap - 1));
+        return false;
+    }
+    memcpy(out, j->valuestring, n + 1);
     return true;
 }
 }  // namespace
@@ -330,4 +345,42 @@ esp_err_t cloud_api_heartbeat(const char* auth_key, cloud_api_err_t* err) {
     esp_err_t r = PostJson("/api/device-gateway/heartbeat", body, &root, nullptr, err);
     if (root) cJSON_Delete(root);
     return r;
+}
+
+esp_err_t cloud_api_mqtt_token(const char* auth_key, cloud_mqtt_token_t* out, cloud_api_err_t* err) {
+    if (!auth_key || !out) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof *out);
+
+    char body[160];
+    snprintf(body, sizeof body, "{\"auth_key\":\"%s\",\"client_type\":\"device\"}", auth_key);
+
+    cJSON* root = nullptr;
+    cJSON* data = nullptr;
+    esp_err_t r = PostJson("/api/device-gateway/mqtt-token", body, &root, &data, err);
+    if (r != ESP_OK) return r;
+
+    cJSON* channels = Obj(data, "channels");
+    cJSON* down     = Obj(channels, "down");
+    cJSON* up       = Obj(channels, "up");
+    const bool whole =
+        StrWhole(data, "protocol",   out->protocol,       sizeof out->protocol) &&
+        StrWhole(data, "broker_url", out->host,           sizeof out->host) &&
+        StrWhole(data, "path",       out->path,           sizeof out->path) &&
+        StrWhole(data, "client_id",  out->client_id,      sizeof out->client_id) &&
+        StrWhole(data, "username",   out->username,       sizeof out->username) &&
+        StrWhole(data, "password",   out->password,       sizeof out->password) &&
+        StrWhole(down, "default",    out->topic_down,     sizeof out->topic_down) &&
+        StrWhole(down, "ota",        out->topic_ota_down, sizeof out->topic_ota_down) &&
+        StrWhole(up,   "default",    out->topic_up,       sizeof out->topic_up) &&
+        StrWhole(up,   "event",      out->topic_event_up, sizeof out->topic_event_up);
+    const uint32_t port = U32(data, "broker_port", 0);
+    out->port       = port <= 0xFFFF ? static_cast<uint16_t>(port) : 0;
+    out->expires_in = U32(data, "expires_in", 0);
+    out->expire_at  = U32(data, "expire_at", 0);
+    cJSON_Delete(root);
+
+    if (whole && out->protocol[0] && out->host[0]) return ESP_OK;
+    if (whole) ESP_LOGE(TAG, "mqtt-token: no protocol or broker_url in a successful response");
+    memset(out, 0, sizeof *out);   // no half-parsed password left behind
+    return ESP_ERR_INVALID_RESPONSE;
 }

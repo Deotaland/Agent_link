@@ -1,6 +1,7 @@
 // Cloud session state machine, internal to the WiFi backend. See cloud_status.h.
 //
-// One task, one blocking HTTP request at a time.
+// One task, one blocking HTTP request at a time. The MQTT client (cloud_mqtt.h) runs on a task of
+// its own, which this one starts and stops.
 
 #include "cloud_session.h"
 
@@ -9,10 +10,13 @@
 #include "agent_link_ota.h"
 #include "cloud_api.h"
 #include "cloud_credential.h"
+#include "cloud_mqtt.h"
 #include "device_identity.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -41,6 +45,17 @@ uint32_t BackoffFor(const cloud_api_err_t& err) {
     return err.code > 0 ? kFaultRetryMs : kRetryMs;
 }
 
+// An MQTT token is renewed a tenth of its lifetime before it expires, but never sooner than this
+// after it was issued, whatever lifetime it claims.
+constexpr uint32_t kTokenMinLifeS = 30;
+
+// A token the broker refuses at this age or younger is not the problem, so the next one is asked for
+// only after kFaultRetryMs. Asking at once would loop against a broker that refuses every token.
+constexpr uint32_t kTokenFreshS = 60;
+
+// Session task notification bits.
+constexpr uint32_t kNotifyMqttRefused = 1u << 0;
+
 // Agent config returned by auth (not parsed yet).
 constexpr size_t kAgentJsonCap = 2048;
 
@@ -49,6 +64,14 @@ agent_cloud_status_t s_status = {};
 TaskHandle_t         s_task   = nullptr;
 bool                 s_run    = false;
 char*                s_agent_json = nullptr;
+
+// MQTT credentials. Session task only, and RAM only: the platform issues them on demand, and NVS is
+// not encrypted.
+cloud_mqtt_token_t* s_token        = nullptr;   // allocated once, in PSRAM when there is some
+bool                s_token_ok     = false;     // *s_token holds credentials the broker has not refused
+int64_t             s_token_issued = 0;         // esp_timer time it arrived
+int64_t             s_token_renew  = 0;         // renew it from then on; 0 = only when refused
+int64_t             s_token_retry  = 0;         // do not ask for one before then
 
 portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -207,7 +230,145 @@ bool ClaimLoop() {
     return false;
 }
 
-// Authenticate, then keep the link alive with heartbeats. Returns when the key stops working.
+enum class TokenResult { kOk, kLater, kKeyRevoked, kNoAgent };
+
+// Ask for MQTT credentials. A revoked key and a missing agent are handled as auth handles them; any
+// other failure leaves the device online over HTTP and asks again after the usual backoff.
+TokenResult FetchToken() {
+    cloud_api_err_t err = {};
+    const esp_err_t r   = cloud_api_mqtt_token(cloud_cred_auth_key(), s_token, &err);
+    const int64_t   now = esp_timer_get_time();
+    if (r != ESP_OK) {
+        s_token_ok = false;   // the request cleared it
+        if (HandleRevoked(err)) return TokenResult::kKeyRevoked;
+        if (err.code == CLOUD_API_NO_AGENT) {
+            PublishFailure(AGENT_CLOUD_NO_AGENT, err);
+            return TokenResult::kNoAgent;
+        }
+        s_token_retry = now + static_cast<int64_t>(BackoffFor(err)) * 1000;
+        ESP_LOGW(TAG, "no MQTT token (code=%d) — asking again in %us",
+                 err.code, static_cast<unsigned>(BackoffFor(err) / 1000));
+        return TokenResult::kLater;
+    }
+
+    // The platform issues the client id as the device_sn; use that if the field is missing.
+    if (!s_token->client_id[0]) {
+        snprintf(s_token->client_id, sizeof s_token->client_id, "%s", dev_identity_sn());
+    }
+    s_token_ok     = true;
+    s_token_issued = now;
+    s_token_retry  = 0;
+
+    // A tenth of the lifetime early; 0 when the platform gives no lifetime.
+    uint32_t after = s_token->expires_in - s_token->expires_in / 10;
+#if CONFIG_AGENT_LINK_MQTT_TOKEN_RENEW_S > 0
+    after = CONFIG_AGENT_LINK_MQTT_TOKEN_RENEW_S;
+    ESP_LOGW(TAG, "CONFIG_AGENT_LINK_MQTT_TOKEN_RENEW_S=%u: renewing early, for bench testing only",
+             static_cast<unsigned>(after));
+#endif
+    if (after) {
+        if (after < kTokenMinLifeS) after = kTokenMinLifeS;
+        s_token_renew = now + static_cast<int64_t>(after) * 1000000;
+        ESP_LOGI(TAG, "MQTT token for %s://%s: valid %us, renewing it in %us", s_token->protocol,
+                 s_token->host, static_cast<unsigned>(s_token->expires_in),
+                 static_cast<unsigned>(after));
+    } else {
+        s_token_renew = 0;
+        ESP_LOGW(TAG, "MQTT token for %s://%s has no lifetime — renewing it only when refused",
+                 s_token->protocol, s_token->host);
+    }
+    return TokenResult::kOk;
+}
+
+// The broker refused our credentials. Runs on the MQTT task; the session task acts on it. s_task is
+// valid here because the session stops the client before it exits.
+void OnMqttRefused(int /*connack_code*/, void* /*ctx*/) {
+    xTaskNotify(s_task, kNotifyMqttRefused, eSetBits);
+}
+
+// Stop the client, and drop any refusal it reported that is still pending: once the stop returns
+// its task is gone, so the refusal is stale and must not tear down the next client.
+void StopMqtt() {
+    cloud_mqtt_stop();
+    ulTaskNotifyValueClear(nullptr, kNotifyMqttRefused);
+}
+
+void HandleMqttRefused() {
+    StopMqtt();   // it would go on retrying with the refused credentials
+    s_token_ok = false;
+    const int64_t  now = esp_timer_get_time();
+    const uint32_t age = static_cast<uint32_t>((now - s_token_issued) / 1000000);
+    if (age < kTokenFreshS) {
+        s_token_retry = now + static_cast<int64_t>(kFaultRetryMs) * 1000;
+        ESP_LOGW(TAG, "broker refused a token issued %us ago — asking for another in %us",
+                 static_cast<unsigned>(age), static_cast<unsigned>(kFaultRetryMs / 1000));
+    } else {
+        s_token_retry = 0;
+        ESP_LOGW(TAG, "broker refused our token — asking for a new one");
+    }
+}
+
+// Why StayOnline() returned.
+enum class Leave {
+    kStopped,     // cloud_session_stop()
+    kNoNetwork,   // authenticate again once it is back
+    kKeyGone,     // revoked or forgotten: claim again
+    kNoAgent,     // back off, then authenticate again
+};
+
+// Authenticated: heartbeats and the MQTT connection, in the order auth -> mqtt-token -> MQTT. The
+// token is renewed shortly before it expires or at once when the broker refuses it, and is otherwise
+// kept, across network drops too. The link stays CONNECTED: MQTT carries nothing yet.
+Leave StayOnline() {
+    int64_t next_beat = esp_timer_get_time() + static_cast<int64_t>(kHeartbeatMs) * 1000;
+    Leave   why;
+    for (;;) {
+        if (!s_run)                 { why = Leave::kStopped;   break; }
+        if (!cloud_cred_is_bound()) { why = Leave::kKeyGone;   break; }
+        if (!NetReady())            { why = Leave::kNoNetwork; break; }
+        const int64_t now = esp_timer_get_time();
+
+        const bool renew = !s_token_ok || (s_token_renew && now >= s_token_renew);
+        if (renew && now >= s_token_retry) {
+            const TokenResult t = FetchToken();
+            if (t == TokenResult::kKeyRevoked) { why = Leave::kKeyGone; break; }
+            if (t == TokenResult::kNoAgent)    { why = Leave::kNoAgent; break; }
+            if (t == TokenResult::kOk && cloud_mqtt_started()) {
+                ESP_LOGI(TAG, "token renewed — reconnecting MQTT with it");
+                StopMqtt();
+            }
+        }
+        if (s_token_ok && !cloud_mqtt_started() &&
+            cloud_mqtt_start(s_token, &OnMqttRefused, nullptr) != ESP_OK) {
+            // Unusable as issued (a protocol without TLS), or no memory: ask for another later.
+            s_token_ok    = false;
+            s_token_retry = now + static_cast<int64_t>(kFaultRetryMs) * 1000;
+        }
+
+        if (now >= next_beat) {
+            next_beat = now + static_cast<int64_t>(kHeartbeatMs) * 1000;
+            cloud_api_err_t hb = {};
+            if (cloud_api_heartbeat(cloud_cred_auth_key(), &hb) != ESP_OK) {
+                if (HandleRevoked(hb)) { why = Leave::kKeyGone; break; }
+                // Anything else: stay online and retry on the next beat.
+                ESP_LOGW(TAG, "heartbeat failed (code=%d) — staying online", hb.code);
+            }
+        }
+
+        // Sleep until the broker refuses us, or for a second: the network and the deadlines above
+        // are polled.
+        uint32_t bits = 0;
+        if (xTaskNotifyWait(0, UINT32_MAX, &bits, pdMS_TO_TICKS(kNetPollMs)) == pdTRUE &&
+            (bits & kNotifyMqttRefused)) {
+            HandleMqttRefused();
+        }
+    }
+    StopMqtt();
+    if (why == Leave::kKeyGone) s_token_ok = false;   // issued against a key that is gone
+    return why;
+}
+
+// Authenticate, then stay online. Returns when the key stops working.
 void OnlineLoop() {
     while (s_run && cloud_cred_is_bound()) {
         WaitForNet();
@@ -238,22 +399,11 @@ void OnlineLoop() {
                      static_cast<unsigned>(strlen(s_agent_json)));
         }
 
-        // TODO: fetch an MQTT token and connect the runtime plane once the platform defines it.
-        // Until then an authenticated device stays ONLINE on heartbeats alone.
         Publish(AGENT_CLOUD_ONLINE, &err);
         ESP_LOGI(TAG, "online");
 
-        while (s_run) {
-            vTaskDelay(pdMS_TO_TICKS(kHeartbeatMs));
-            if (!s_run) return;
-            if (!NetReady()) break;   // lost the network; re-auth when it comes back
-
-            cloud_api_err_t hb = {};
-            if (cloud_api_heartbeat(cloud_cred_auth_key(), &hb) == ESP_OK) continue;
-            if (HandleRevoked(hb)) return;
-            // Anything else: stay online and retry on the next beat.
-            ESP_LOGW(TAG, "heartbeat failed (code=%d) — staying online", hb.code);
-        }
+        // No agent: wait as after auth's own refusal, then authenticate again.
+        if (StayOnline() == Leave::kNoAgent) vTaskDelay(pdMS_TO_TICKS(kFaultRetryMs));
     }
 }
 
@@ -288,6 +438,13 @@ esp_err_t cloud_session_start(const cloud_session_config_t* cfg) {
         s_agent_json = static_cast<char*>(calloc(1, kAgentJsonCap));
         if (!s_agent_json) return ESP_ERR_NO_MEM;
     }
+    if (!s_token) {
+        // Only this task touches it, so PSRAM will do, and internal RAM is the scarcer.
+        s_token = static_cast<cloud_mqtt_token_t*>(heap_caps_calloc(1, sizeof *s_token, MALLOC_CAP_SPIRAM));
+        if (!s_token) s_token = static_cast<cloud_mqtt_token_t*>(calloc(1, sizeof *s_token));
+        if (!s_token) return ESP_ERR_NO_MEM;
+    }
+    s_token_ok = false;
 
     memset(&s_status, 0, sizeof s_status);
     s_status.state = AGENT_CLOUD_IDLE;

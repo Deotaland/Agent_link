@@ -55,6 +55,29 @@ typedef struct {
 } cloud_bind_t;
 
 /**
+ * @brief mqtt-token result: where the broker is, how to log in to it, and the device's topics.
+ *
+ * Kept in RAM only. The platform issues one against the auth_key whenever asked, and NVS is stored
+ * in plain text. Strings arrive whole or the call fails: a truncated password or topic would only
+ * show up later, as a refusal from the broker.
+ */
+typedef struct {
+    char     protocol[8];         ///< "wss" (MQTT over WebSocket over TLS) or "mqtts"
+    char     host[64];            ///< broker_url: a host name, not a URL
+    uint16_t port;                ///< broker_port; 0 = the protocol's default
+    char     path[32];            ///< WebSocket path, e.g. "/mqtt"
+    char     client_id[48];       ///< the device_sn
+    char     username[64];        ///< opaque
+    char     password[640];       ///< a JWT. CONNECT carries it with the id and username in esp-mqtt's 1KB buffer
+    uint32_t expires_in;          ///< seconds the password stays valid from issue; 0 = not given
+    uint32_t expire_at;           ///< the same as Unix time. Not used: the device has no wall clock
+    char     topic_down[96];      ///< channels.down.default: messages to the device
+    char     topic_ota_down[96];  ///< channels.down.ota: firmware updates
+    char     topic_up[96];        ///< channels.up.default
+    char     topic_event_up[96];  ///< channels.up.event
+} cloud_mqtt_token_t;
+
+/**
  * @brief Set the platform root and allocate the response buffer.
  * @param base_url No trailing slash, e.g. "https://api.example.com".
  */
@@ -89,6 +112,13 @@ esp_err_t cloud_api_auth(const char* auth_key, const char* mac, const char* fw_v
 
 /** @brief POST heartbeat: keep the device marked online. */
 esp_err_t cloud_api_heartbeat(const char* auth_key, cloud_api_err_t* err);
+
+/**
+ * @brief POST mqtt-token: exchange the auth_key for MQTT credentials.
+ * @note Independent of auth and safe to repeat. Refuses as auth does: CLOUD_API_KEY_REVOKED,
+ *       CLOUD_API_NO_AGENT.
+ */
+esp_err_t cloud_api_mqtt_token(const char* auth_key, cloud_mqtt_token_t* out, cloud_api_err_t* err);
 
 #ifdef __cplusplus
 }

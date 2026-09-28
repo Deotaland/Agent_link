@@ -10,7 +10,8 @@
 //    3.Self-healing: if stored credentials stop working (AP moved / password changed), it reopens
 //     the portal after a bounded number of failed joins
 //    4.The cloud session (cloud/cloud_session.h): claiming the device, authenticating it and
-//     keeping it online with the platform. Its progress becomes the link state; see OnCloudState.
+//     keeping it online with the platform, by heartbeat and over MQTT. Its progress becomes the
+//     link state; see OnCloudState.
 //
 // Built only where SOC_WIFI_SUPPORTED (esp_wifi.h does not compile on the ESP32-P4). Other targets
 // get the stub at the end of the file, whose start() fails.
@@ -428,7 +429,8 @@ void ReportStatus() {
 }
 
 // Cloud session -> link state: ONLINE maps to CONNECTED, anything else to DISCONNECTED. Never
-// READY: that would tell boards that streams work, and there is no WiFi data plane until MQTT.
+// READY: that would tell boards that streams work, and have the core send the manifest, while MQTT
+// carries nothing until its message format is settled.
 void OnCloudState(const agent_cloud_status_t* st, void* /*ctx*/) {
     if (!st) return;
     taskENTER_CRITICAL(&s_status_lock);
@@ -482,7 +484,7 @@ void StartCloudSession() {
 esp_err_t wifi_start(void* /*impl*/) {
     esp_err_t r = WifiInitOnce();
     if (r != ESP_OK) return r;
-    (void)s_on_recv; (void)s_on_conn; (void)s_on_stream;  // runtime plane (MQTT) not implemented yet
+    (void)s_on_recv; (void)s_on_conn; (void)s_on_stream;  // MQTT delivers nothing to the core yet
 
     char ssid[33] = {0}, pass[65] = {0};
     if (s_cfg && s_cfg->ssid && s_cfg->ssid[0]) {
@@ -513,11 +515,12 @@ void wifi_stop(void* /*impl*/) {
     s_phase = Phase::kIdle;
 }
 
-// Runtime plane: not implemented. Each function logs once, since callers retry.
+// Runtime plane: MQTT is connected but carries nothing yet. Each function logs once, since callers
+// retry.
 bool SayOnce(bool& said, const char* what) {
     if (!said) {
         said = true;
-        ESP_LOGW(TAG, "%s dropped: the WiFi runtime plane (MQTT) is not implemented yet", what);
+        ESP_LOGW(TAG, "%s dropped: the WiFi runtime plane carries no messages yet", what);
     }
     return false;
 }
@@ -542,7 +545,8 @@ esp_err_t wifi_stream_end(void* /*impl*/, agent_stream_t /*type*/, bool /*comple
     return ESP_ERR_NOT_SUPPORTED;
 }
 
-// Whether a data plane exists (READY), not just the link (CONNECTED). Always false until MQTT.
+// Whether a data plane exists (READY), not just the link (CONNECTED). Always false until MQTT
+// carries messages.
 bool wifi_is_ready(void* /*impl*/) {
     return s_link.load(std::memory_order_acquire) == AGENT_STATE_READY;
 }
