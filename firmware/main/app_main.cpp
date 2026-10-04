@@ -62,6 +62,8 @@ extern "C" void app_main(void) {
     // is set unconditionally and each backend takes what it needs, so a board never branches on it.
 #if CONFIG_AGENT_LINK_TRANSPORT_WIFI
     cfg.transport   = AGENT_TRANSPORT_WIFI;
+#elif CONFIG_AGENT_LINK_TRANSPORT_MUSE
+    cfg.transport   = AGENT_TRANSPORT_MUSE;
 #else
     cfg.transport   = AGENT_TRANSPORT_BLE;
 #endif

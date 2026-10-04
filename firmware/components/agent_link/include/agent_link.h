@@ -157,13 +157,19 @@ typedef void (*agent_state_cb_t)(agent_state_t state, void* ctx);
 /**
  * @brief Transport backend selection
  *
- * "One API, two transports" — same API works over BLE or WiFi.
+ * "One API, several transports" — the same API works over each of them.
  * Default is BLE (0) for backward compatibility.
  */
 typedef enum {
     AGENT_TRANSPORT_BLE  = 0,  // BLE:GATT control + L2CAP voice; video not supported
     AGENT_TRANSPORT_WIFI = 1,  // WiFi:control + voice + video
     AGENT_TRANSPORT_BOTH = 2,  // Hybrid:BLE control/provisioning + WiFi media
+    /**
+     * Muse (Meta): the device is a Muse gadget. Set up from the Muse app over BLE, then online
+     * by itself over the WiFi that setup provisioned. Voice uplink becomes a voice note to the
+     * user's Muse, and its answer comes back through on_show_text. No App link, no OTA.
+     */
+    AGENT_TRANSPORT_MUSE = 3,
 } agent_transport_kind_t;
 
 /**
@@ -197,7 +203,8 @@ typedef struct {
  */
 typedef enum {
     AGENT_LINK_PHASE_IDLE = 0,    ///< Not started
-    AGENT_LINK_PHASE_SETUP,       ///< Needs the user: open the App (BLE) / join the hotspot (WiFi)
+    AGENT_LINK_PHASE_SETUP,       ///< Needs the user: open the App (BLE) / join the hotspot (WiFi) /
+                                  ///< press the device's button to confirm (see agent_link_confirm)
     AGENT_LINK_PHASE_CONNECTING,  ///< In progress, no user action needed
     AGENT_LINK_PHASE_PAIRING,     ///< Show @c code; the user enters it on the other side
     AGENT_LINK_PHASE_BLOCKED,     ///< Refused by the peer; @c hint says what to do
@@ -311,6 +318,19 @@ const char* agent_link_device_id(void);
  * @return ESP_OK, ESP_ERR_INVALID_STATE if called too early, or an error from the backend.
  */
 esp_err_t agent_link_forget(void);
+
+/**
+ * @brief The user pressed the device's button to confirm a pairing in progress.
+ *
+ * Some transports pair only after a physical press on the device (Muse: proof that whoever is
+ * setting it up is holding it). While one waits, the status is AGENT_LINK_PHASE_SETUP and its hint
+ * says so. A board forwards a press of its main button here whenever the link is not READY;
+ * where nothing is waiting this does nothing, so the board need not know which transport it is on.
+ *
+ * @return ESP_OK if the press confirmed a pairing, ESP_ERR_INVALID_STATE if none was waiting for
+ *         one (always the case on BLE and WiFi).
+ */
+esp_err_t agent_link_confirm(void);
 
 // ============================================================================
 // Device → Agent: Input / Event / Status

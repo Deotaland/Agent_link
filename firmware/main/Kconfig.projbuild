@@ -36,6 +36,17 @@ choice BOARD_TYPE
         bool "ESP32-S3 Work Badge (electronic staff ID card, rorolee-s3 hardware, LVGL UI)"
         select LV_FONT_MONTSERRAT_20
         select LV_FONT_MONTSERRAT_28
+    config BOARD_TYPE_ROROLEE_MUSE
+        bool "RoRoLee Muse (rorolee-s3 hardware, LVGL push-to-talk; set Transport backend = Muse)"
+        select LV_FONT_MONTSERRAT_20
+        select LV_FONT_MONTSERRAT_28
+        select LV_USE_TINY_TTF
+        select SPIRAM_TRY_ALLOCATE_WIFI_LWIP
+        help
+            The rorolee-s3 PCB with an LVGL screen: link status, hold BOOT to talk, the
+            answer as text. Written against agent_link_status_t only, so it runs on any
+            transport; with Transport backend = Muse it is a Muse gadget, set up from the
+            Muse app.
 endchoice
 
 choice AGENT_LINK_TRANSPORT
@@ -45,10 +56,20 @@ choice AGENT_LINK_TRANSPORT
         How the device reaches the Deotaland Agent platform.
         BLE:  connect to the phone App over Bluetooth (the App relays to the cloud)
         WiFi: join a WiFi network; the first run brings up a SoftAP captive portal to enter the credentials
+        Muse: a Muse gadget (Meta), set up from the Muse app, talking to the user's Muse
     config AGENT_LINK_TRANSPORT_BLE
         bool "BLE"
     config AGENT_LINK_TRANSPORT_WIFI
         bool "WiFi"
+    config AGENT_LINK_TRANSPORT_MUSE
+        bool "Muse (Meta muse-gadget-sdk)"
+        depends on SOC_WIFI_SUPPORTED && SOC_BLE_SUPPORTED
+        select MBEDTLS_HKDF_C
+        help
+            Make the device a Muse gadget (Meta): it pairs with the Muse app over BLE (the
+            app also gives it the WiFi), then talks to the user's Muse by itself. Hold to
+            talk sends a voice note; the answer arrives as text. Needs an SDK token from
+            gadgets.muse.ai: Component config -> Muse gadget -> SDK token.
 endchoice
 
 endmenu

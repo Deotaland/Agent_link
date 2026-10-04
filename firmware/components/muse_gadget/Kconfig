@@ -1,0 +1,91 @@
+# Options of the vendored Muse Home Link (link/), trimmed to what a device on the agent_link Muse
+# transport uses. Names are upstream's (CONFIG_GADGET_*, CONFIG_HOMEHUB_*) so link/ compiles
+# unmodified against them. Everything the Muse UI boards, status LEDs and extra peripherals turn
+# on upstream is left undefined here, which those sources read as off.
+
+menu "Muse gadget (agent_link Muse transport)"
+    depends on AGENT_LINK_TRANSPORT_MUSE
+
+    config GADGET_SDK_TOKEN
+        string "Muse Gadgets SDK token"
+        default ""
+        help
+            Your mgst_ SDK token from gadgets.muse.ai (Account > SDK tokens). Every gadget
+            needs one to pair: the device hands it to the Muse app inside the encrypted
+            pairing session and includes it when it refreshes its device token. It ships
+            inside the firmware, so treat it as an identifier rather than a password, and
+            never commit it.
+
+    config GADGET_PRODUCT_NAME
+        string "Product name for log messages"
+        default "Muse Gadget"
+
+    config HOMEHUB_BLE_NAME_PREFIX
+        string "Visible BLE name prefix"
+        default "MuseGadget"
+        help
+            The device advertises as "<prefix><suffix>-XXXXXX" (XXXXXX = the last three
+            Wi-Fi MAC octets), which is what the Muse app lists under Add Device. Keep
+            prefix and suffix together at most 22 characters.
+
+    config HOMEHUB_BLE_NAME_SUFFIX
+        string "Visible BLE name suffix"
+        default ""
+
+    config HOMEHUB_WIFI_SSID
+        string "Wi-Fi SSID override (bench only)"
+        default ""
+        help
+            If set, the device joins this network at boot instead of the one the Muse app
+            provisioned. It still has to be paired once in the Muse app for its device
+            token. Leave empty to ship.
+
+    config HOMEHUB_WIFI_PASSWORD
+        string "Wi-Fi password override"
+        default ""
+
+    config HOMEHUB_TOKEN_REFRESH_INTERVAL_DAYS
+        int "Proactive device token refresh interval (days of uptime, 0 = off)"
+        range 0 365
+        default 30
+
+    config HOMEHUB_SHOW_AGENT_NAME
+        bool "Fetch the Muse's name for the status line"
+        default y
+        help
+            Once registered, ask the VM for the agent's name (GET /identity) and show it
+            as the title of the connected status.
+
+    config HOMEHUB_DEV_BUILD
+        bool "Development build"
+        default y
+        help
+            Dev builds may log support details such as network identifiers and VM
+            metadata, never credentials.
+
+    # Kept off: OTA from Muse would replace this firmware with Meta's own, the home-network
+    # tunnel needs ~60 KB of internal RAM this board spends on its display and audio, and the
+    # bug-report upload is Meta's support path.
+    config HOMEHUB_OTA_ENABLED
+        bool
+        default n
+
+    config HOMEHUB_TUNNEL
+        bool
+        default n
+
+    config HOMEHUB_SUPPORT_BUG_REPORT
+        bool
+        default n
+
+    # link/button.c is compiled but never started: the pairing press comes from the board
+    # through agent_link_confirm(), so no GPIO belongs to the transport.
+    config HOMEHUB_BUTTON_GPIO
+        int
+        default 0
+
+    config HOMEHUB_PAIRING_AUTH_EPOCH
+        int
+        default 1
+
+endmenu

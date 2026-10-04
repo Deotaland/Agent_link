@@ -261,6 +261,22 @@ void agent_transport_wifi_set_status(void (*cb)(const agent_link_status_t* st));
  */
 esp_err_t agent_transport_wifi_forget(void);
 
+// ── Muse (CONFIG_AGENT_LINK_TRANSPORT_MUSE, transport_muse.cpp) ─────────────────────────────
+// Meta's Muse Home Link (components/muse_gadget) behind the same operation table. It owns BLE,
+// Wi-Fi and NVS itself. The core sees: link state + status like the WiFi backend, the voice
+// stream, and the Muse's answers arriving as ordinary control frames (0x33 IoActuate on the
+// synthetic screen0 endpoint), so on_show_text needs nothing Muse-specific.
+
+/** @return The Muse transport, or NULL when the build did not select it. */
+agent_transport_t* agent_transport_muse(void);
+void agent_transport_muse_set_recv(void (*cb)(const uint8_t* data, size_t len));
+void agent_transport_muse_set_state(void (*cb)(agent_state_t state));
+void agent_transport_muse_set_status(void (*cb)(const agent_link_status_t* st));
+/** Forget the Muse pairing and Wi-Fi, then restart into setup (agent_link_forget). */
+esp_err_t agent_transport_muse_forget(void);
+/** A press on the device while pairing waits for one (agent_link_confirm). */
+esp_err_t agent_transport_muse_confirm(void);
+
 #ifdef __cplusplus
 }
 #endif

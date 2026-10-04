@@ -3,6 +3,7 @@ idf_component_register(
         "src/agent_link.cpp"
         "src/transport_ble.cpp"
         "src/transport_wifi.cpp"
+        "src/transport_muse.cpp"
         "src/wifi_provision.cpp"
         "src/ota_service.cpp"
         "src/audio_downlink.cpp"
@@ -21,6 +22,9 @@ idf_component_register(
                   esp_wifi esp_netif esp_event esp_http_server esp_timer lwip
                   app_update esp_partition esp_app_format mbedtls
                   esp_http_client json mqtt tcp_transport
+                  # Muse transport (Meta's Home Link). Empty on the other transports, but a
+                  # REQUIRES cannot follow Kconfig, so it is always listed.
+                  muse_gadget
     EMBED_TXTFILES "portal/portal.html" "portal/connecting.html"
 )
 

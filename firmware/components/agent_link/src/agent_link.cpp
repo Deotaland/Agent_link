@@ -57,6 +57,12 @@ agent_link_status_t s_link_status = {};
 portMUX_TYPE        s_link_status_lock = portMUX_INITIALIZER_UNLOCKED;
 
 void PublishBle(agent_link_phase_t phase);   // defined with the other link-status code below
+
+// The App link: BLE, and BOTH while that falls back to BLE. Everything the core does only over
+// the App (MTU-sized frames, OTA over L2CAP, the BLE-derived status) asks this, not the enum.
+bool UsesBleLink() {
+    return s_cfg.transport == AGENT_TRANSPORT_BLE || s_cfg.transport == AGENT_TRANSPORT_BOTH;
+}
 // One slot per agent_stream_t. The handle a caller holds is the address of its slot, which is why
 // reopening a kind is harmless and why a disconnect can invalidate every stream at once.
 agent_stream_session s_streams[AGENT_STREAM_KIND_COUNT] = {
@@ -195,7 +201,9 @@ void SynthHapticCb(const char* /*id*/, const uint8_t* args, size_t len, void* /*
 }
 void SynthScreenCb(const char* /*id*/, const uint8_t* args, size_t len, void* /*ctx*/) {
     if (!(s_have_out && s_out.on_show_text)) return;
-    char buf[256];
+    // Static: a Muse answer runs to ~1 KB, too much for a transport task's stack, and every
+    // backend calls the core from one task at a time (see agent_output_cb_t).
+    static char buf[1024];
     const size_t n = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
     memcpy(buf, args, n);
     buf[n] = '\0';
@@ -286,7 +294,7 @@ void SendManifest(bool force) {
 
     // Chunk budget: a BLE notify value is <= ATT_MTU-3, minus 6 (frame header) + 2 (chunk header). WiFi has no such limit.
     size_t budget;
-    if (s_cfg.transport == AGENT_TRANSPORT_WIFI) {
+    if (!UsesBleLink()) {
         budget = 1024;
     } else {
         const uint16_t mtu = agent_transport_ble_att_mtu();
@@ -426,8 +434,8 @@ void HandleStartOta(const std::vector<uint8_t>& pl, uint8_t* status, uint16_t* e
 
     // The firmware bytes need somewhere to arrive. Today that is the BLE L2CAP channel only:
     // the WiFi backend has no data plane yet, so an OTA there would just sit and time out.
-    if (s_cfg.transport == AGENT_TRANSPORT_WIFI) {
-        ESP_LOGW(TAG, "0x37 rejected: OTA needs the BLE data channel (WiFi data plane is TODO)");
+    if (!UsesBleLink()) {
+        ESP_LOGW(TAG, "0x37 rejected: OTA needs the BLE data channel (not on this transport)");
         *status = 1; *error = agentlink::ota::kErrBusinessFailed;
         return;
     }
@@ -807,6 +815,16 @@ esp_err_t agent_link_init(const agent_link_config_t* cfg) {
         agent_transport_wifi_set_status(&OnWifiStatus);   // -> agent_link_config_t::on_status
         agent_transport_wifi_set_stream_recv(&OnStreamData);
         break;
+    case AGENT_TRANSPORT_MUSE:
+        s_tx = agent_transport_muse();
+        if (!s_tx) {
+            ESP_LOGE(TAG, "transport MUSE is not in this build (menuconfig -> Transport backend)");
+            return ESP_ERR_NOT_SUPPORTED;
+        }
+        agent_transport_muse_set_recv(&OnCtrlFrame);      // the Muse's answers, as 0x33 screen0
+        agent_transport_muse_set_state(&OnWifiState);     // CONNECTED/READY decided by the backend
+        agent_transport_muse_set_status(&OnWifiStatus);   // already an agent_link_status_t
+        break;
     case AGENT_TRANSPORT_BOTH:
         // Not implemented: falls back to BLE alone. Say so rather than let a caller believe it
         // asked for a hybrid link and got one.
@@ -838,6 +856,7 @@ esp_err_t agent_link_init(const agent_link_config_t* cfg) {
     RegisterSyntheticEndpoints();
 
     const char* tx_name = s_cfg.transport == AGENT_TRANSPORT_WIFI ? "wifi"
+                        : s_cfg.transport == AGENT_TRANSPORT_MUSE ? "muse"
                         : s_cfg.transport == AGENT_TRANSPORT_BOTH ? "both(ble)" : "ble";
     ESP_LOGI(TAG, "init: name='%s' model='%s' fw=%s caps=0x%04x proto=v%d transport=%s io=%d",
              s_cfg.device_name, DeviceModel(), FirmwareVersion(),
@@ -862,8 +881,9 @@ esp_err_t agent_link_start(void) {
     // Start the transport backend (BLE: NimBLE advertising + GATT Service C). Control plane
     // (commands/events) is wired; the data plane rides whatever channels the backend provides.
     if (!s_tx || !s_tx->start) return ESP_ERR_INVALID_STATE;
-    // BLE reports "open the app" here; the WiFi backend reports its first step from inside start().
-    if (s_cfg.transport != AGENT_TRANSPORT_WIFI) PublishBle(AGENT_LINK_PHASE_SETUP);
+    // BLE reports "open the app" here; the other backends report their first step from inside
+    // start().
+    if (UsesBleLink()) PublishBle(AGENT_LINK_PHASE_SETUP);
     const esp_err_t r = s_tx->start(s_tx->impl);
 
     // RF is running once start() returns (BLE enabled the controller, WiFi called
@@ -906,8 +926,19 @@ const char* agent_link_device_id(void) {
 esp_err_t agent_link_forget(void) {
     // Before init s_cfg is all zeros, which reads as AGENT_TRANSPORT_BLE; refuse rather than guess.
     if (!s_tx) return ESP_ERR_INVALID_STATE;
-    return s_cfg.transport == AGENT_TRANSPORT_WIFI ? agent_transport_wifi_forget()
-                                                   : agent_transport_ble_forget();
+    switch (s_cfg.transport) {
+    case AGENT_TRANSPORT_WIFI: return agent_transport_wifi_forget();
+    case AGENT_TRANSPORT_MUSE: return agent_transport_muse_forget();
+    default:                   return agent_transport_ble_forget();
+    }
+}
+
+// Only a transport that pairs with a press on the device has anything to confirm; on the others
+// a board calling this on every press while not READY is harmless by design.
+esp_err_t agent_link_confirm(void) {
+    if (!s_tx) return ESP_ERR_INVALID_STATE;
+    return s_cfg.transport == AGENT_TRANSPORT_MUSE ? agent_transport_muse_confirm()
+                                                   : ESP_ERR_INVALID_STATE;
 }
 
 agent_state_t agent_link_state(void) { return s_state; }
@@ -949,7 +980,7 @@ esp_err_t agent_link_report_selected_agent(const char* agent_id) {
 // notification minus the 6-byte frame header; the 480 ceiling keeps one frame inside a single mbuf
 // even when a peer negotiates a large MTU.
 static size_t SingleFramePayloadBudget() {
-    if (s_cfg.transport == AGENT_TRANSPORT_WIFI) return 1024;
+    if (!UsesBleLink()) return 1024;
     const uint16_t mtu = agent_transport_ble_att_mtu();
     // 14 = the unnegotiated default MTU (23) - 3 - 6, i.e. what is safe before the peer exchanges.
     size_t budget = (mtu > 3 + 6) ? static_cast<size_t>(mtu - 3 - 6) : 14;

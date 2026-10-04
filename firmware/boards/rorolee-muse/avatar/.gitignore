@@ -1,0 +1,10 @@
+# Avatar renderers are never committed. Two kinds go here as muse_pixel.c:
+#   - Meta's default Muse character (Jollybot), copied for an internal demo. It is NOT covered by
+#     the Apache License and must not ship in a product.
+#   - An avatar your own Muse drew for you (Muse's avatar recipe), which is yours.
+# Only the interface headers and these notes are tracked.
+*
+!.gitignore
+!README.md
+!muse_pixel.h
+!muse_state.h

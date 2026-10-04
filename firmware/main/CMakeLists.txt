@@ -25,7 +25,17 @@ elseif(CONFIG_BOARD_TYPE_ESP32S3_KORVO_CLOUD)
     set(BOARD_DIR "korvo-cloud")
 elseif(CONFIG_BOARD_TYPE_ESP32S3_WORK_BADGE)
     set(BOARD_DIR "work-badge")
+elseif(CONFIG_BOARD_TYPE_ROROLEE_MUSE)
+    set(BOARD_DIR "rorolee-muse")
 # Add a new board: add a line elseif(CONFIG_BOARD_TYPE_XXX) set(BOARD_DIR "your-board")
+endif()
+
+# rorolee-muse: an optional avatar renderer, never committed (boards/rorolee-muse/avatar holds it,
+# and its .gitignore keeps it out of git). Present, it is built and the UI draws it.
+set(ROROLEE_MUSE_AVATAR "${CMAKE_CURRENT_SOURCE_DIR}/../boards/rorolee-muse/avatar/muse_pixel.c")
+if(CONFIG_BOARD_TYPE_ROROLEE_MUSE AND EXISTS "${ROROLEE_MUSE_AVATAR}")
+    list(APPEND SOURCES "${ROROLEE_MUSE_AVATAR}")
+    set(ROROLEE_MUSE_HAS_AVATAR 1)
 endif()
 
 if(BOARD_DIR)
@@ -63,7 +73,22 @@ idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
     REQUIRES agent_link esp_driver_gpio esp_driver_spi esp_lcd esp_lcd_sh8501 esp_lcd_sh8501_lk
-             esp_codec_dev esp_driver_i2c esp_driver_i2s nvs_flash
+             esp_codec_dev esp_driver_i2c esp_driver_i2s nvs_flash esp_partition
              fatfs)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
+
+# rorolee-muse: LVGL's heap is a static 64 KB array (LV_MEM_SIZE) that would otherwise sit in
+# internal RAM, which BLE, Wi-Fi and TLS need at once while it pairs. The repo-root CMakeLists turns
+# on SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY for this board, and EXT_RAM_BSS_ATTR then puts the array
+# in PSRAM; LVGL leaves LV_ATTRIBUTE_LARGE_RAM_ARRAY to be defined from outside. (Target properties,
+# not REQUIRES, so a CONFIG_ test is fine here.)
+if(ROROLEE_MUSE_HAS_AVATAR)
+    message(STATUS "rorolee-muse: avatar renderer found, the UI will draw it")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE VOICE_UI_AVATAR=1)
+endif()
+if(CONFIG_BOARD_TYPE_ROROLEE_MUSE)
+    idf_component_get_property(lvgl_lib lvgl__lvgl COMPONENT_LIB)
+    target_compile_options(${lvgl_lib} PRIVATE -include esp_attr.h)
+    target_compile_definitions(${lvgl_lib} PRIVATE LV_ATTRIBUTE_LARGE_RAM_ARRAY=EXT_RAM_BSS_ATTR)
+endif()

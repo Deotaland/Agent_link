@@ -36,27 +36,30 @@ boards/rorolee-s3/
 
 Set a capability bit only when you implement its method; anything you leave out keeps the base no-op.
 
-### One board, both transports
+### One board, every transport
 
-Nothing in the `Board` interface depends on which transport the build selects (`menuconfig` → Agent Link Device → Transport backend). A board written against it builds and runs on BLE and on WiFi unchanged — `korvo-cloud/` is the worked example, and builds both ways.
+Nothing in the `Board` interface depends on which transport the build selects (`menuconfig` → Agent Link Device → Transport backend: BLE, WiFi or Muse). A board written against it builds and runs on each of them unchanged — `korvo-cloud/` and `rorolee-muse/` are the worked examples.
 
-The one place the transports genuinely differ is how the device gets connected: over BLE a user opens the App; over WiFi they join a hotspot, then type an activation code into the console. The SDK folds both into one status, `agent_link_status_t`, delivered through `OnLinkStatus()`:
+The one place the transports genuinely differ is how the device gets connected: over BLE a user opens the App; over WiFi they join a hotspot, then type an activation code into the console; as a Muse gadget they add it in the Muse app and press the device's button to confirm. The SDK folds all of them into one status, `agent_link_status_t`, delivered through `OnLinkStatus()`:
 
-| `st.phase`   | BLE                       | WiFi                                                                  |
-| ------------ | ------------------------- | --------------------------------------------------------------------- |
-| `SETUP`      | advertising: open the app | captive portal up: join the `<Name>-XXXX` hotspot                     |
-| `CONNECTING` | App connected, pairing    | joining WiFi / signing in / platform unreachable, retrying            |
-| `PAIRING`    | —                         | activation code in `st.code`, seconds left in `st.expires_s`          |
-| `BLOCKED`    | —                         | the platform refused: already bound, no agent attached, gateway error |
-| `CONNECTED`  | —                         | authenticated, heartbeat running, no data plane yet                   |
-| `READY`      | App subscribed            | (once the WiFi data plane exists)                                     |
+| `st.phase`   | BLE                       | WiFi                                                                  | Muse                                                              |
+| ------------ | ------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `SETUP`      | advertising: open the app | captive portal up: join the `<Name>-XXXX` hotspot                     | add `MuseGadget-XXXXXX` in the Muse app / press to confirm        |
+| `CONNECTING` | App connected, pairing    | joining WiFi / signing in / platform unreachable, retrying            | pairing, joining the WiFi from the app, reaching the Muse, retrying |
+| `PAIRING`    | —                         | activation code in `st.code`, seconds left in `st.expires_s`          | —                                                                 |
+| `BLOCKED`    | —                         | the platform refused: already bound, no agent attached, gateway error | WiFi or Muse sign-in failed                                       |
+| `CONNECTED`  | —                         | authenticated, heartbeat running, no data plane yet                   | —                                                                 |
+| `READY`      | App subscribed            | (once the WiFi data plane exists)                                     | registered with the Muse; `st.title` is the Muse's name          |
 
-`st.title` and `st.hint` are already written for the situation in English.A board that draws them gets correct instructions on either transport and never learns which it is on. Switch on `st.phase` only to choose layout and colour, or to replace the wording.
+`st.title` and `st.hint` are already written for the situation in English. A board that draws them gets correct instructions on every transport and never learns which it is on. Switch on `st.phase` only to choose layout and colour, or to replace the wording.
 
-Three more calls work the same on both:
+A Muse gadget's voice stream (`AGENT_STREAM_VOICE`) becomes a voice note to the Muse, and the Muse's answer comes back through `ShowText()`, so a push-to-talk board needs nothing Muse-specific. See `components/muse_gadget/README.md`.
+
+More calls that work the same everywhere:
 
 - `agent_link_device_id()` — the device's identity, a UUIDv4 — one value on both transports: the `uuid` the App reads from 0x01 over BLE is the `device_sn` the platform lists over WiFi. For a settings or support screen.
 - `agent_link_forget()` — a board's factory reset: BLE erases its bonds, WiFi drops its platform credential. The identity above is kept, so the platform still recognises the unit afterwards.
+- `agent_link_confirm()` — forward a press of the main button here while the link is not READY. A transport that pairs only after a press on the device (Muse) takes it as the confirmation; everywhere else it does nothing.
 - `agent_link_state()` — still the data-plane gate: open a stream only when it is `AGENT_STATE_READY`.
 
 `Model()` is worth a second look: it is the string an incoming OTA image must claim, so the App
@@ -124,6 +127,7 @@ The Board Type menu currently offers:
 | `korvo/`             | ESP32-S3 | Korvo (ESP32-S3-Korvo-2 V3 pinout): swipeable LVGL home screen on a CST816 touch ST7789 240x280 driven rotated 90° CCW, with three apps — live GC2145 preview, ES8311/ES7210 voice up the Agent's ASR channel, and WAV recording to the TF card                                                                                                                                                                                                                                                    |
 | `korvo-cloud/`       | ESP32-S3 | Same PCB as `korvo/`, built for the **WiFi channel**: the home screen is the link status — join the hotspot, the activation code to type into the console, online — and the camera is launched from an icon on the second page. No TF card (WiFi and TLS want that internal RAM). Written only against `agent_link_status_t`, so it also builds and runs on BLE, where the same screen says "open the app". Deliberately does **not** share `korvo`'s `Model()` — see the note in `korvo_cloud.cc` |
 | `work-badge/`        | ESP32-S3 | Electronic staff badge on the **mass-production** board (pins from the shipping firmware; factory short code SH8501 panel): an LVGL name card the App fills in ([README](work-badge/README.md))                                                                                                                                                                                                                                                                                                    |
+| `rorolee-muse/`      | ESP32-S3 | The rorolee-s3 PCB with an LVGL screen: link status, hold BOOT to talk, the answer as text; VOL+/VOL- volume, hold VOL- 6 s to forget the pairing. Built for **Transport backend = Muse**, where it is a Muse gadget set up from the Muse app, but written against `agent_link_status_t` only, so it builds and runs on BLE and WiFi too |
 | `esp32p4-waveshare/` | ESP32-P4 | Waveshare board with a CO5300 466x466 AMOLED                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 Drivers used by more than one board live in [`common/`](common/)
