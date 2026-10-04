@@ -70,7 +70,7 @@ typedef struct {
     char     username[64];        ///< opaque
     char     password[640];       ///< a JWT. CONNECT carries it with the id and username in esp-mqtt's 1KB buffer
     uint32_t expires_in;          ///< seconds the password stays valid from issue; 0 = not given
-    uint32_t expire_at;           ///< the same as Unix time. Not used: the device has no wall clock
+    uint32_t expire_at;           ///< the same as Unix time; minus expires_in, the platform's clock
     char     topic_down[96];      ///< channels.down.default: messages to the device
     char     topic_ota_down[96];  ///< channels.down.ota: firmware updates
     char     topic_up[96];        ///< channels.up.default

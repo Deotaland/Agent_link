@@ -25,20 +25,36 @@ constexpr int kKeepaliveS = 40;
 // esp-mqtt's own retry interval after a lost connection or a failed attempt.
 constexpr int kReconnectMs = 10000;
 
+// A QoS 1 message is sent again if its PUBACK has not come back in this long. esp-mqtt's default is
+// 1s, and the round trip to the platform is close to that, so the platform would see duplicates.
+constexpr int kRetransmitMs = 5000;
+
+// Commands run on this task, and with them the board's callbacks, which are promised a usable
+// stack. esp-mqtt's default is 6KB, of which the TLS handshake alone leaves about 2.4KB.
+constexpr int kTaskStack = 7 * 1024;
+
 constexpr int    kDownlinkQos   = 1;
+constexpr int    kUpQos         = 1;
 constexpr size_t kLogPayloadMax = 256;   // bytes of each downlink message that are printed
 
 esp_mqtt_client_handle_t s_client = nullptr;
 bool                     s_ws     = false;   // MQTT over WebSocket, rather than straight over TLS
 std::atomic<bool>        s_connected{false};
 
-cloud_mqtt_refused_cb_t s_on_refused = nullptr;
-void*                   s_ctx        = nullptr;
+cloud_mqtt_callbacks_t s_cb = {};
 
 // Copied from the token, which the caller may reuse. The session is clean, so the topics are
 // subscribed again on every connect.
 char s_topics[2][sizeof(cloud_mqtt_token_t::topic_down)] = {};
+char s_topic_up[sizeof(cloud_mqtt_token_t::topic_up)]    = {};
 char s_url[160] = {};   // for logs
+
+bool IsDownlinkTopic(const char* topic, int len) {
+    for (const auto& t : s_topics) {
+        if (t[0] && static_cast<int>(strlen(t)) == len && memcmp(t, topic, len) == 0) return true;
+    }
+    return false;
+}
 
 const char* RefusalName(int code) {
     switch (code) {
@@ -87,7 +103,7 @@ bool Printable(const char* p, size_t n) {
     return true;
 }
 
-// Logged, not acted on: the message format is not settled yet.
+// Every downlink message is logged as it arrives, before it runs.
 void LogDownlink(esp_mqtt_event_handle_t ev) {
     // A message longer than esp-mqtt's buffer arrives as several events; only the first has the topic.
     if (ev->current_data_offset != 0) {
@@ -156,6 +172,14 @@ void OnEvent(void* /*arg*/, esp_event_base_t /*base*/, int32_t id, void* data) {
 
     case MQTT_EVENT_DATA:
         LogDownlink(ev);
+        // Only the first piece of a message carries its topic. A message esp-mqtt had to split is
+        // larger than any command should be, so it is dropped rather than reassembled.
+        if (ev->current_data_offset != 0 || !IsDownlinkTopic(ev->topic, ev->topic_len)) break;
+        if (ev->data_len != ev->total_data_len) {
+            ESP_LOGW(TAG, "downlink message of %dB is too large to run — dropped", ev->total_data_len);
+            break;
+        }
+        if (s_cb.on_downlink) s_cb.on_downlink(ev->data ? ev->data : "", ev->data_len, s_cb.ctx);
         break;
 
     case MQTT_EVENT_ERROR:
@@ -163,7 +187,7 @@ void OnEvent(void* /*arg*/, esp_event_base_t /*base*/, int32_t id, void* data) {
         if (ev->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
             const int rc = ev->error_handle->connect_return_code;
             ESP_LOGW(TAG, "broker refused the login: %s (CONNACK %d)", RefusalName(rc), rc);
-            if (s_on_refused) s_on_refused(rc, s_ctx);
+            if (s_cb.on_refused) s_cb.on_refused(rc, s_cb.ctx);
         } else if (ev->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT && !s_connected) {
             LogConnectFailure(ev);   // a connection that was up is reported by DISCONNECTED
         }
@@ -175,7 +199,7 @@ void OnEvent(void* /*arg*/, esp_event_base_t /*base*/, int32_t id, void* data) {
 }
 }  // namespace
 
-esp_err_t cloud_mqtt_start(const cloud_mqtt_token_t* tok, cloud_mqtt_refused_cb_t on_refused, void* ctx) {
+esp_err_t cloud_mqtt_start(const cloud_mqtt_token_t* tok, const cloud_mqtt_callbacks_t* cb) {
     if (!tok || !tok->host[0]) return ESP_ERR_INVALID_ARG;
     if (s_client) return ESP_ERR_INVALID_STATE;
 
@@ -201,15 +225,17 @@ esp_err_t cloud_mqtt_start(const cloud_mqtt_token_t* tok, cloud_mqtt_refused_cb_
     mc.credentials.client_id               = tok->client_id;
     mc.credentials.username                = tok->username;
     mc.credentials.authentication.password = tok->password;
-    mc.session.keepalive            = kKeepaliveS;
-    mc.network.reconnect_timeout_ms = kReconnectMs;
+    mc.session.keepalive                  = kKeepaliveS;
+    mc.session.message_retransmit_timeout = kRetransmitMs;
+    mc.network.reconnect_timeout_ms       = kReconnectMs;
+    mc.task.stack_size                    = kTaskStack;
 
     snprintf(s_topics[0], sizeof s_topics[0], "%s", tok->topic_down);
     snprintf(s_topics[1], sizeof s_topics[1], "%s", tok->topic_ota_down);
+    snprintf(s_topic_up, sizeof s_topic_up, "%s", tok->topic_up);
     snprintf(s_url, sizeof s_url, "%s://%s:%u%s", tok->protocol, tok->host,
              static_cast<unsigned>(tok->port), s_ws ? tok->path : "");
-    s_on_refused = on_refused;
-    s_ctx        = ctx;
+    s_cb = cb ? *cb : cloud_mqtt_callbacks_t{};
 
     // esp-mqtt copies every string it is given.
     s_client = esp_mqtt_client_init(&mc);
@@ -239,3 +265,12 @@ void cloud_mqtt_stop(void) {
 }
 
 bool cloud_mqtt_started(void) { return s_client != nullptr; }
+
+esp_err_t cloud_mqtt_publish_up(const char* data, size_t len) {
+    if (!s_client || !s_topic_up[0]) return ESP_ERR_INVALID_STATE;
+    // Enqueued, not published: esp_mqtt_client_publish writes the socket from the caller's task
+    // and can block there for the whole network timeout.
+    const int id = esp_mqtt_client_enqueue(s_client, s_topic_up, data, static_cast<int>(len),
+                                           kUpQos, 0, /*store=*/true);
+    return id >= 0 ? ESP_OK : ESP_FAIL;
+}

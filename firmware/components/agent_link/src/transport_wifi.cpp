@@ -21,6 +21,8 @@
 
 #include "agent_link_transport.h"
 #include "agent_link.h"          // agent_wifi_config_t, agent_platform_t, agent_link_status_t
+#include "cloud_json.h"
+#include "cloud_mqtt.h"
 #include "cloud_session.h"
 #include "wifi_provision.h"
 
@@ -70,6 +72,12 @@ void (*s_on_conn)(bool) = nullptr;   // generic hook; the core uses s_on_state o
 void (*s_on_stream)(agent_stream_t, const uint8_t*, size_t) = nullptr;
 void (*s_on_state)(agent_state_t) = nullptr;
 void (*s_on_status)(const agent_link_status_t*) = nullptr;
+
+// Every call into the core from this backend holds this. Commands arrive on the MQTT task, link
+// changes on the cloud session task and status on the WiFi event task, but the core is not
+// thread-safe, and boards are promised callbacks that never run at the same time. Recursive
+// because a state change reports status on its way through.
+std::recursive_mutex s_core_mtx;
 
 bool                       s_cloud_started = false;
 std::atomic<agent_state_t> s_link{AGENT_STATE_DISCONNECTED};
@@ -425,17 +433,19 @@ void ReportStatus() {
 
     agent_link_status_t st;
     Compose(c, &st);
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
     s_on_status(&st);
 }
 
 // Cloud session -> link state: ONLINE maps to CONNECTED, anything else to DISCONNECTED. Never
-// READY: that would tell boards that streams work, and have the core send the manifest, while MQTT
-// carries nothing until its message format is settled.
+// READY yet: that would tell boards that streams and events work, and have the core push the
+// manifest as an event, while only commands and their responses cross MQTT so far.
 void OnCloudState(const agent_cloud_status_t* st, void* /*ctx*/) {
     if (!st) return;
     taskENTER_CRITICAL(&s_status_lock);
     s_last_cloud = *st;
     taskEXIT_CRITICAL(&s_status_lock);
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
     ReportStatus();
 
     const agent_state_t want = (st->state == AGENT_CLOUD_ONLINE) ? AGENT_STATE_CONNECTED
@@ -457,6 +467,17 @@ bool NetReady() {
     return esp_netif_get_ip_info(sta, &ip) == ESP_OK && ip.ip.addr != 0;
 }
 
+// The JSON layer hands each command to the core the way BLE's GATT write does.
+void DeliverToCore(const uint8_t* frame, size_t len) {
+    if (s_on_recv) s_on_recv(frame, len);
+}
+
+// A command from the platform, on the MQTT task.
+void OnDownlink(const char* data, size_t len, void* /*ctx*/) {
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
+    cloud_json_handle_command(data, len);
+}
+
 // Started once from wifi_start(); the session waits for NetReady() itself.
 void StartCloudSession() {
     if (s_cloud_started) return;
@@ -472,8 +493,12 @@ void StartCloudSession() {
     cc.base_url   = s_platform->base_url;
     cc.product_id = s_platform->product_id;
     cc.chip_type  = s_platform->chip_type;
-    cc.net_ready  = &NetReady;
-    cc.on_state   = &OnCloudState;
+    cc.net_ready   = &NetReady;
+    cc.on_state    = &OnCloudState;
+    cc.on_downlink = &OnDownlink;
+
+    const cloud_json_hooks_t hooks = {&DeliverToCore, &cloud_mqtt_publish_up};
+    cloud_json_set_hooks(&hooks);
 
     const esp_err_t r = cloud_session_start(&cc);
     if (r != ESP_OK) { ESP_LOGE(TAG, "cloud session failed to start: %s", esp_err_to_name(r)); return; }
@@ -484,7 +509,7 @@ void StartCloudSession() {
 esp_err_t wifi_start(void* /*impl*/) {
     esp_err_t r = WifiInitOnce();
     if (r != ESP_OK) return r;
-    (void)s_on_recv; (void)s_on_conn; (void)s_on_stream;  // MQTT delivers nothing to the core yet
+    (void)s_on_conn; (void)s_on_stream;  // no media crosses WiFi yet
 
     char ssid[33] = {0}, pass[65] = {0};
     if (s_cfg && s_cfg->ssid && s_cfg->ssid[0]) {
@@ -505,6 +530,7 @@ void wifi_stop(void* /*impl*/) {
     cloud_session_stop();
     s_cloud_started = false;
     if (s_link.exchange(AGENT_STATE_DISCONNECTED) != AGENT_STATE_DISCONNECTED && s_on_state) {
+        std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
         s_on_state(AGENT_STATE_DISCONNECTED);
     }
     if (s_reconnect_timer) esp_timer_stop(s_reconnect_timer);
@@ -515,29 +541,33 @@ void wifi_stop(void* /*impl*/) {
     s_phase = Phase::kIdle;
 }
 
-// Runtime plane: MQTT is connected but carries nothing yet. Each function logs once, since callers
-// retry.
-bool SayOnce(bool& said, const char* what) {
+// What MQTT does not carry yet is refused. Each caller logs once, since callers retry.
+bool SayOnce(bool& said, const char* what, const char* why) {
     if (!said) {
         said = true;
-        ESP_LOGW(TAG, "%s dropped: the WiFi runtime plane carries no messages yet", what);
+        ESP_LOGW(TAG, "%s dropped: %s", what, why);
     }
     return false;
 }
 
-esp_err_t wifi_send_ctrl(void* /*impl*/, const uint8_t* /*frame*/, size_t /*len*/) {
-    static bool said = false;
-    SayOnce(said, "control frame");
-    return ESP_ERR_NOT_SUPPORTED;
+// Responses to the command being run, and the manifest a 0x34 produces, go back through the JSON
+// layer to `up`. Events are not published yet.
+esp_err_t wifi_send_ctrl(void* /*impl*/, const uint8_t* frame, size_t len) {
+    const esp_err_t r = cloud_json_on_frame(frame, len);
+    if (r == ESP_ERR_NOT_SUPPORTED) {
+        static bool said = false;
+        SayOnce(said, "event", "events are not published over WiFi yet");
+    }
+    return r;
 }
 esp_err_t wifi_stream_start(void* /*impl*/, agent_stream_t /*type*/, const uint8_t* /*meta*/, size_t /*meta_len*/) {
     static bool said = false;
-    SayOnce(said, "stream open");
+    SayOnce(said, "stream open", "no media crosses WiFi yet");
     return ESP_ERR_NOT_SUPPORTED;
 }
 esp_err_t wifi_send_stream(void* /*impl*/, agent_stream_t /*type*/, const uint8_t* /*data*/, size_t /*len*/) {
     static bool said = false;
-    SayOnce(said, "stream chunk");
+    SayOnce(said, "stream chunk", "no media crosses WiFi yet");
     return ESP_ERR_NOT_SUPPORTED;
 }
 esp_err_t wifi_stream_end(void* /*impl*/, agent_stream_t /*type*/, bool /*complete*/,

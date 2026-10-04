@@ -12,6 +12,8 @@ idf_component_register(
         "src/cloud/cloud_api.cc"
         "src/cloud/cloud_session.cc"
         "src/cloud/cloud_mqtt.cc"
+        "src/cloud/cloud_json.cc"
+        "src/cloud/cloud_clock.cc"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src" "src/cloud"
     REQUIRES esp_common

@@ -9,6 +9,7 @@
 
 #include "agent_link_ota.h"
 #include "cloud_api.h"
+#include "cloud_clock.h"
 #include "cloud_credential.h"
 #include "cloud_mqtt.h"
 #include "device_identity.h"
@@ -259,6 +260,12 @@ TokenResult FetchToken() {
     s_token_issued = now;
     s_token_retry  = 0;
 
+    // expire_at is the platform's clock plus expires_in, so their difference is its "now": a time
+    // source that is there before MQTT connects, whatever SNTP manages.
+    if (s_token->expire_at > s_token->expires_in && s_token->expires_in > 0) {
+        cloud_clock_from_platform(static_cast<int64_t>(s_token->expire_at) - s_token->expires_in);
+    }
+
     // A tenth of the lifetime early; 0 when the platform gives no lifetime.
     uint32_t after = s_token->expires_in - s_token->expires_in / 10;
 #if CONFIG_AGENT_LINK_MQTT_TOKEN_RENEW_S > 0
@@ -338,8 +345,11 @@ Leave StayOnline() {
                 StopMqtt();
             }
         }
-        if (s_token_ok && !cloud_mqtt_started() &&
-            cloud_mqtt_start(s_token, &OnMqttRefused, nullptr) != ESP_OK) {
+        cloud_mqtt_callbacks_t cb = {};
+        cb.on_refused  = &OnMqttRefused;
+        cb.on_downlink = s_cfg.on_downlink;
+        cb.ctx         = s_cfg.ctx;
+        if (s_token_ok && !cloud_mqtt_started() && cloud_mqtt_start(s_token, &cb) != ESP_OK) {
             // Unusable as issued (a protocol without TLS), or no memory: ask for another later.
             s_token_ok    = false;
             s_token_retry = now + static_cast<int64_t>(kFaultRetryMs) * 1000;
@@ -433,6 +443,7 @@ esp_err_t cloud_session_start(const cloud_session_config_t* cfg) {
     if (r != ESP_OK) return r;
     r = cloud_api_init(cfg->base_url);
     if (r != ESP_OK) return r;
+    cloud_clock_start();   // every MQTT message carries a timestamp
 
     if (!s_agent_json) {
         s_agent_json = static_cast<char*>(calloc(1, kAgentJsonCap));

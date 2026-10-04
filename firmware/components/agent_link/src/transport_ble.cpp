@@ -98,6 +98,15 @@ namespace {
     bool     s_connected = false;
     uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
+    // Set once nimble_port_init() has succeeded, and never cleared: ble_stop() does not deinit.
+    // CONFIG_BT_NIMBLE_STATIC_TO_DYNAMIC allocates the host's state there, its sync flag included,
+    // so until then any NimBLE call dereferences NULL: before agent_link_start(), and always on a
+    // WiFi build, which links NimBLE but never starts it.
+    std::atomic<bool> s_host_inited{ false };
+
+    // NimBLE is initialised and the host synced. Safe from any task at any time.
+    bool HostSynced() { return s_host_inited.load(std::memory_order_acquire) && ble_hs_synced(); }
+
     // GATT characteristic value handles (filled in by NimBLE at registration; used for notify).
     uint16_t s_h_cmd = 0; // 0xFFC1
     uint16_t s_h_evt = 0; // 0xFFC4
@@ -1064,6 +1073,7 @@ namespace {
 
         r = nimble_port_init();
         if (r != ESP_OK) { ESP_LOGE(TAG, "nimble_port_init: %s", esp_err_to_name(r)); return r; }
+        s_host_inited.store(true, std::memory_order_release);
 
         ble_hs_cfg.sync_cb = OnSync;
         ble_hs_cfg.reset_cb = OnReset;
@@ -1201,9 +1211,9 @@ extern "C" bool agent_transport_ble_l2cap_ready(void) { return s_connected && s_
 // LSB-first internally, hence the reversal. false if the stack has no address yet.
 extern "C" bool agent_transport_ble_get_mac(uint8_t out[6]) {
     if (!out) return false;
-    // ble_hs_id_copy_addr() takes the host lock, which does not exist before nimble_port_init().
-    // ble_hs_synced() is a plain read and safe at any time.
-    if (!ble_hs_synced()) return false;
+    // Not even ble_hs_synced() may run before the host is initialised (see s_host_inited), and
+    // ble_hs_id_copy_addr() takes the host lock besides.
+    if (!HostSynced()) return false;
     uint8_t addr[6] = {};
     if (ble_hs_id_copy_addr(s_own_addr_type, addr, nullptr) != 0) return false;
     for (int i = 0; i < 6; ++i) out[i] = addr[5 - i];
@@ -1220,7 +1230,7 @@ extern "C" void agent_transport_ble_update_battery(uint8_t percent) {
 // CONFIG_BT_NIMBLE_NVS_PERSIST is set. A peer connected right now is left connected.
 extern "C" esp_err_t agent_transport_ble_forget(void) {
     // The store callbacks are installed when the host starts; same guard as get_mac.
-    if (!ble_hs_synced()) {
+    if (!HostSynced()) {
         ESP_LOGW(TAG, "forget: BLE stack not running yet — call it after agent_link_start()");
         return ESP_ERR_INVALID_STATE;
     }

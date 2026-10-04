@@ -25,7 +25,14 @@ typedef struct {
 
     /** @brief State changes and countdown ticks. Runs on the session task; keep it short. */
     agent_cloud_state_cb_t on_state;
-    void*                  ctx;
+
+    /**
+     * @brief A command message from the platform (MQTT `down` or `ota/down`), not NUL-terminated.
+     * @note Runs on the MQTT task, not the session task.
+     */
+    void (*on_downlink)(const char* data, size_t len, void* ctx);
+
+    void* ctx;   ///< passed to on_state and on_downlink
 } cloud_session_config_t;
 
 /** @brief Start the session task. Returns immediately; the task waits for net_ready() itself. */
