@@ -438,7 +438,8 @@ void DrawAvatar(AvatarState& av, Mode mode, int64_t now) {
 #endif
 
 void RenderTask(void*) {
-    s_cjk = LoadCjkFont(CJK_FONT_PX);   // LVGL calls only from this task, and before Build()
+    // LVGL calls only from this task, and before Build()
+    s_cjk = LoadCjkFont(CJK_FONT_PARTITION, CJK_FONT_PX, CJK_FONT_CACHE_GLYPHS);
     Build();
     RefreshBattery();
 

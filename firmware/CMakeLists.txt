@@ -23,20 +23,20 @@ if(EXISTS "${_sdkconfig}")
         BOARD_TYPE_ROROLEE_S3 BOARD_TYPE_ESP32S3_TEM_MONITOR
         BOARD_TYPE_ESP32S3_ES8311_VOICE BOARD_TYPE_ESP32S3_ES8311_ASR BOARD_TYPE_ESP32S3_GC2145_CAMERA
         BOARD_TYPE_ESP32S3_WORK_BADGE BOARD_TYPE_ESP32S3_KORVO BOARD_TYPE_ESP32S3_KORVO_CLOUD
-        BOARD_TYPE_ROROLEE_MUSE)
+        BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE)
     set(_ext_crys_boards BOARD_TYPE_ROROLEE_S3 BOARD_TYPE_ESP32S3_TEM_MONITOR BOARD_TYPE_ESP32S3_WORK_BADGE
-        BOARD_TYPE_ROROLEE_MUSE)
+        BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE)
     # TLS records in PSRAM: boards that run a network link next to a display and audio.
-    set(_tls_psram_boards BOARD_TYPE_ESP32S3_KORVO_CLOUD BOARD_TYPE_ROROLEE_MUSE)
+    set(_tls_psram_boards BOARD_TYPE_ESP32S3_KORVO_CLOUD BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE)
     # Static RAM in PSRAM too: BLE, Wi-Fi and TLS up at once (Muse pairing) next to a display and
     # audio leave no internal RAM otherwise - NimBLE's pools and the .bss of Wi-Fi, lwIP and BT go
     # to PSRAM. One hardware log showed 0 KB internal left once BLE started without this.
-    set(_bss_psram_boards BOARD_TYPE_ROROLEE_MUSE)
+    set(_bss_psram_boards BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE)
     # A 16 KB TCP send buffer where speech goes up as it is spoken (Muse voice notes, ~43 KB/s).
     # lwIP's default 5.7 KB is four segments in flight, too few for fast retransmit, so one lost
     # segment holds the upload until lwIP's retransmission timer (half a second or more). Meta's
     # own firmware uses 16 KB. lwIP's buffers are in PSRAM on these boards.
-    set(_deep_tcp_boards BOARD_TYPE_ROROLEE_MUSE)
+    set(_deep_tcp_boards BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE)
 
     set(_board_forced_options "")
     if("${_selected_board}" IN_LIST _s3_boards)

@@ -1,9 +1,11 @@
-# Chinese font for rorolee-muse
+# Chinese font for rorolee-muse and wownny-muse
 
-Montserrat, the UI font, has no CJK glyphs. The board draws Chinese with LVGL's TinyTTF from a
-TrueType font kept in the `anim_pack` flash partition (`CJK_FONT_PARTITION` in `../config.h`):
-memory-mapped, so it costs no RAM and only ~25 KB of firmware. Without it the screen shows
-Latin text only, and the boot log says `no CJK font image`.
+Montserrat, the UI font, has no CJK glyphs. Both boards draw Chinese with LVGL's TinyTTF from a
+TrueType font kept in the `anim_pack` flash partition (`CJK_FONT_PARTITION` in each board's
+`config.h`; the loader is `boards/common/cjk_font.cc`): memory-mapped, so it costs no RAM and only
+~25 KB of firmware. The boot log says `cjk_font: CJK font: 2184 KB from 'anim_pack'` when it is
+there; without it the screen shows Latin text only and the log says `no CJK font image`. The two
+boards share the partition table, so the one image below serves both.
 
 ## Build the image
 
@@ -28,6 +30,6 @@ From an ESP-IDF terminal in `firmware/`, with the serial monitor closed:
 esptool.py --chip esp32s3 -p COM80 -b 460800 write_flash 0x412000 boards/rorolee-muse/font/cjk_font.bin
 ```
 
-`0x412000` is `anim_pack` in `partitions.csv`. On a RoRoLee unit that partition held the production
-animation pack, which this firmware does not use; the font overwrites it, so put the production
-image back before returning the unit to the production firmware.
+`0x412000` is `anim_pack` in `partitions.csv`. On a RoRoLee or WOWNNY unit that partition held the
+production animation pack, which this firmware does not use; the font overwrites it, so put the
+production image back before returning the unit to the production firmware.

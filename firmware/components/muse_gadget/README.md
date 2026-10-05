@@ -40,7 +40,7 @@ Upstream revision: `693cde9a884ad1edc87251b9f8944815f8de4809` (2026-10-03).
    heard, `delta.text_append` / `message.assistant` = the answer). Answers are text: Muse sends no audio.
    The note needs about 43 KB/s up. Upstream drops it once the uplink takes nothing for 200 ms (its
    boards have no PSRAM to hold the speech meanwhile); here up to 8 s of speech waits in PSRAM
-   (`transport_muse.cpp`) and the note carries on, and rorolee-muse gets a 16 KB TCP send buffer as
+   (`transport_muse.cpp`) and the note carries on, and the Muse boards get a 16 KB TCP send buffer as
    Meta's firmware has (repo-root `CMakeLists.txt`): with lwIP's default 5.7 KB one lost segment holds
    the upload until the retransmission timer fires. A hardware log on 2026-10-04 lost a note that way
    0.9 s into it.
@@ -62,8 +62,9 @@ While it pairs, a Muse gadget runs BLE, Wi-Fi and TLS at once, which is more int
 board with a display and audio has left. On rorolee-muse the first hardware log showed 0 KB internal
 free as soon as BLE started, and the Wi-Fi scan task could not even be created. That board now keeps
 LVGL's heap, NimBLE's pools and the `.bss` of Wi-Fi, lwIP and BT in PSRAM (repo-root
-`CMakeLists.txt` and `main/CMakeLists.txt`), freeing about 78 KB of static internal RAM. Another
-board put on this transport needs the same budget. After pairing the device restarts with BLE off.
+`CMakeLists.txt` and `main/CMakeLists.txt`), freeing about 78 KB of static internal RAM; wownny-muse
+is on the same lists. Another board put on this transport needs the same budget. After pairing the
+device restarts with BLE off.
 
 ## Local changes to `link/`
 

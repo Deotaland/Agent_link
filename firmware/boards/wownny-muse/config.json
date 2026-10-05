@@ -1,0 +1,5 @@
+{
+    "manufacturer": "deotaland",
+    "type": "wownny-muse",
+    "target": "esp32s3"
+}

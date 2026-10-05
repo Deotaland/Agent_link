@@ -14,6 +14,8 @@ the include path `../boards/common` lets a board `#include "xxx.h"` directly.
 | `bq27220.{h,cc}`                           | BQ27220 fuel gauge (I2C); reuses an I2C bus another driver already created                                                                                          | `esp_driver_i2c`                                                    |
 | `st7789_lcd.{h,cc}`                        | ST7789 SPI LCD: init + solid fill + `DrawBitmap` blitting in stripes through an internal DMA buffer (so a PSRAM source works). Rotation/offset via `swap_xy`/`mirror_*`/`gap_*` | `esp_lcd`, `esp_driver_spi`, `esp_driver_gpio`                      |
 | `gc2145_camera.{h,cc}`                     | GC2145 DVP camera on top of `esp32-camera`, owning the sensor's quirks: the capture-engine kick without which it never streams, the noisy top rows, the AEC/AWB freeze | `esp32_camera` (see the gating note below)                          |
+| `gc9d01_panel.{h,cc}`                      | GC9D01 160x160 round TFT (SPI, DMA) with the BOE glass's own init sequence: the WOWNNY board's screen. Init (cleared to black before the backlight comes on), solid fill, blocking `DrawBitmap` through two internal DMA stripes (a PSRAM source works), backlight on/off | `esp_lcd`, `esp_lcd_gc9d01`, `esp_driver_spi`, `esp_driver_gpio`    |
+| `cjk_font.{h,cc}`                          | Chinese for LVGL boards: a TrueType image in a flash partition (built by `boards/rorolee-muse/font/make_cjk_font.py`), CRC-checked and memory-mapped for TinyTTF. Answers `nullptr` when built without `LV_USE_TINY_TTF` | `esp_partition`, `lvgl`                                             |
 | `cst816_touch.{h,cc}`                      | CST816S/T/D capacitive touch (I2C), polled — no INT line needed. Attaches to a bus somebody else created, for panels sharing SDA/SCL with another chip               | `esp_driver_i2c`                                                    |
 
 ## Usage (from a board)
@@ -57,4 +59,5 @@ The same controller is driven two different ways, and picking the wrong one give
 
 Neither driver is in the Espressif component registry, so both are vendored under `components/`, which
 keeps the project self-contained and buildable offline. `esp_lcd_sh8501_lk` is a byte-for-byte copy of the
-production firmware's copy — see its README before touching it.
+production firmware's copy — see its README before touching it. `esp_lcd_gc9d01`, the WOWNNY board's
+screen, is vendored the same way, unchanged from the production firmware.
