@@ -1,10 +1,11 @@
 # The avatar on wownny-muse
 
-When this directory holds a `muse_pixel.c`, the board shows an animated 64×64 pixel avatar
-(blown up to 96×96) in the middle of the round screen, with one line under it: idle, listening
-(it follows the mic level) and thinking. The link screens and the answer hide it to use the
-circle for their words. Without one, those screens are text only. `main/CMakeLists.txt` picks
-the file up by itself; nothing else changes.
+When this directory holds a `muse_pixel.c`, the board shows an animated pixel avatar in the middle
+of the round screen in every state: connecting, idle, listening (follows the mic level), thinking
+and speaking (the mouth follows the voice). It is 56 px when idle and 48 px during a conversation,
+box-filtered down from the renderer's 64×64 grid so no row of the face gets lost. Without the file
+a plain disc is drawn instead, breathing when idle and pulsing with the voice. `main/CMakeLists.txt`
+picks the file up automatically; nothing else changes.
 
 `muse_pixel.c` is never committed (see `.gitignore`). Only the interface is tracked:
 `muse_pixel.h` (from Meta's muse-gadget-sdk, Apache-2.0) and `muse_state.h` (the mode list it
@@ -23,5 +24,5 @@ boards: copy it into each.
   renderer attached (the SDK's `tools/muse/AVATAR_RECIPE.md` describes the round trip), and save
   the C file it answers with here. That avatar is yours.
 
-Delete the file to go back to the text screen. The file is looked for when CMake configures, so
-after adding or removing it run `idf.py reconfigure` once before building.
+Delete the file to go back to the disc. The file is looked for when CMake configures, so after
+adding or removing it run `idf.py reconfigure` once before building.

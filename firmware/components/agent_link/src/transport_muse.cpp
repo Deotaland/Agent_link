@@ -7,7 +7,8 @@
 //
 //    Home Link status        -> agent_link_status_t + agent_state_t (READY once registered)
 //    AGENT_STREAM_VOICE      -> a voice note to the Muse (muse_note_*), on a task of our own
-//    the Muse's answer       -> a 0x33 IoActuate frame on screen0, i.e. the board's on_show_text
+//    the Muse's answer       -> a 0x33 IoActuate frame on screen0, i.e. the board's on_show_text;
+//                               with TTS (muse_tts_*) also on_audio_out / on_audio_end
 //    agent_link_confirm()    -> the pairing press;  agent_link_forget() -> Home Link's setup reset
 //
 // What does not cross: our binary control protocol has no peer here (no App), so events and the
@@ -20,6 +21,7 @@
 #if CONFIG_AGENT_LINK_TRANSPORT_MUSE
 
 #include "agent_link.h"
+#include "audio_downlink.h"
 #include "muse_gadget.h"
 #include "protocol.h"
 
@@ -55,6 +57,8 @@ enum class VoiceCmd : uint8_t { kBegin, kEnd, kCancel };
 void (*s_on_recv)(const uint8_t*, size_t) = nullptr;
 void (*s_on_state)(agent_state_t) = nullptr;
 void (*s_on_status)(const agent_link_status_t*) = nullptr;
+void (*s_on_pcm)(const uint8_t*, size_t) = nullptr;
+void (*s_on_audio_end)() = nullptr;
 
 // Home Link reports from its own tasks (the app task, the NimBLE host, the Noise session) and the
 // voice task delivers answers; the core is not thread-safe and boards are promised one callback at
@@ -206,6 +210,75 @@ void DeliverText(const char* utf8) {
     s_on_recv(f.data(), f.size());
 }
 
+// ── Spoken answers ─────────────────────────────────────────────────────────────────────────
+// Each new part of a reply is queued for TTS. The board gets the reply text when that part
+// starts playing (right away if TTS produced nothing), the audio as on_audio_out, and
+// on_audio_end once nothing is left in the queue.
+
+// Bytes of the reply already queued; EV_REPLY carries the whole reply so far. Voice task only.
+size_t s_reply_queued = 0;
+// Incremented on every new note; callbacks for older pieces are ignored.
+std::atomic<uint32_t> s_reply_tag{0};
+// The reply so far, shown when a queued piece starts playing.
+char         s_caption[1024];
+portMUX_TYPE s_caption_lock = portMUX_INITIALIZER_UNLOCKED;
+std::atomic<bool> s_audio_open{false};   // audio sent to the board since the last on_audio_end
+
+void ShowCaption() {
+    static char text[sizeof s_caption];   // TTS task only
+    taskENTER_CRITICAL(&s_caption_lock);
+    memcpy(text, s_caption, sizeof text);
+    taskEXIT_CRITICAL(&s_caption_lock);
+    DeliverText(text);
+}
+
+void EndAudio() {
+    if (!s_audio_open.exchange(false) || !s_on_audio_end) return;
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
+    s_on_audio_end();
+}
+
+void OnSpeechStart(uint32_t tag, void* /*ctx*/) {
+    if (tag == s_reply_tag.load()) ShowCaption();
+}
+
+void OnSpeechPcm(const int16_t* pcm, size_t frames, void* /*ctx*/) {
+    if (!s_on_pcm) return;
+    s_audio_open.store(true);
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
+    s_on_pcm(reinterpret_cast<const uint8_t*>(pcm), frames * sizeof(int16_t));
+}
+
+void OnSpeechEnd(uint32_t tag, bool spoke, bool last, void* /*ctx*/) {
+    if (tag != s_reply_tag.load()) return;
+    if (!spoke) ShowCaption();   // no audio: show the text anyway
+    if (last) EndAudio();
+}
+
+// Queues the new part of the reply. False if nothing was queued; the caller shows the text then.
+bool SpeakReply(const char* reply) {
+    if (!muse_tts_enabled()) return false;
+    const size_t len = strlen(reply);
+    if (len <= s_reply_queued) return false;
+    const char* fresh = reply + s_reply_queued;
+    while (*fresh == '\n') ++fresh;
+    if (!*fresh) return false;
+    taskENTER_CRITICAL(&s_caption_lock);
+    strlcpy(s_caption, reply, sizeof s_caption);
+    taskEXIT_CRITICAL(&s_caption_lock);
+    if (!muse_tts_say(fresh, s_reply_tag.load())) return false;
+    s_reply_queued = len;
+    return true;
+}
+
+// New question: stop the previous answer.
+void StopSpeech() {
+    s_reply_tag.fetch_add(1);
+    muse_tts_stop();
+    s_reply_queued = 0;
+    EndAudio();
+}
+
 // ── Voice notes ────────────────────────────────────────────────────────────────────────────
 
 // Board PCM -> the note, in order. False once the buffer is empty.
@@ -236,7 +309,7 @@ void PumpEvents() {
             break;
         }
         case MUSE_NOTE_EV_REPLY:
-            DeliverText(text);
+            if (!SpeakReply(text)) DeliverText(text);
             break;
         case MUSE_NOTE_EV_DONE:
             ESP_LOGI(TAG, "answer complete");
@@ -269,6 +342,7 @@ void VoiceTask(void*) {
         if (xQueueReceive(s_voice_q, &cmd, talking ? 1 : pdMS_TO_TICKS(50)) == pdTRUE) {
             switch (cmd) {
             case VoiceCmd::kBegin:
+                StopSpeech();
                 talking = muse_note_begin();
                 break;
             case VoiceCmd::kEnd:
@@ -314,6 +388,12 @@ esp_err_t muse_start(void* /*impl*/) {
         ESP_LOGE(TAG, "no memory for the voice task");
         return ESP_ERR_NO_MEM;
     }
+
+    // TTS may run up to 3/4 of the board's play buffer ahead of playback, 2 s at most.
+    const uint32_t buffer_ms = agentlink::audio::BufferMs();
+    const muse_tts_sink_t sink = {OnSpeechStart, OnSpeechPcm, OnSpeechEnd, nullptr};
+    muse_tts_set_sink(&sink, buffer_ms * 3 / 4 < 2000 ? buffer_ms * 3 / 4 : 2000);
+    ESP_LOGI(TAG, "%s", muse_tts_enabled() ? "TTS on (MiniMax)" : "TTS off: no MiniMax key in the build");
 
     Report(MUSE_GADGET_BOOT);
     muse_gadget_config_t cfg = {};
@@ -399,6 +479,10 @@ extern "C" agent_transport_t* agent_transport_muse(void) { return &s_muse; }
 extern "C" void agent_transport_muse_set_recv(void (*cb)(const uint8_t*, size_t)) { s_on_recv = cb; }
 extern "C" void agent_transport_muse_set_state(void (*cb)(agent_state_t)) { s_on_state = cb; }
 extern "C" void agent_transport_muse_set_status(void (*cb)(const agent_link_status_t*)) { s_on_status = cb; }
+extern "C" void agent_transport_muse_set_audio(void (*pcm)(const uint8_t*, size_t), void (*end)(void)) {
+    s_on_pcm = pcm;
+    s_on_audio_end = end;
+}
 
 extern "C" esp_err_t agent_transport_muse_forget(void) {
     if (!s_started) return ESP_ERR_INVALID_STATE;
@@ -418,6 +502,7 @@ extern "C" agent_transport_t* agent_transport_muse(void) { return nullptr; }
 extern "C" void agent_transport_muse_set_recv(void (*)(const uint8_t*, size_t)) {}
 extern "C" void agent_transport_muse_set_state(void (*)(agent_state_t)) {}
 extern "C" void agent_transport_muse_set_status(void (*)(const agent_link_status_t*)) {}
+extern "C" void agent_transport_muse_set_audio(void (*)(const uint8_t*, size_t), void (*)(void)) {}
 extern "C" esp_err_t agent_transport_muse_forget(void) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" esp_err_t agent_transport_muse_confirm(void) { return ESP_ERR_INVALID_STATE; }
 

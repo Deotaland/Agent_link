@@ -32,7 +32,11 @@ if(CONFIG_AGENT_LINK_TRANSPORT_MUSE)
         "link/wifi_mgr.c"
         "port/muse_gadget.c"
         "port/led_status_gadget.c"
-        "port/muse_note.c")
+        "port/muse_note.c"
+        "port/muse_tts.c")
+    if(CONFIG_MUSE_TTS_MINIMAX)
+        list(APPEND srcs "port/muse_tts_decode.c")
+    endif()
 else()
     set(srcs)
 endif()
@@ -45,6 +49,7 @@ idf_component_register(
     PRIV_REQUIRES nvs_flash esp_wifi esp_event esp_netif esp_http_client esp_https_ota
                   app_update esp_app_format esp-tls esp_timer esp_partition esp_driver_gpio
                   bt lwip mbedtls efuse json noise_core
+                  minimp3   # TTS, empty without CONFIG_MUSE_TTS_MINIMAX
 )
 
 if(srcs)
@@ -70,5 +75,10 @@ if(srcs)
             message(FATAL_ERROR "CONFIG_GADGET_SDK_TOKEN is not a valid SDK token. Copy it again from "
                                 "gadgets.muse.ai.")
         endif()
+    endif()
+
+    if(CONFIG_MUSE_TTS_MINIMAX AND "${CONFIG_MUSE_TTS_MINIMAX_KEY}" STREQUAL "")
+        message(STATUS "Muse transport: no MiniMax API key, TTS is off "
+                       "(Component config -> Muse gadget -> MiniMax API key).")
     endif()
 endif()

@@ -56,6 +56,34 @@ menu "Muse gadget (agent_link Muse transport)"
             Once registered, ask the VM for the agent's name (GET /identity) and show it
             as the title of the connected status.
 
+    config MUSE_TTS_MINIMAX
+        bool "Speak the Muse's replies (MiniMax TTS)"
+        default y
+        help
+            Plays the Muse's text replies through the speaker using MiniMax T2A v2
+            (api.minimaxi.com). The text is shown when the audio starts. Needs the API key
+            below; without a key replies are text only.
+
+    config MUSE_TTS_MINIMAX_KEY
+        string "MiniMax API key"
+        depends on MUSE_TTS_MINIMAX
+        default ""
+        help
+            Key from platform.minimaxi.com. Like the SDK token it ends up in sdkconfig and in
+            the firmware image, so don't commit it or put it in sdkconfig.defaults.
+
+    config MUSE_TTS_MINIMAX_VOICE
+        string "MiniMax voice"
+        depends on MUSE_TTS_MINIMAX
+        default "Chinese (Mandarin)_Straightforward_Boy"
+        help
+            voice_id from the MiniMax voice list.
+
+    config MUSE_TTS_MINIMAX_MODEL
+        string "MiniMax model"
+        depends on MUSE_TTS_MINIMAX
+        default "speech-02-turbo"
+
     config HOMEHUB_DEV_BUILD
         bool "Development build"
         default y

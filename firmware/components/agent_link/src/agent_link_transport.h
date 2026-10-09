@@ -265,13 +265,17 @@ esp_err_t agent_transport_wifi_forget(void);
 // Meta's Muse Home Link (components/muse_gadget) behind the same operation table. It owns BLE,
 // Wi-Fi and NVS itself. The core sees: link state + status like the WiFi backend, the voice
 // stream, and the Muse's answers arriving as ordinary control frames (0x33 IoActuate on the
-// synthetic screen0 endpoint), so on_show_text needs nothing Muse-specific.
+// synthetic screen0 endpoint), so on_show_text needs nothing Muse-specific. With
+// CONFIG_MUSE_TTS_MINIMAX the answers are also spoken; the audio goes to the board's
+// on_audio_out / on_audio_end, the same as App replies over BLE.
 
 /** @return The Muse transport, or NULL when the build did not select it. */
 agent_transport_t* agent_transport_muse(void);
 void agent_transport_muse_set_recv(void (*cb)(const uint8_t* data, size_t len));
 void agent_transport_muse_set_state(void (*cb)(agent_state_t state));
 void agent_transport_muse_set_status(void (*cb)(const agent_link_status_t* st));
+/** TTS output: PCM16 16 kHz mono at playback pace, then `end` when the reply is done. */
+void agent_transport_muse_set_audio(void (*pcm)(const uint8_t* pcm16, size_t bytes), void (*end)(void));
 /** Forget the Muse pairing and Wi-Fi, then restart into setup (agent_link_forget). */
 esp_err_t agent_transport_muse_forget(void);
 /** A press on the device while pairing waits for one (agent_link_confirm). */

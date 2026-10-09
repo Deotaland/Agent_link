@@ -48,14 +48,22 @@ choice BOARD_TYPE
             transport; with Transport backend = Muse it is a Muse gadget, set up from the
             Muse app.
     config BOARD_TYPE_WOWNNY_MUSE
-        bool "WOWNNY Muse (GC9D01 160x160 round screen, LVGL push-to-talk; set Transport backend = Muse)"
-        select LV_FONT_MONTSERRAT_16
-        select LV_USE_TINY_TTF
+        bool "WOWNNY Muse WWY-01 (GC9D01 160x160 round screen, LVGL push-to-talk; set Transport backend = Muse)"
+        select LV_FONT_MONTSERRAT_12
         select SPIRAM_TRY_ALLOCATE_WIFI_LWIP
         help
-            The WOWNNY board - the rorolee PCB with a GC9D01 round TFT instead of the SH8501
-            AMOLED - doing what RoRoLee Muse does, laid out for the round screen. Runs on any
-            transport; with Transport backend = Muse it is a Muse gadget.
+            WOWNNY: the rorolee PCB with a GC9D01 round TFT instead of the SH8501 AMOLED.
+            Same features as RoRoLee Muse, with a UI for the round screen. Works on any
+            transport; with Transport backend = Muse it is a Muse gadget. Panel on GPIO4-7
+            and GPIO43, backlight on GPIO46, 32.768 kHz crystal on GPIO15/16.
+    config BOARD_TYPE_WOWNNY_OLD_MUSE
+        bool "WOWNNY Muse WWY-01-old (old board revision; set Transport backend = Muse)"
+        select LV_FONT_MONTSERRAT_12
+        select SPIRAM_TRY_ALLOCATE_WIFI_LWIP
+        help
+            The old WOWNNY board, built from boards/wownny-muse like WWY-01. Differences:
+            panel on GPIO4-7/15 and powered from GPIO46 (power-cycled at boot), no 32.768 kHz
+            crystal (RTC on the internal RC), SD D3 on GPIO16, volume keys swapped.
 endchoice
 
 choice AGENT_LINK_TRANSPORT

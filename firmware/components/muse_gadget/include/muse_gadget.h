@@ -89,6 +89,30 @@ void muse_note_cancel(void);
 /** Moves the turn along and returns its next event (non-blocking); copies the event's text. */
 muse_note_ev_t muse_note_event(char* text, size_t cap);
 
+// ── Text-to-speech (CONFIG_MUSE_TTS_MINIMAX) ────────────────────────────────────────────────
+// The Muse replies in text; with a MiniMax key in the build the replies can also be spoken.
+// Each piece is sent to MiniMax T2A v2 and the audio is passed to the sink as 16 kHz mono PCM16
+// at playback speed (at most ahead_ms early). Pieces play in order; callbacks run on the TTS task.
+
+typedef struct {
+    /** Audio for piece `tag` starts. */
+    void (*on_start)(uint32_t tag, void* ctx);
+    /** `frames` mono PCM16 samples at MUSE_NOTE_SAMPLE_RATE. */
+    void (*on_pcm)(const int16_t* pcm, size_t frames, void* ctx);
+    /** Piece `tag` is done. spoke: some audio was played; last: nothing else is queued. */
+    void (*on_end)(uint32_t tag, bool spoke, bool last, void* ctx);
+    void* ctx;
+} muse_tts_sink_t;
+
+/** True if the build has a MiniMax key. */
+bool muse_tts_enabled(void);
+/** Sets the sink and how far ahead of playback it may be fed. Call once, before muse_tts_say(). */
+void muse_tts_set_sink(const muse_tts_sink_t* sink, uint32_t ahead_ms);
+/** Queues `text` as piece `tag`. False if TTS is off or 4 pieces are already queued. */
+bool muse_tts_say(const char* text, uint32_t tag);
+/** Stops the current piece and clears the queue; on_end is not called for them. Any task. */
+void muse_tts_stop(void);
+
 #ifdef __cplusplus
 }
 #endif

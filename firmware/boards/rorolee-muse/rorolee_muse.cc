@@ -24,6 +24,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 
 #include "agent_link.h"
 #include "driver/gpio.h"
@@ -108,10 +109,14 @@ public:
     }
 
     // Spoken replies, on transports that carry them: queue and return (this runs on the
-    // transport's task); the play task feeds the codec.
+    // transport's task); the play task feeds the codec. Dropped while the user is talking.
     void PlayAudio(const uint8_t* pcm16, size_t bytes) override {
-        if (!play_buf_ || !pcm16 || bytes == 0) return;
-        const size_t sent = xStreamBufferSend(play_buf_, pcm16, bytes, 0);
+        if (!play_buf_ || !pcm16 || bytes == 0 || talking_.load(std::memory_order_acquire)) return;
+        size_t sent;
+        {
+            std::lock_guard<std::mutex> lk(play_mtx_);
+            sent = xStreamBufferSend(play_buf_, pcm16, bytes, 0);
+        }
         if (sent < bytes) ESP_LOGW(TAG, "play buffer full - dropped %u bytes", (unsigned)(bytes - sent));
     }
 
@@ -264,8 +269,15 @@ private:
     bool StartTalking() {
         if (!codec_ok_) { voice::Ui::Instance().Toast("No microphone on this boot", 2000); return false; }
         if (codec_.StartMic() != ESP_OK) { ESP_LOGE(TAG, "mic start failed"); return false; }
+        // Barge-in: drop the rest of the previous answer and play nothing while the mic is open.
+        talking_.store(true, std::memory_order_release);
+        if (play_buf_) {
+            std::lock_guard<std::mutex> lk(play_mtx_);
+            (void)xStreamBufferReset(play_buf_);   // only fails if it is already empty
+        }
         if (agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &voice_) != ESP_OK) {
             ESP_LOGW(TAG, "voice stream would not open");
+            talking_.store(false, std::memory_order_release);
             codec_.StopMic();
             voice::Ui::Instance().Toast("Can't talk right now", 2000);
             return false;
@@ -280,6 +292,7 @@ private:
         agent_link_stream_close(voice_, send);
         voice_ = nullptr;
         codec_.StopMic();
+        talking_.store(false, std::memory_order_release);
         voice::Ui::Instance().SetListening(false);
         if (send) {
             voice::Ui::Instance().SetThinking();
@@ -413,9 +426,11 @@ private:
     int                   volume_    = AUDIO_DEFAULT_VOLUME;
     esp_timer_handle_t    haptic_timer_ = nullptr;
     StreamBufferHandle_t  play_buf_  = nullptr;
+    std::mutex            play_mtx_;            // serializes writers, a stream buffer allows only one
     agent_stream_handle_t voice_     = nullptr;
     std::atomic<int>      batt_pct_{-1};
     std::atomic<bool>     charging_{false};
+    std::atomic<bool>     talking_{false};      // mic open, replies are dropped
 };
 
 DECLARE_BOARD(RoRoLeeMuseBoard);

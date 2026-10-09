@@ -275,6 +275,10 @@ void SetBufferMs(uint32_t playable_ms) {
              static_cast<unsigned>(kProdResumeMs < cap_resume ? kProdResumeMs : cap_resume));
 }
 
+uint32_t BufferMs() {
+    return s_buffer_ms.load(std::memory_order_acquire);
+}
+
 void OnLinkState(bool connected) {
     if (connected) return;
     Disarm();

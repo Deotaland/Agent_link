@@ -750,6 +750,11 @@ void OnDecodedPcm(const uint8_t* pcm16, size_t bytes) {
     if (s_have_out && s_out.on_audio_out) s_out.on_audio_out(pcm16, bytes, s_out.ctx);
 }
 
+// End of audio the transport produced itself (Muse TTS). The board sees it like any reply end.
+void OnTransportAudioEnd() {
+    if (s_have_out && s_out.on_audio_end) s_out.on_audio_end(s_out.ctx);
+}
+
 // audio stage -> App (0x20 AudioFlowControl on the event channel).
 void AudioEventSink(uint8_t event_id, const uint8_t* payload, size_t len) {
     if (!s_tx || !s_tx->send_ctrl) return;
@@ -824,6 +829,7 @@ esp_err_t agent_link_init(const agent_link_config_t* cfg) {
         agent_transport_muse_set_recv(&OnCtrlFrame);      // the Muse's answers, as 0x33 screen0
         agent_transport_muse_set_state(&OnWifiState);     // CONNECTED/READY decided by the backend
         agent_transport_muse_set_status(&OnWifiStatus);   // already an agent_link_status_t
+        agent_transport_muse_set_audio(&OnDecodedPcm, &OnTransportAudioEnd);   // TTS replies
         break;
     case AGENT_TRANSPORT_BOTH:
         // Not implemented: falls back to BLE alone. Say so rather than let a caller believe it

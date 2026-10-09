@@ -1,14 +1,11 @@
 #pragma once
-// The screen of wownny-muse, drawn with LVGL on the GC9D01 round TFT.
+// LVGL UI for wownny-muse on the GC9D01 round TFT.
 //
-// What it shows follows from two inputs: the link status (agent_link_status_t, the same words on
-// every transport) and the talk cycle the board drives - listening while the button is held,
-// thinking until the agent answers, then the answer. Nothing in here knows which transport is
-// running.
+// Driven by the link status and by the board's talk cycle (listening -> thinking -> speaking).
+// No text outside the settings menu: ring, battery, avatar and a small indicator.
 //
-// Threading: LVGL is touched only by the render task Start() creates. Every Set*() may be called
-// from any task; they store the value and bump a revision the render loop picks up, so no caller
-// ever waits on the display.
+// All LVGL calls run on the render task created by Start(). The setters can be called from any
+// task; they only store values for the render loop.
 
 #include <cstdint>
 
@@ -18,24 +15,48 @@
 
 namespace voice {
 
+enum class Tone { kInfo, kMuted, kOk, kError };
+
+// One menu screen. `list` selects the list layout (above / label+value / below), otherwise
+// `lines` are shown. Colours are 0xRRGGBB; null strings are not shown.
+struct MenuView {
+    const char* heading;
+    uint32_t    heading_color;
+    bool        list;
+    const char* above;
+    const char* label;
+    const char* value;
+    uint32_t    value_color;
+    const char* below;
+    const char* lines[4];
+    uint32_t    line_colors[4];
+};
+
 class Ui {
 public:
     static Ui& Instance();
 
-    // Build the LVGL display on an initialised panel and start the render task.
     esp_err_t Start(Gc9d01Panel* panel);
 
     void SetStatus(const agent_link_status_t& st);
-    void SetBattery(int percent, bool charging);   // percent < 0 = unknown / no gauge
+    void SetBattery(int percent, bool charging);   // percent < 0: unknown
 
-    // The talk cycle, driven by the board's button task.
     void SetListening(bool on);
-    void SetLevel(int percent);                     // mic level 0-100 while listening
-    void SetThinking();                             // released: waiting for the answer
-    void SetAnswer(const char* utf8);               // what the agent sent to the screen
+    void SetLevel(int percent);                     // mic level 0-100
+    void SetThinking();
+    void SetAnswer(const char* utf8);               // text-only answer: speak for its reading time
+    void EndTurn();                                 // turn failed, back to idle
 
-    // A short line over the lower part of the screen for a moment: volume, reset countdown, errors.
-    void Toast(const char* text, uint32_t ms);
+    // Spoken answer being played by the board.
+    void SpeechStart();
+    void SpeechLevel(int percent);                  // playback level 0-100
+    void SpeechEnd();
+
+    // Short notice in the indicator area: an LV_SYMBOL, optionally with a number. ~48 px wide.
+    void Toast(const char* text, uint32_t ms, Tone tone = Tone::kInfo);
+
+    void ShowMenu(const MenuView& view);
+    void HideMenu();
 
 private:
     Ui() = default;

@@ -4,7 +4,8 @@ Meta's **Muse Home Link** (the ESP32 firmware of [facebookincubator/muse-gadget-
 run as a library under agent_link's **Muse transport** (`menuconfig → Agent Link Device → Transport backend → Muse`).
 With it selected, any agent_link board becomes a Muse gadget: it pairs with the Muse app, joins the
 Wi-Fi the app hands it, keeps an encrypted session to the user's Muse, and turns the board's voice
-stream into voice notes whose answers come back through `on_show_text`.
+stream into voice notes whose answers come back through `on_show_text`, and with a MiniMax key also
+as speech through `on_audio_out`.
 
 On BLE and WiFi builds this component (and `../noise_core`) registers empty: nothing is compiled or
 linked.
@@ -17,6 +18,8 @@ linked.
 | `port/muse_gadget.c` | Runs `app_run()` on its own task; the API in `include/muse_gadget.h`. |
 | `port/led_status_gadget.c` | Implements Home Link's `led_status.h`: status-light states become `muse_gadget_state_t`. |
 | `port/muse_note.c` | Voice notes, ported from `esp32/components/muse/muse_chat_link.c`. |
+| `port/muse_tts.c` | TTS: MiniMax T2A v2 over HTTPS, a small queue, playback pacing. |
+| `port/muse_tts_decode.c` | Pulls the hex MP3 out of MiniMax's JSON and decodes it (`../minimp3`) to 16 kHz mono. No ESP-IDF, so it can be tested on a PC. |
 | `Kconfig` | The upstream `GADGET_*` / `HOMEHUB_*` options the build uses; the rest stay undefined (off). |
 | `../noise_core/` | `esp32/components/noise_core`, vendored as-is (Noise XX + HTTP-over-Noise framing). |
 | `../agent_link/src/transport_muse.cpp` | The agent_link backend on top of this component. |
@@ -49,12 +52,40 @@ Wi-Fi comes from the Muse app in the same BLE session; agent_link's own SoftAP p
 this transport. Setting it up any other way would still need the BLE pairing, because that is the only
 way the device gets its Muse token.
 
+## Spoken answers
+
+The Muse only replies in text, so TTS runs on the device, the same way as in the muse-gadget-sdk
+MiniMax port and the rorolee app (`CONFIG_MUSE_TTS_MINIMAX`, on by default, does nothing without a
+key):
+
+1. `MUSE_NOTE_EV_REPLY` carries the whole reply so far. The new part is queued in `port/muse_tts.c`
+   and posted to `https://api.minimaxi.com/v1/t2a_v2` (model and voice from Kconfig) as MP3, 16 kHz
+   mono, 32 kbps.
+2. The response JSON has the MP3 hex-encoded in `data.audio`. `port/muse_tts_decode.c` decodes it
+   while it downloads, so playback starts before the whole response is in.
+3. The PCM goes to the board through `on_audio_out` / `on_audio_end`, like spoken replies on the
+   other transports, at most 3/4 of the board's play buffer (`agent_link_playback_set_buffer_ms`,
+   max 2 s) ahead of playback. The text goes to the board when its audio starts, or right away if
+   TTS returned nothing.
+4. A new voice note stops the speech; the Muse boards also flush what they still have buffered.
+
+The decoder was tested on a PC against ffmpeg, with the body fed in random-sized chunks: correlation
+1.0000 for 16 kHz mono and stereo, 0.986 for 24 kHz (resampled). An error response or
+`"audio": null` gives no audio, and the start of the body is logged.
+
 ## Building
 
 Set the SDK token from [gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens) under
 `Component config → Muse gadget → Muse Gadgets SDK token` (`CONFIG_GADGET_SDK_TOKEN`). It ships inside
 the firmware: treat it as an identifier, never commit it. The build warns when it is empty and stops
 when it is malformed.
+
+For TTS set `Component config → Muse gadget → MiniMax API key` (`CONFIG_MUSE_TTS_MINIMAX_KEY`, from
+platform.minimaxi.com). Same rules as the token: it ends up in sdkconfig and the image, so keep it
+out of git and sdkconfig.defaults. Without a key the build prints a note and replies stay text.
+The boot log shows `agent_link.muse: TTS on (MiniMax)`; each piece logs
+`muse_tts: speaking, X s after asking` and `spoke X s (N bytes of MP3 at 16000 Hz)`, and a failed
+request logs `no speech: HTTP <status>, <start of the response>`.
 
 ## RAM
 

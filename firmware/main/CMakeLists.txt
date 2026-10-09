@@ -27,8 +27,8 @@ elseif(CONFIG_BOARD_TYPE_ESP32S3_WORK_BADGE)
     set(BOARD_DIR "work-badge")
 elseif(CONFIG_BOARD_TYPE_ROROLEE_MUSE)
     set(BOARD_DIR "rorolee-muse")
-elseif(CONFIG_BOARD_TYPE_WOWNNY_MUSE)
-    set(BOARD_DIR "wownny-muse")
+elseif(CONFIG_BOARD_TYPE_WOWNNY_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_OLD_MUSE)
+    set(BOARD_DIR "wownny-muse")   # both revisions, config.h has the pin differences
 # Add a new board: add a line elseif(CONFIG_BOARD_TYPE_XXX) set(BOARD_DIR "your-board")
 endif()
 
@@ -75,7 +75,7 @@ idf_component_register(
     INCLUDE_DIRS ${INCLUDE_DIRS}
     REQUIRES agent_link esp_driver_gpio esp_driver_spi esp_lcd esp_lcd_sh8501 esp_lcd_sh8501_lk
              esp_lcd_gc9d01 esp_codec_dev esp_driver_i2c esp_driver_i2s nvs_flash esp_partition
-             fatfs)
+             fatfs esp_wifi)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
 
@@ -88,7 +88,7 @@ if(BOARD_HAS_AVATAR)
     message(STATUS "${BOARD_DIR}: avatar renderer found, the UI will draw it")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE VOICE_UI_AVATAR=1)
 endif()
-if(CONFIG_BOARD_TYPE_ROROLEE_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_MUSE)
+if(CONFIG_BOARD_TYPE_ROROLEE_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_OLD_MUSE)
     idf_component_get_property(lvgl_lib lvgl__lvgl COMPONENT_LIB)
     target_compile_options(${lvgl_lib} PRIVATE -include esp_attr.h)
     target_compile_definitions(${lvgl_lib} PRIVATE LV_ATTRIBUTE_LARGE_RAM_ARRAY=EXT_RAM_BSS_ATTR)

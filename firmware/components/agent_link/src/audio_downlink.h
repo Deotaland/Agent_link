@@ -44,6 +44,8 @@ void Feed(const uint8_t* data, size_t len);
 // How many ms of PCM the board's play buffer holds. Sets the flow-control watermarks: the App
 // is paused before we are further ahead of real time than the board can store. Default 400ms.
 void SetBufferMs(uint32_t playable_ms);
+// The value last given to SetBufferMs().
+uint32_t BufferMs();
 
 // Link up/down: down disarms and resets the codec to raw PCM
 void OnLinkState(bool connected);
