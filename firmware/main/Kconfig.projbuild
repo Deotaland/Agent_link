@@ -12,8 +12,6 @@ choice BOARD_TYPE
 
     config BOARD_TYPE_ESP32P4_WAVESHARE
         bool "ESP32-P4 Waveshare (CO5300 466x466 AMOLED)"
-    config BOARD_TYPE_ESP32S3_TEM_MONITOR
-        bool "ESP32-S3 TemMonitor (pressure / temperature / humidity monitor)"
     config BOARD_TYPE_ESP32S3_ES8311_VOICE
         bool "ESP32-S3 ES8311 Voice (single-codec audio example)"
     config BOARD_TYPE_ESP32S3_ES8311_ASR

@@ -56,7 +56,6 @@ Ask the user for whatever they know: the model, the company, where they bought i
 | WWY-01 | WOWNNY | Deotaland | [rorolee.com](https://www.rorolee.com) | Muse voice assistant: hold BOOT to talk; answers are spoken when the build has a MiniMax key | `WOWNNY_MUSE` | ESP32-S3 | Muse | supported |
 | WWY-01-old | WOWNNY (old board) | Deotaland | [rorolee.com](https://www.rorolee.com) | Muse voice assistant, same as WWY-01 | `WOWNNY_OLD_MUSE` | ESP32-S3 | Muse | old revision |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 development board | OpenJumper | [docs](https://www.openjumper.com/doc/esp32aiot-basicv2) | Camera preview on the LCD; a button (or the App) takes a snapshot that goes to the App over BLE | `ESP32S3_GC2145_CAMERA` | ESP32-S3 | BLE | supported |
-| ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 development board | OpenJumper | [docs](https://www.openjumper.com/doc/esp32aiot-basicv2) | Sensor monitor: pressure, temperature and humidity sent to the agent over BLE (device I/O example) | `ESP32S3_TEM_MONITOR` | ESP32-S3 | BLE | supported |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 development board | 酷世DIY (Kevincoooool) | [Taobao](https://item.taobao.com/item.htm?id=681702043224) | Touch home screen with three apps: camera preview, voice to the agent, WAV recording to the TF card; links over BLE with the Deotaland App | `ESP32S3_KORVO` | ESP32-S3 | BLE | supported |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 development board | 酷世DIY (Kevincoooool) | [Taobao](https://item.taobao.com/item.htm?id=681702043224) | WiFi straight to the Deotaland platform: hotspot setup, then a 6-digit activation code entered in the console; camera from the second page | `ESP32S3_KORVO_CLOUD` | ESP32-S3 | WiFi | supported |
 | — | Wiring example: ESP32-S3 + ES8311 (mic only) | — | — | Minimal live speech-to-text example: hold the button and the mic audio streams to the App over BLE | `ESP32S3_ES8311_ASR` | ESP32-S3 | BLE | wiring example |
@@ -64,7 +63,7 @@ Ask the user for whatever they know: the model, the company, where they bought i
 | ESP32-P4-WIFI6-Touch-LCD-7B | Waveshare ESP32-P4-WIFI6-Touch-LCD-7B | Waveshare | [waveshare.com](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-7b.htm) | Screen bring-up only, no link | `ESP32P4_WAVESHARE` | ESP32-P4 | — | **not adapted, don't flash** |
 <!-- boards:end -->
 
-- A model identifies the hardware. When several rows share it (RRL-01, Korvo 2 V3, ESP32-S3 AIoT Basic V2), ask what the device should do and use that row.
+- A model identifies the hardware. When several rows share it (RRL-01, Korvo 2 V3), ask what the device should do and use that row.
 - Don't flash a board marked "not adapted". "Wiring example" rows are not products: use them only when the user wired the parts themselves, and check their pins against the board's `config.h` first.
 - Muse boards show up in the Muse app as `MuseGadget-XXXXXX` (last bytes of the MAC), not under their own name.
 - The two WOWNNY builds use different display pins. If the screen stays dark after flashing one, flash the other.

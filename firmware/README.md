@@ -169,7 +169,7 @@ firmware/
 │   ├── common/                  drivers shared across boards (codec, panels)
 │   ├── rorolee-s3/              reference board (ESP32-S3)
 │   ├── work-badge/              electronic staff badge, same hardware (ESP32-S3)
-│   └── ...                      es8311-voice, es8311-asr, gc2145-camera, tem-monitor, esp32p4-waveshare
+│   └── ...                      es8311-voice, es8311-asr, gc2145-camera, esp32p4-waveshare
 └── components/
     ├── agent_link/              the SDK (protocol + transport); has its own README
     ├── esp_lcd_sh8501_lk/       SH8501 factory short-code driver (reference board + work-badge)

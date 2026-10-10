@@ -168,7 +168,7 @@ firmware/
 │   ├── common/                  跨板复用的驱动（codec、屏）
 │   ├── rorolee-s3/              参考板（ESP32-S3）
 │   ├── work-badge/              电子工牌，同一块硬件（ESP32-S3）
-│   └── ...                      es8311-voice、es8311-asr、gc2145-camera、tem-monitor、esp32p4-waveshare
+│   └── ...                      es8311-voice、es8311-asr、gc2145-camera、esp32p4-waveshare
 └── components/
     ├── agent_link/              SDK（协议 + 传输），有自己的 README
     ├── esp_lcd_sh8501_lk/       SH8501 厂家简码驱动（参考板与 work-badge 使用）

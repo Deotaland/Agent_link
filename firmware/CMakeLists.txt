@@ -20,11 +20,11 @@ if(EXISTS "${_sdkconfig}")
     # Explicit per-board wants for every managed choice member, both ways - so switching boards
     # back and forth via menuconfig always converges to the right value, not just the first hop.
     set(_s3_boards
-        BOARD_TYPE_ROROLEE_S3 BOARD_TYPE_ESP32S3_TEM_MONITOR
+        BOARD_TYPE_ROROLEE_S3
         BOARD_TYPE_ESP32S3_ES8311_VOICE BOARD_TYPE_ESP32S3_ES8311_ASR BOARD_TYPE_ESP32S3_GC2145_CAMERA
         BOARD_TYPE_ESP32S3_WORK_BADGE BOARD_TYPE_ESP32S3_KORVO BOARD_TYPE_ESP32S3_KORVO_CLOUD
         BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE BOARD_TYPE_WOWNNY_OLD_MUSE)
-    set(_ext_crys_boards BOARD_TYPE_ROROLEE_S3 BOARD_TYPE_ESP32S3_TEM_MONITOR BOARD_TYPE_ESP32S3_WORK_BADGE
+    set(_ext_crys_boards BOARD_TYPE_ROROLEE_S3 BOARD_TYPE_ESP32S3_WORK_BADGE
         BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE)
     # TLS records in PSRAM: boards that run a network link next to a display and audio.
     set(_tls_psram_boards BOARD_TYPE_ESP32S3_KORVO_CLOUD BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE

@@ -56,7 +56,6 @@
 | WWY-01 | WOWNNY | Deotaland（德奥塔） | [rorolee.com](https://www.rorolee.com) | Muse 语音助手：按住 BOOT 说话；固件里填了 MiniMax key 时会念出回答 | `WOWNNY_MUSE` | ESP32-S3 | Muse | 支持 |
 | WWY-01-old | WOWNNY（老板子） | Deotaland（德奥塔） | [rorolee.com](https://www.rorolee.com) | Muse 语音助手，和 WWY-01 相同 | `WOWNNY_OLD_MUSE` | ESP32-S3 | Muse | 老版本 |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 开发板 | OpenJumper | [资料](https://www.openjumper.com/doc/esp32aiot-basicv2) | 摄像头画面显示在屏幕上；按键（或 App）拍照，照片通过 BLE 发给 App | `ESP32S3_GC2145_CAMERA` | ESP32-S3 | BLE | 支持 |
-| ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 开发板 | OpenJumper | [资料](https://www.openjumper.com/doc/esp32aiot-basicv2) | 环境监测：气压、温度、湿度通过 BLE 发给智能体（设备 I/O 示例） | `ESP32S3_TEM_MONITOR` | ESP32-S3 | BLE | 支持 |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 开发板 | 酷世DIY（Kevincoooool） | [淘宝](https://item.taobao.com/item.htm?id=681702043224) | 触摸主屏，三个应用：摄像头预览、语音发给智能体、录音存到 TF 卡；通过 BLE 连 Deotaland App | `ESP32S3_KORVO` | ESP32-S3 | BLE | 支持 |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 开发板 | 酷世DIY（Kevincoooool） | [淘宝](https://item.taobao.com/item.htm?id=681702043224) | WiFi 直连 Deotaland 平台：热点配网，然后在控制台输入 6 位激活码；第二页可以打开摄像头 | `ESP32S3_KORVO_CLOUD` | ESP32-S3 | WiFi | 支持 |
 | — | 接线示例：ESP32-S3 + ES8311（只用麦克风） | — | — | 最小实时语音转文字示例：按住按键，麦克风音频通过 BLE 发给 App | `ESP32S3_ES8311_ASR` | ESP32-S3 | BLE | 接线示例 |
@@ -64,7 +63,7 @@
 | ESP32-P4-WIFI6-Touch-LCD-7B | 微雪 ESP32-P4-WIFI6-Touch-LCD-7B | Waveshare（微雪） | [waveshare.com](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-7b.htm) | 只点亮屏幕，没有连接功能 | `ESP32P4_WAVESHARE` | ESP32-P4 | — | **未适配，不要烧** |
 <!-- boards:end -->
 
-- 型号对应的是硬件。几行型号相同时（RRL-01、Korvo 2 V3、ESP32-S3 AIoT Basic V2），先问用户想让设备做什么，再选对应那一行。
+- 型号对应的是硬件。几行型号相同时（RRL-01、Korvo 2 V3），先问用户想让设备做什么，再选对应那一行。
 - 标着"未适配"的板子不要烧。"接线示例"不是成品，只有用户自己接线时才用，烧之前先按该板子的 `config.h` 核对接线。
 - Muse 板子在 Muse App 里显示为 `MuseGadget-XXXXXX`（MAC 地址最后几个字节），不是它自己的名字。
 - 两个 WOWNNY 固件的屏幕引脚不同。烧了一个屏幕不亮，就换另一个。
