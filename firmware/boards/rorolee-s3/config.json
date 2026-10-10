@@ -1,5 +1,34 @@
 {
     "manufacturer": "deotaland",
     "type": "rorolee-s3",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ROROLEE_S3",
+            "model": "RRL-01",
+            "product": "RoRoLee",
+            "vendor": "Deotaland",
+            "buy": ["https://www.rorolee.com"],
+            "docs": [],
+            "aliases": ["RoRoLee", "rorolee-s3", "Deotaland", "德奥塔", "rorolee.com"],
+            "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; ES8311 + ES7210 audio; BQ27220 fuel gauge",
+            "identify": "Small rectangular AMOLED screen (120x240); three buttons: BOOT, VOL+, VOL-",
+            "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
+            "use": "Agent Link reference firmware: push-to-talk with the agent through the Deotaland App over BLE",
+            "transport": "BLE",
+            "ble_name": "ROROLEE_S3",
+            "fw_model": "RRL-01",
+            "status": "supported",
+            "notes": null,
+            "zh": {
+                "product": "RoRoLee",
+                "vendor": "Deotaland（德奥塔）",
+                "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；SH8501 120x240 AMOLED；ES8311 + ES7210 音频；BQ27220 电量计",
+                "identify": "小的长方形 AMOLED 屏（120x240）；三个按键：BOOT、VOL+、VOL-",
+                "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
+                "use": "Agent Link 参考固件：通过 BLE 连 Deotaland App，按键和智能体对话",
+                "notes": null
+            }
+        }
+    ]
 }

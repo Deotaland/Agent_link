@@ -1,5 +1,61 @@
 {
     "manufacturer": "deotaland",
     "type": "wownny-muse",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "WOWNNY_MUSE",
+            "model": "WWY-01",
+            "product": "WOWNNY",
+            "vendor": "Deotaland",
+            "buy": ["https://www.rorolee.com"],
+            "docs": [],
+            "aliases": ["WOWNNY", "wownny-muse", "Deotaland", "德奥塔", "rorolee.com", "圆屏"],
+            "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; GC9D01 160x160 round TFT; ES8311 + ES7210 audio; BQ27220 fuel gauge; vibration motor",
+            "identify": "Round screen, about 100 px of it visible through the case; three buttons: BOOT, VOL+, VOL-",
+            "flash_port": "USB-C (the chip's own USB). Download mode: hold BOOT while plugging in.",
+            "use": "Muse voice assistant: hold BOOT to talk; answers are spoken when the build has a MiniMax key",
+            "transport": "MUSE",
+            "ble_name": "MuseGadget-XXXXXX",
+            "fw_model": "WWY-01",
+            "status": "supported",
+            "notes": "Production board. Once the screen starts the log continues on USB only (GPIO43, UART0 TX, is the display reset).",
+            "zh": {
+                "product": "WOWNNY",
+                "vendor": "Deotaland（德奥塔）",
+                "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；GC9D01 160x160 圆形屏；ES8311 + ES7210 音频；BQ27220 电量计；振动马达",
+                "identify": "圆形屏，透过外壳能看到约 100 像素；三个按键：BOOT、VOL+、VOL-",
+                "flash_port": "USB-C（芯片自带的 USB）。下载模式：按住 BOOT 再插 USB。",
+                "use": "Muse 语音助手：按住 BOOT 说话；固件里填了 MiniMax key 时会念出回答",
+                "notes": "量产板。屏幕启动后日志只从 USB 输出（GPIO43 即 UART0 TX，用作屏幕复位）。"
+            }
+        },
+        {
+            "board_type": "WOWNNY_OLD_MUSE",
+            "model": "WWY-01-old",
+            "product": "WOWNNY (old board)",
+            "vendor": "Deotaland",
+            "buy": ["https://www.rorolee.com"],
+            "docs": [],
+            "aliases": ["WOWNNY", "wownny-muse", "Deotaland", "德奥塔", "rorolee.com", "圆屏", "老板子", "旧版"],
+            "hardware": "Same parts as WWY-01 on an earlier PCB: different display pins, display powered from GPIO46, no 32 kHz crystal",
+            "identify": "Looks like WWY-01. Its screen stays dark for about a second at boot. If unsure, flash WWY-01 first; if the screen stays dark, flash this one.",
+            "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
+            "use": "Muse voice assistant, same as WWY-01",
+            "transport": "MUSE",
+            "ble_name": "MuseGadget-XXXXXX",
+            "fw_model": "WWY-01-old",
+            "status": "legacy",
+            "notes": "Early hardware revision. The volume keys are swapped compared to WWY-01.",
+            "zh": {
+                "product": "WOWNNY（老板子）",
+                "vendor": "Deotaland（德奥塔）",
+                "hardware": "和 WWY-01 同样的器件，早期 PCB：屏幕引脚不同，屏幕由 GPIO46 供电，没有 32 kHz 晶振",
+                "identify": "外观和 WWY-01 一样，开机时屏幕会黑一秒左右。分不清时先烧 WWY-01；屏幕不亮再烧这个。",
+                "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
+                "use": "Muse 语音助手，和 WWY-01 相同",
+                "notes": "早期硬件版本，音量键和 WWY-01 是反的。"
+            }
+        }
+    ]
 }

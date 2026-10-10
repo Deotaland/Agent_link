@@ -1,5 +1,34 @@
 {
     "manufacturer": "waveshare",
     "type": "esp32p4-waveshare",
-    "target": "esp32p4"
+    "target": "esp32p4",
+    "boards": [
+        {
+            "board_type": "ESP32P4_WAVESHARE",
+            "model": "ESP32-P4-WIFI6-Touch-LCD-7B",
+            "product": "Waveshare ESP32-P4-WIFI6-Touch-LCD-7B",
+            "vendor": "Waveshare",
+            "buy": ["https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-7b.htm"],
+            "docs": ["https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-7B"],
+            "aliases": ["Waveshare", "微雪", "ESP32-P4", "P4 7B", "7B", "Touch-LCD-7B", "esp32p4-waveshare"],
+            "hardware": "ESP32-P4 with an ESP32-C6 for Wi-Fi 6 / BLE 5; 7-inch 1024x600 IPS (MIPI-DSI), GT911 touch",
+            "identify": "7-inch touch screen, landscape",
+            "flash_port": "See the Waveshare docs.",
+            "use": "Screen bring-up only, no link",
+            "transport": "NONE",
+            "ble_name": null,
+            "fw_model": "ESP32P4_WAVESHARE",
+            "status": "not-adapted",
+            "notes": "The screen code still drives a CO5300 466x466 AMOLED, not this board's 7-inch LCD, so the screen stays dark. Don't flash it for users yet.",
+            "zh": {
+                "product": "微雪 ESP32-P4-WIFI6-Touch-LCD-7B",
+                "vendor": "Waveshare（微雪）",
+                "hardware": "ESP32-P4，另有一颗 ESP32-C6 负责 Wi-Fi 6 / BLE 5；7 寸 1024x600 IPS 屏（MIPI-DSI），GT911 触摸",
+                "identify": "7 寸横屏触摸屏",
+                "flash_port": "见微雪的资料。",
+                "use": "只点亮屏幕，没有连接功能",
+                "notes": "屏幕代码目前驱动的还是 CO5300 466x466 AMOLED，不是这块板的 7 寸屏，烧上去屏幕不亮。先不要给用户烧。"
+            }
+        }
+    ]
 }

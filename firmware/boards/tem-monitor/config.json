@@ -1,5 +1,34 @@
 {
     "manufacturer": "deotaland",
     "type": "tem-monitor",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ESP32S3_TEM_MONITOR",
+            "model": "ESP32-S3 AIoT Basic V2",
+            "product": "ESP32-S3 AIoT Basic V2 development board",
+            "vendor": "OpenJumper",
+            "buy": [],
+            "docs": ["https://www.openjumper.com/doc/esp32aiot-basicv2"],
+            "aliases": ["AIoT Basic", "AIOT basicV2", "AIoT Basic V2", "ESP32S3 AIOT", "ESP32-S3 AIoT", "OpenJumper", "openjumper.com", "tem-monitor", "温湿度", "气压", "TemMonitor"],
+            "hardware": "ESP32-S3 AIoT Basic V2 with an SPA06 pressure/temperature sensor and an SHT30 temperature/humidity sensor on I2C; ST7789 240x240 LCD",
+            "identify": "The AIoT Basic V2 learning board (about 145 x 135 mm) with the two sensors attached",
+            "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
+            "use": "Sensor monitor: pressure, temperature and humidity sent to the agent over BLE (device I/O example)",
+            "transport": "BLE",
+            "ble_name": "TemMonitor",
+            "fw_model": "TemMonitor",
+            "status": "supported",
+            "notes": "Check the sensor and display wiring against boards/tem-monitor/config.h.",
+            "zh": {
+                "product": "ESP32-S3 AIoT Basic V2 开发板",
+                "vendor": "OpenJumper",
+                "hardware": "ESP32-S3 AIoT Basic V2，I2C 上接 SPA06 气压温度传感器和 SHT30 温湿度传感器；ST7789 240x240 屏",
+                "identify": "AIoT Basic V2 学习板（约 145 x 135 mm），接了这两个传感器",
+                "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
+                "use": "环境监测：气压、温度、湿度通过 BLE 发给智能体（设备 I/O 示例）",
+                "notes": "传感器和屏幕的接线以 boards/tem-monitor/config.h 为准。"
+            }
+        }
+    ]
 }

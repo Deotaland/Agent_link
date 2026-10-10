@@ -1,5 +1,34 @@
 {
     "manufacturer": "deotaland",
     "type": "rorolee-muse",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ROROLEE_MUSE",
+            "model": "RRL-01",
+            "product": "RoRoLee",
+            "vendor": "Deotaland",
+            "buy": ["https://www.rorolee.com"],
+            "docs": [],
+            "aliases": ["RoRoLee", "rorolee-muse", "Deotaland", "德奥塔", "rorolee.com"],
+            "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; ES8311 + ES7210 audio; BQ27220 fuel gauge",
+            "identify": "Small rectangular AMOLED screen (120x240); three buttons: BOOT, VOL+, VOL-",
+            "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
+            "use": "Muse voice assistant: hold BOOT to talk, the answer is shown as text",
+            "transport": "MUSE",
+            "ble_name": "MuseGadget-XXXXXX",
+            "fw_model": "RRL-01",
+            "status": "supported",
+            "notes": "Hold VOL- for 6 s to forget the Muse pairing. Chinese text needs a font image in anim_pack (boards/rorolee-muse/font/README.md).",
+            "zh": {
+                "product": "RoRoLee",
+                "vendor": "Deotaland（德奥塔）",
+                "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；SH8501 120x240 AMOLED；ES8311 + ES7210 音频；BQ27220 电量计",
+                "identify": "小的长方形 AMOLED 屏（120x240）；三个按键：BOOT、VOL+、VOL-",
+                "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
+                "use": "Muse 语音助手：按住 BOOT 说话，回答以文字显示",
+                "notes": "按住 VOL- 6 秒清除 Muse 配对。显示中文需要往 anim_pack 烧字库（boards/rorolee-muse/font/README.md）。"
+            }
+        }
+    ]
 }

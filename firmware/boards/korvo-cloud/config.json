@@ -1,5 +1,34 @@
 {
     "manufacturer": "deotaland",
     "type": "korvo-cloud",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ESP32S3_KORVO_CLOUD",
+            "model": "Korvo 2 V3",
+            "product": "ESP32S3 Korvo 2 V3 development board",
+            "vendor": "酷世DIY (Kevincoooool)",
+            "buy": ["https://item.taobao.com/item.htm?id=681702043224"],
+            "docs": ["https://github.com/Kevincoooool/esp-idf-docs"],
+            "aliases": ["Korvo", "Korvo 2", "Korvo-2", "Korvo2", "ESP32-S3-Korvo-2", "ESP32S3 Korvo", "Korvo S3", "korvo-cloud", "酷世", "酷世DIY", "KSDIY", "Kevincoooool", "681702043224"],
+            "hardware": "ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM); 1.69-inch 240x280 ST7789 touch LCD (CST816); ES8311 + ES7210 audio; 24-pin DVP camera connector (this firmware drives a GC2145); TF card slot",
+            "identify": "Two USB-C ports; 1.69-inch touch screen; camera on a 24-pin ribbon connector; six ADC buttons",
+            "flash_port": "Left USB-C (CH9102F USB-UART, automatic download). The right USB-C is the chip's own USB, not for flashing.",
+            "use": "WiFi straight to the Deotaland platform: hotspot setup, then a 6-digit activation code entered in the console; camera from the second page",
+            "transport": "WIFI",
+            "ble_name": "KorvoCloud-XXXX (WiFi hotspot)",
+            "fw_model": "KORVO-CLOUD",
+            "status": "supported",
+            "notes": "The platform address is compiled in (config.h: CLOUD_BASE_URL, CLOUD_PRODUCT_ID). Rebuild when the platform moves to deotaland.ai.",
+            "zh": {
+                "product": "ESP32S3 Korvo 2 V3 开发板",
+                "vendor": "酷世DIY（Kevincoooool）",
+                "hardware": "ESP32-S3-WROOM-1-N16R8（16 MB Flash，8 MB PSRAM）；1.69 寸 240x280 ST7789 触摸屏（CST816）；ES8311 + ES7210 音频；24P DVP 摄像头座（本固件驱动 GC2145）；TF 卡座",
+                "identify": "两个 USB-C 口；1.69 寸触摸屏；摄像头接在 24P 排线座上；6 个 ADC 按键",
+                "flash_port": "左边的 USB-C（CH9102F 串口芯片，带自动下载）。右边的 USB-C 是芯片自带的 USB，不用来烧录。",
+                "use": "WiFi 直连 Deotaland 平台：热点配网，然后在控制台输入 6 位激活码；第二页可以打开摄像头",
+                "notes": "平台地址编进了固件（config.h 的 CLOUD_BASE_URL、CLOUD_PRODUCT_ID），平台迁到 deotaland.ai 后要重新编译。"
+            }
+        }
+    ]
 }

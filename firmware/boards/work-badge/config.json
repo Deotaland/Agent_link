@@ -1,5 +1,34 @@
 {
     "manufacturer": "deotaland",
     "type": "work-badge",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ESP32S3_WORK_BADGE",
+            "model": "RRL-01",
+            "product": "RoRoLee",
+            "vendor": "Deotaland",
+            "buy": ["https://www.rorolee.com"],
+            "docs": [],
+            "aliases": ["RoRoLee", "work-badge", "badge", "工牌", "电子工牌", "Deotaland", "德奥塔", "rorolee.com"],
+            "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; BQ27220 fuel gauge",
+            "identify": "Small rectangular AMOLED screen (120x240); three buttons: BOOT, VOL+, VOL-",
+            "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
+            "use": "Electronic staff badge: a name card filled in from the App over BLE",
+            "transport": "BLE",
+            "ble_name": "ROROLEE_XXXXXX",
+            "fw_model": "RRL-01",
+            "status": "supported",
+            "notes": "Pins from the mass-production board. Only the screen, the fuel gauge and the App link are used.",
+            "zh": {
+                "product": "RoRoLee",
+                "vendor": "Deotaland（德奥塔）",
+                "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；SH8501 120x240 AMOLED；BQ27220 电量计",
+                "identify": "小的长方形 AMOLED 屏（120x240）；三个按键：BOOT、VOL+、VOL-",
+                "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
+                "use": "电子工牌：通过 BLE 由 App 填写的名片",
+                "notes": "引脚来自量产板，只用到屏幕、电量计和 App 连接。"
+            }
+        }
+    ]
 }

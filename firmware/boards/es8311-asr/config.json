@@ -1,5 +1,34 @@
 {
     "manufacturer": "deotaland",
     "type": "es8311-asr",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ESP32S3_ES8311_ASR",
+            "model": null,
+            "product": "Wiring example: ESP32-S3 + ES8311 (mic only)",
+            "vendor": null,
+            "buy": [],
+            "docs": [],
+            "aliases": ["es8311-asr", "ES8311", "ASR"],
+            "hardware": "Any ESP32-S3 board with 16 MB flash, plus an ES8311 codec module and a push button wired as in config.h",
+            "identify": "Hand-wired; there is no product to match",
+            "flash_port": "The board's USB port. Download mode: hold BOOT while plugging in.",
+            "use": "Minimal live speech-to-text example: hold the button and the mic audio streams to the App over BLE",
+            "transport": "BLE",
+            "ble_name": "ROROLEE_ES8311_ASR",
+            "fw_model": "ROROLEE_ES8311_ASR",
+            "status": "example",
+            "notes": "The talk button is active-high on GPIO8. Check the user's wiring against boards/es8311-asr/config.h before flashing.",
+            "zh": {
+                "product": "接线示例：ESP32-S3 + ES8311（只用麦克风）",
+                "vendor": null,
+                "hardware": "任意 16 MB Flash 的 ESP32-S3 开发板，按 config.h 接一个 ES8311 音频模块和一个按键",
+                "identify": "自己接线，没有对应的成品",
+                "flash_port": "开发板的 USB 口。下载模式：按住 BOOT 再插 USB。",
+                "use": "最小实时语音转文字示例：按住按键，麦克风音频通过 BLE 发给 App",
+                "notes": "说话键在 GPIO8，高电平有效。烧录前按 boards/es8311-asr/config.h 核对用户的接线。"
+            }
+        }
+    ]
 }

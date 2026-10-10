@@ -1,5 +1,34 @@
 {
     "manufacturer": "deotaland",
     "type": "gc2145-camera",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ESP32S3_GC2145_CAMERA",
+            "model": "ESP32-S3 AIoT Basic V2",
+            "product": "ESP32-S3 AIoT Basic V2 development board",
+            "vendor": "OpenJumper",
+            "buy": [],
+            "docs": ["https://www.openjumper.com/doc/esp32aiot-basicv2"],
+            "aliases": ["AIoT Basic", "AIOT basicV2", "AIoT Basic V2", "ESP32S3 AIOT", "ESP32-S3 AIoT", "OpenJumper", "openjumper.com", "gc2145-camera"],
+            "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; 1.3-inch 240x240 IPS LCD (ST7789); onboard camera (this firmware drives a GC2145); digital mic, amplifier, buzzer, light sensor, WS2812 RGB LED; Grove connector",
+            "identify": "Large learning board, about 145 x 135 mm, with nine onboard modules: buttons, buzzer, LED, light sensor, LCD, mic, SD slot, amplifier, camera",
+            "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
+            "use": "Camera preview on the LCD; a button (or the App) takes a snapshot that goes to the App over BLE",
+            "transport": "BLE",
+            "ble_name": "GC2145_CAMERA",
+            "fw_model": "GC2145_CAMERA",
+            "status": "supported",
+            "notes": null,
+            "zh": {
+                "product": "ESP32-S3 AIoT Basic V2 开发板",
+                "vendor": "OpenJumper",
+                "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；1.3 寸 240x240 IPS 屏（ST7789）；板载摄像头（本固件驱动 GC2145）；数字麦克风、功放、蜂鸣器、光敏传感器、WS2812 彩灯；Grove 接口",
+                "identify": "较大的学习板，约 145 x 135 mm，板上有九个模块：按键、蜂鸣器、LED、光敏、屏幕、麦克风、SD 卡座、功放、摄像头",
+                "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
+                "use": "摄像头画面显示在屏幕上；按键（或 App）拍照，照片通过 BLE 发给 App",
+                "notes": null
+            }
+        }
+    ]
 }
