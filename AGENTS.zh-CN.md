@@ -55,6 +55,7 @@
 | RRL-01 | RoRoLee | Deotaland（德奥塔） | [rorolee.com](https://www.rorolee.com) | Agent Link 参考固件：通过 BLE 连 Deotaland App，按键和智能体对话 | `ROROLEE_S3` | ESP32-S3 | BLE | 支持 |
 | WWY-01 | WOWNNY | Deotaland（德奥塔） | [rorolee.com](https://www.rorolee.com) | Muse 语音助手：按住 BOOT 说话；固件里填了 MiniMax key 时会念出回答 | `WOWNNY_MUSE` | ESP32-S3 | Muse | 支持 |
 | WWY-01-old | WOWNNY（老板子） | Deotaland（德奥塔） | [rorolee.com](https://www.rorolee.com) | Muse 语音助手，和 WWY-01 相同 | `WOWNNY_OLD_MUSE` | ESP32-S3 | Muse | 老版本 |
+| C152 | M5Stack StopWatch | M5Stack | [资料](https://docs.m5stack.com/en/core/StopWatch) | 通过 Deotaland App 走 BLE 和智能体按键对讲：按住黄键说话，回复从喇叭播放；圆屏显示连接状态 | `M5STACK_STOPWATCH` | ESP32-S3 | BLE | 支持 |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 开发板 | OpenJumper | [资料](https://www.openjumper.com/doc/esp32aiot-basicv2) | 摄像头画面显示在屏幕上；按键（或 App）拍照，照片通过 BLE 发给 App | `ESP32S3_GC2145_CAMERA` | ESP32-S3 | BLE | 支持 |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 开发板 | 酷世DIY（Kevincoooool） | [淘宝](https://item.taobao.com/item.htm?id=681702043224) | 触摸主屏，三个应用：摄像头预览、语音发给智能体、录音存到 TF 卡；通过 BLE 连 Deotaland App | `ESP32S3_KORVO` | ESP32-S3 | BLE | 支持 |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 开发板 | 酷世DIY（Kevincoooool） | [淘宝](https://item.taobao.com/item.htm?id=681702043224) | WiFi 直连 Deotaland 平台：热点配网，然后在控制台输入 6 位激活码；第二页可以打开摄像头 | `ESP32S3_KORVO_CLOUD` | ESP32-S3 | WiFi | 支持 |
@@ -67,7 +68,7 @@
 - 标着"未适配"的板子不要烧。"接线示例"不是成品，只有用户自己接线时才用，烧之前先按该板子的 `config.h` 核对接线。
 - Muse 板子在 Muse App 里显示为 `MuseGadget-XXXXXX`（MAC 地址最后几个字节），不是它自己的名字。
 - 两个 WOWNNY 固件的屏幕引脚不同。烧了一个屏幕不亮，就换另一个。
-- 走 WiFi 需要板子里编进平台地址（`Board::Platform()`），目前只有 `korvo-cloud` 有。
+- 走 WiFi 需要板子里编进平台地址（`Board::Platform()`），目前 `korvo-cloud` 和 `m5stack-stopwatch` 有。
 - 开机日志能确认跑的是什么：`board = …, model = …, fw = …`（即档案里的 `fw_model`）和 `init: … transport=ble|wifi|muse`。
 - Kconfig 符号是 `CONFIG_BOARD_TYPE_<值>`，在 menuconfig 里的位置是 `Agent Link Device → Board Type`。
 - 板卡档案在 `firmware/boards/<目录>/config.json`，每种板子一条。上表和技能自带的 `boards.json` 都由 `python tools/board_catalog.py` 从它生成。
@@ -160,7 +161,7 @@ idf.py build
 ```
 
 - 连接方式的取值：`AGENT_LINK_TRANSPORT_BLE`、`AGENT_LINK_TRANSPORT_WIFI`、`AGENT_LINK_TRANSPORT_MUSE`。
-- **选好板子后一定要执行一次 `idf.py reconfigure`。** 顶层 `CMakeLists.txt` 只有在配置时发现板子已经选好，才会把这块板专属的设置（PSRAM、RTC 时钟、内存放置、TCP 缓冲）补进 `sdkconfig`，日志里会出现 `agent_link: patched sdkconfig for BOARD_TYPE_…`。漏了这一步，Muse 板子会内存不够。
+- **选好板子或连接方式后一定要执行一次 `idf.py reconfigure`。** 顶层 `CMakeLists.txt` 只有在配置时发现两者都已选好，才会把板子和连接方式需要的设置（PSRAM、RTC 时钟、内存放置、TCP 缓冲）补进 `sdkconfig`，日志里会出现 `agent_link: patched sdkconfig for BOARD_TYPE_… on the … link`。漏了这一步，Muse 固件会内存不够。
 - `set-target` 会重新生成 `sdkconfig`，旧的存为 `sdkconfig.old`，里面的密钥要重新填。密钥也可以写进上面那个文件，所以它必须放在仓库外面。
 - Muse 板子要设置 `CONFIG_GADGET_SDK_TOKEN`（`Component config → Muse gadget → Muse Gadgets SDK token`，在 <https://gadgets.muse.ai/settings/sdk-tokens> 申请）。不设编译会警告，等 Muse 开始强制校验 token 后就配不上对了。可选：`CONFIG_MUSE_TTS_MINIMAX_KEY`，填 MiniMax API key 后设备会把回答念出来。
 
@@ -178,14 +179,14 @@ idf.py -p PORT flash monitor     # 按 Ctrl+] 退出监视器
 
 设备用自己的名称广播（档案里的 `ble_name`），用 Deotaland 手机 App 配对。App 还没有公开发布，先问用户手上有没有。
 
-### WiFi（korvo-cloud）
+### WiFi（korvo-cloud、m5stack-stopwatch）
 
-1. 屏幕显示 "Set up WiFi"。用手机连开放热点 `KorvoCloud-XXXX`，会自动弹出配网页面（没弹出就打开 <http://192.168.4.1>），选择 WiFi、输入密码。
+1. 屏幕显示 "Set up WiFi"。用手机连开放热点 `KorvoCloud-XXXX`（StopWatch 上是 `M5StopWatch-XXXX`），会自动弹出配网页面（没弹出就打开 <http://192.168.4.1>），选择 WiFi、输入密码。
 2. 屏幕显示 "Activation code" 和 6 位数字。这个码 10 分钟内有效，只能用一次。
 3. 在平台上：**设备管理 → 添加设备 → 6位码快速绑定**，输入绑定码，可以填设备名，选择智能体。
 4. 屏幕显示 "Online" 就好了。显示 "Already bound" 说明设备已经被绑定过，要先在平台上解绑；显示 "No agent" 说明还没给它分配智能体。
 
-平台地址是编进固件的（`boards/korvo-cloud/config.h` 里的 `CLOUD_BASE_URL`、`CLOUD_PRODUCT_ID`）。平台迁到 deotaland.ai 后，这个固件要重新编译。
+平台地址是编进固件的（`boards/<板>/config.h` 里的 `CLOUD_BASE_URL`、`CLOUD_PRODUCT_ID`）。平台迁到 deotaland.ai 后，这个固件要重新编译。
 
 ### Muse 板子（WOWNNY、RoRoLee Muse）
 

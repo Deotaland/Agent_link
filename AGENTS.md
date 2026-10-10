@@ -55,6 +55,7 @@ Ask the user for whatever they know: the model, the company, where they bought i
 | RRL-01 | RoRoLee | Deotaland | [rorolee.com](https://www.rorolee.com) | Agent Link reference firmware: push-to-talk with the agent through the Deotaland App over BLE | `ROROLEE_S3` | ESP32-S3 | BLE | supported |
 | WWY-01 | WOWNNY | Deotaland | [rorolee.com](https://www.rorolee.com) | Muse voice assistant: hold BOOT to talk; answers are spoken when the build has a MiniMax key | `WOWNNY_MUSE` | ESP32-S3 | Muse | supported |
 | WWY-01-old | WOWNNY (old board) | Deotaland | [rorolee.com](https://www.rorolee.com) | Muse voice assistant, same as WWY-01 | `WOWNNY_OLD_MUSE` | ESP32-S3 | Muse | old revision |
+| C152 | M5Stack StopWatch | M5Stack | [docs](https://docs.m5stack.com/en/core/StopWatch) | Push-to-talk with the agent through the Deotaland App over BLE: hold the yellow key, replies play on the speaker; link status on the round screen | `M5STACK_STOPWATCH` | ESP32-S3 | BLE | supported |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 development board | OpenJumper | [docs](https://www.openjumper.com/doc/esp32aiot-basicv2) | Camera preview on the LCD; a button (or the App) takes a snapshot that goes to the App over BLE | `ESP32S3_GC2145_CAMERA` | ESP32-S3 | BLE | supported |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 development board | 酷世DIY (Kevincoooool) | [Taobao](https://item.taobao.com/item.htm?id=681702043224) | Touch home screen with three apps: camera preview, voice to the agent, WAV recording to the TF card; links over BLE with the Deotaland App | `ESP32S3_KORVO` | ESP32-S3 | BLE | supported |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 development board | 酷世DIY (Kevincoooool) | [Taobao](https://item.taobao.com/item.htm?id=681702043224) | WiFi straight to the Deotaland platform: hotspot setup, then a 6-digit activation code entered in the console; camera from the second page | `ESP32S3_KORVO_CLOUD` | ESP32-S3 | WiFi | supported |
@@ -67,7 +68,7 @@ Ask the user for whatever they know: the model, the company, where they bought i
 - Don't flash a board marked "not adapted". "Wiring example" rows are not products: use them only when the user wired the parts themselves, and check their pins against the board's `config.h` first.
 - Muse boards show up in the Muse app as `MuseGadget-XXXXXX` (last bytes of the MAC), not under their own name.
 - The two WOWNNY builds use different display pins. If the screen stays dark after flashing one, flash the other.
-- WiFi needs the platform address compiled into the board (`Board::Platform()`). Today only `korvo-cloud` has it.
+- WiFi needs the platform address compiled into the board (`Board::Platform()`). Today `korvo-cloud` and `m5stack-stopwatch` have it.
 - The boot log confirms what is running: `board = …, model = …, fw = …` (the `fw_model` in the catalog) and `init: … transport=ble|wifi|muse`.
 - The Kconfig symbol is `CONFIG_BOARD_TYPE_<value>`; in menuconfig it is `Agent Link Device → Board Type`.
 - The catalog lives in `firmware/boards/<directory>/config.json`, one entry per board type. The table above and the bundled `boards.json` are generated from it by `python tools/board_catalog.py`.
@@ -160,7 +161,7 @@ idf.py build
 ```
 
 - Link values: `AGENT_LINK_TRANSPORT_BLE`, `AGENT_LINK_TRANSPORT_WIFI`, `AGENT_LINK_TRANSPORT_MUSE`.
-- **Always run `idf.py reconfigure` after selecting a board.** The top-level `CMakeLists.txt` adds the board's own settings (PSRAM, RTC clock, RAM placement, TCP buffer) to `sdkconfig` only when it configures with the board already selected. The log then shows `agent_link: patched sdkconfig for BOARD_TYPE_…`. Without this step the Muse boards run out of RAM.
+- **Always run `idf.py reconfigure` after selecting a board or link.** The top-level `CMakeLists.txt` adds what the board and the link need (PSRAM, RTC clock, RAM placement, TCP buffer) to `sdkconfig` only when it configures with both already selected. The log then shows `agent_link: patched sdkconfig for BOARD_TYPE_… on the … link`. Without this step a Muse build runs out of RAM.
 - `set-target` replaces `sdkconfig` and keeps the old one as `sdkconfig.old`. Secrets in it must be set again. The defaults file can hold them too, which is why it belongs outside the repository.
 - Muse boards: set `CONFIG_GADGET_SDK_TOKEN` (`Component config → Muse gadget → Muse Gadgets SDK token`, from https://gadgets.muse.ai/settings/sdk-tokens). Without it the build warns, and pairing will stop working once Muse requires tokens. Optional: `CONFIG_MUSE_TTS_MINIMAX_KEY`, a MiniMax API key that makes the device speak its replies.
 
@@ -178,14 +179,14 @@ idf.py -p PORT flash monitor     # Ctrl+] leaves the monitor
 
 The device advertises under its name (`ble_name` in the catalog). Pair it from the Deotaland phone App. The App isn't public yet; ask the user whether they have it.
 
-### WiFi (korvo-cloud)
+### WiFi (korvo-cloud, m5stack-stopwatch)
 
-1. The screen shows "Set up WiFi". Join the open hotspot `KorvoCloud-XXXX` from a phone. A setup page opens (otherwise go to http://192.168.4.1). Choose the network and enter its password.
+1. The screen shows "Set up WiFi". Join the open hotspot `KorvoCloud-XXXX` (`M5StopWatch-XXXX` on the StopWatch) from a phone. A setup page opens (otherwise go to http://192.168.4.1). Choose the network and enter its password.
 2. The screen shows "Activation code" with six digits. The code is valid for 10 minutes and works once.
 3. In the console: **Device Management → Add Device → 6-Digit Code Binding**. Enter the code, optionally a name, and choose an agent.
 4. The screen shows "Online". "Already bound" means the device has to be unbound in the console first. "No agent" means no agent is attached to it yet.
 
-The platform address is compiled in (`boards/korvo-cloud/config.h`: `CLOUD_BASE_URL`, `CLOUD_PRODUCT_ID`). When the platform moves to deotaland.ai, this firmware has to be rebuilt.
+The platform address is compiled in (`boards/<board>/config.h`: `CLOUD_BASE_URL`, `CLOUD_PRODUCT_ID`). When the platform moves to deotaland.ai, this firmware has to be rebuilt.
 
 ### Muse boards (WOWNNY, RoRoLee Muse)
 

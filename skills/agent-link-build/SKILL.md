@@ -33,7 +33,7 @@ Work in the user's checkout; if there is none, clone https://github.com/Deotalan
 - Check:
   - the reconfigure log shows `agent_link: patched sdkconfig for BOARD_TYPE_…`;
   - `build/config/sdkconfig.h` defines `CONFIG_BOARD_TYPE_<BOARD_TYPE> 1`.
-  Without the patch the board's own settings are missing and the Muse boards run out of RAM.
+  Without the patch the board's and the link's settings are missing and a Muse build runs out of RAM.
 
 ## 3. Build
 

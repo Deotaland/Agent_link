@@ -27,6 +27,8 @@ elseif(CONFIG_BOARD_TYPE_ROROLEE_MUSE)
     set(BOARD_DIR "rorolee-muse")
 elseif(CONFIG_BOARD_TYPE_WOWNNY_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_OLD_MUSE)
     set(BOARD_DIR "wownny-muse")   # both revisions, config.h has the pin differences
+elseif(CONFIG_BOARD_TYPE_M5STACK_STOPWATCH)
+    set(BOARD_DIR "m5stack-stopwatch")
 # Add a new board: add a line elseif(CONFIG_BOARD_TYPE_XXX) set(BOARD_DIR "your-board")
 endif()
 

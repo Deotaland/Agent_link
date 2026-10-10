@@ -30,7 +30,7 @@
 - 检查：
   - reconfigure 的日志里有 `agent_link: patched sdkconfig for BOARD_TYPE_…`；
   - `build/config/sdkconfig.h` 里定义了 `CONFIG_BOARD_TYPE_<板子类型> 1`。
-  缺了这一步，板子专属的配置就没有加上，Muse 板子会内存不够。
+  缺了这一步，板子和连接方式需要的配置就没有加上，Muse 固件会内存不够。
 
 ## 3. 编译
 

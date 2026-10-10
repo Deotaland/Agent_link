@@ -19,7 +19,7 @@
 
 struct Es8311Config {
     i2c_port_t i2c_port;
-    gpio_num_t pin_sda;
+    gpio_num_t pin_sda;     // GPIO_NUM_NC: attach to the bus already on i2c_port
     gpio_num_t pin_scl;
     gpio_num_t pin_mclk;
     gpio_num_t pin_bclk;    // SCLK

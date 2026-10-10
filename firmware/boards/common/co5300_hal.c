@@ -1,6 +1,8 @@
-// CO5300 (MIPI-DSI) low-level bring-up, C implementation (pairs with the C++ class in co5300_panel.cc). See co5300_hal.h.
-
-// ESP32-P4, so it is gated on CONFIG_IDF_TARGET_ESP32P4: on non-P4 it compiles to an empty stub so
+// CO5300 low-level bring-up, C implementation (pairs with the C++ class in co5300_panel.cc). See co5300_hal.h.
+//
+// MIPI-DSI exists only on the ESP32-P4, so that half is gated on CONFIG_IDF_TARGET_ESP32P4. QSPI needs
+// only the esp_lcd_co5300 component, which main/idf_component.yml adds for the targets that use it.
+// boards/common is compiled for every board, so each half falls back to a stub where it does not apply.
 #include "co5300_hal.h"
 
 #if CONFIG_IDF_TARGET_ESP32P4
@@ -133,6 +135,97 @@ esp_err_t co5300_hal_init(int rst_gpio, int pwr_en_gpio, co5300_hal_handles_t *o
 {
     (void)rst_gpio;
     (void)pwr_en_gpio;
+    (void)out;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+#endif
+
+#if __has_include("esp_lcd_co5300.h")
+#include "driver/spi_master.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_co5300.h"
+#include "esp_log.h"
+
+static const char *QTAG = "co5300_qspi";
+
+// User-page setup, as the component's default but stopping at sleep-out: the caller clears RAM
+// before DISPON so the power-up noise never shows, and sets the brightness afterwards.
+static const co5300_lcd_init_cmd_t s_qspi_init_cmds[] = {
+    {0xFE, (uint8_t[]){0x00}, 1, 0},     // user command page
+    {0xC4, (uint8_t[]){0x80}, 1, 0},     // SPI interface mode
+    {0x35, (uint8_t[]){0x00}, 1, 0},     // TE on
+    {0x53, (uint8_t[]){0x20}, 1, 0},     // brightness control on
+    {0x51, (uint8_t[]){0x00}, 1, 0},     // brightness 0 until the caller sets one
+    {0x63, (uint8_t[]){0xFF}, 1, 0},     // HBM brightness
+    {0x11, NULL, 0, 150},                // sleep out
+};
+
+esp_err_t co5300_hal_init_qspi(const co5300_qspi_config_t *cfg, co5300_hal_handles_t *out)
+{
+    if (cfg == NULL || out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const spi_bus_config_t bus_cfg = CO5300_PANEL_BUS_QSPI_CONFIG(cfg->pin_sclk, cfg->pin_d0, cfg->pin_d1,
+                                                                  cfg->pin_d2, cfg->pin_d3,
+                                                                  (int)cfg->max_transfer_bytes);
+    esp_err_t err = spi_bus_initialize((spi_host_device_t)cfg->spi_host, &bus_cfg, SPI_DMA_CH_AUTO);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {   // INVALID_STATE: the bus is already up
+        ESP_LOGE(QTAG, "spi bus: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(cfg->pin_cs, NULL, NULL);
+    io_cfg.pclk_hz = cfg->pclk_hz;
+    io_cfg.trans_queue_depth = 1;   // one transfer in flight; the caller tracks when its buffer is free
+    esp_lcd_panel_io_handle_t io = NULL;
+    err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)cfg->spi_host, &io_cfg, &io);
+    if (err != ESP_OK) {
+        ESP_LOGE(QTAG, "panel io: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    co5300_vendor_config_t vendor = {
+        .init_cmds = s_qspi_init_cmds,
+        .init_cmds_size = sizeof(s_qspi_init_cmds) / sizeof(s_qspi_init_cmds[0]),
+        .flags.use_qspi_interface = 1,
+    };
+    esp_lcd_panel_dev_config_t panel_cfg = {
+        .reset_gpio_num = cfg->rst_gpio,
+        .rgb_ele_order = cfg->bgr ? LCD_RGB_ELEMENT_ORDER_BGR : LCD_RGB_ELEMENT_ORDER_RGB,
+        .bits_per_pixel = 16,
+        .vendor_config = &vendor,
+    };
+    esp_lcd_panel_handle_t panel = NULL;
+    err = esp_lcd_new_panel_co5300(io, &panel_cfg, &panel);
+    if (err != ESP_OK) {
+        ESP_LOGE(QTAG, "new panel: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = esp_lcd_panel_reset(panel);   // the reset pin, or SWRESET without one
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_init(panel);   // MADCTL + COLMOD, then the table above
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_set_gap(panel, cfg->x_gap, cfg->y_gap);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(QTAG, "panel init: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    out->ldo = NULL;
+    out->dsi_bus = NULL;
+    out->io = io;
+    out->panel = panel;
+    return ESP_OK;
+}
+
+#else  // ── esp_lcd_co5300 not in this build ──
+esp_err_t co5300_hal_init_qspi(const co5300_qspi_config_t *cfg, co5300_hal_handles_t *out)
+{
+    (void)cfg;
     (void)out;
     return ESP_ERR_NOT_SUPPORTED;
 }

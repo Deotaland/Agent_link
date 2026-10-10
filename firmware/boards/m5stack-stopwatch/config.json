@@ -1,0 +1,34 @@
+{
+    "manufacturer": "m5stack",
+    "type": "m5stack-stopwatch",
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "M5STACK_STOPWATCH",
+            "model": "C152",
+            "product": "M5Stack StopWatch",
+            "vendor": "M5Stack",
+            "buy": [],
+            "docs": ["https://docs.m5stack.com/en/core/StopWatch"],
+            "aliases": ["StopWatch", "Stop Watch", "M5StopWatch", "M5 StopWatch", "M5Stack StopWatch", "M5Stack", "C152", "m5stack-stopwatch"],
+            "hardware": "ESP32-S3R8 (8 MB PSRAM), 16 MB flash; 1.75-inch 466x466 round AMOLED (CO5300, QSPI) with CST820 touch; ES8311 codec, MEMS mic, AW8737A 1 W speaker amp; two keys and a power key; vibration motor; M5PM1 power management with a 450 mAh battery; M5IOE1 IO expander; BMI270 IMU; RX8130CE RTC",
+            "identify": "52 x 52 mm round watch body with a 1.75-inch round touch screen; a yellow and a blue key plus a power key; USB-C; lanyard hole, magnetic back",
+            "flash_port": "USB-C (the ESP32-S3's own USB). If no port shows up: plug in USB, hold the power key about 2 s until the green LED lights, release.",
+            "use": "Push-to-talk with the agent through the Deotaland App over BLE: hold the yellow key, replies play on the speaker; link status on the round screen",
+            "transport": "BLE",
+            "ble_name": "M5StopWatch",
+            "fw_model": "M5-STOPWATCH",
+            "status": "supported",
+            "notes": "The same board builds for the WiFi link (Transport backend = WiFi): hotspot M5StopWatch-XXXX, then a 6-digit activation code in the console. Voice needs the BLE link until the WiFi data plane exists. The platform address is compiled in (config.h: CLOUD_BASE_URL, CLOUD_PRODUCT_ID). The touch panel is not used yet.",
+            "zh": {
+                "product": "M5Stack StopWatch",
+                "vendor": "M5Stack",
+                "hardware": "ESP32-S3R8（8 MB PSRAM），16 MB Flash；1.75 寸 466x466 圆形 AMOLED（CO5300，QSPI），CST820 触摸；ES8311 编解码，MEMS 麦克风，AW8737A 1 W 功放；两个按键加电源键；振动马达；M5PM1 电源管理，450 mAh 电池；M5IOE1 IO 扩展；BMI270 IMU；RX8130CE RTC",
+                "identify": "52 x 52 mm 圆形手表，1.75 寸圆形触摸屏；一黄一蓝两个按键加电源键；USB-C；挂绳孔，背面带磁吸",
+                "flash_port": "USB-C（ESP32-S3 自带的 USB）。认不出串口时：插上 USB，按住电源键约 2 秒到绿灯亮，松开。",
+                "use": "通过 Deotaland App 走 BLE 和智能体按键对讲：按住黄键说话，回复从喇叭播放；圆屏显示连接状态",
+                "notes": "同一个板子也能编成 WiFi 链路（Transport backend 选 WiFi）：连 M5StopWatch-XXXX 热点配网，再在控制台输入 6 位激活码。WiFi 数据面做好之前，语音只能走 BLE。平台地址编进了固件（config.h 的 CLOUD_BASE_URL、CLOUD_PRODUCT_ID）。触摸屏暂未使用。"
+            }
+        }
+    ]
+}

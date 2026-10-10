@@ -50,6 +50,13 @@ esp_err_t Es8311Codec::Init(const Es8311Config& cfg) {
 }
 
 esp_err_t Es8311Codec::InitI2c() {
+    // Shared bus: the board already created it on this port.
+    if (cfg_.pin_sda == GPIO_NUM_NC || cfg_.pin_scl == GPIO_NUM_NC) {
+        ESP_RETURN_ON_ERROR(i2c_master_get_bus_handle(cfg_.i2c_port, &i2c_bus_), TAG,
+                            "I2C port %d has no bus yet - its owner must init first", (int)cfg_.i2c_port);
+        return ESP_OK;
+    }
+
     i2c_master_bus_config_t bus = {};
     bus.i2c_port          = cfg_.i2c_port;
     bus.sda_io_num        = cfg_.pin_sda;

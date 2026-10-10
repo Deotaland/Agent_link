@@ -62,6 +62,16 @@ choice BOARD_TYPE
             The old WOWNNY board, built from boards/wownny-muse like WWY-01. Differences:
             panel on GPIO4-7/15 and powered from GPIO46 (power-cycled at boot), no 32.768 kHz
             crystal (RTC on the internal RC), SD D3 on GPIO16, volume keys swapped.
+    config BOARD_TYPE_M5STACK_STOPWATCH
+        bool "M5Stack StopWatch (CO5300 466x466 round AMOLED, ES8311; hold the yellow key to talk)"
+        select LV_FONT_MONTSERRAT_20
+        select LV_FONT_MONTSERRAT_24
+        select LV_FONT_MONTSERRAT_28
+        select LV_FONT_MONTSERRAT_48
+        help
+            M5Stack StopWatch (ESP32-S3R8, SKU C152): hold the yellow key to talk to the agent,
+            replies on the speaker, the link status on the round screen. Written against
+            agent_link_status_t only, so it runs on BLE or WiFi: pick the Transport backend below.
 endchoice
 
 choice AGENT_LINK_TRANSPORT
