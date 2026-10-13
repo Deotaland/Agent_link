@@ -20,6 +20,7 @@
 //     withheld whenever its buffer runs low (see the RX gate below).
 #include "agent_link_transport.h"
 #include "ota_service.h"
+#include "audio_downlink.h"
 
 #include <cstring>
 #include <queue>
@@ -1068,6 +1069,7 @@ namespace {
 
     // ── agent_transport_t interface implementation ──
     esp_err_t ble_start(void* /*impl*/) {
+        agentlink::audio::SetDefaultCodec(agentlink::audio::kCodecImaAdpcm);
         esp_err_t r = EnsureNvs();
         if (r != ESP_OK) { ESP_LOGE(TAG, "nvs init: %s", esp_err_to_name(r)); return r; }
 

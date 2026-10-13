@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include "adpcm.h"
+#include "agent_link.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -33,7 +34,12 @@ constexpr uint32_t kPauseNum  = 5, kPauseDen  = 8;      // fallback cap: 62.5% o
 constexpr uint32_t kResumeNum = 3, kResumeDen = 16;     // fallback cap: 18.75% (same ratios)
 constexpr uint32_t kNearlyDryMs = 256;  // re-assert RESUME while the buffer is this empty
 
-constexpr uint32_t kTickMs       = 200;   // ticker period; also the flip repeat spacing
+// Ticker period. This has to be short enough to react inside the *smallest* board's buffer, not
+// the 8s default: a 320ms buffer fills 32KB in 1s, so at 200ms the App was already 160ms over the
+// pause point before the first PAUSE went out, and every burst after that landed as dropped audio.
+// 50ms keeps a 120ms-floor buffer controllable. The tick is a few dozen integer ops, so the cost
+// is negligible next to the stutter it removes.
+constexpr uint32_t kTickMs       = 50;    // ticker period; also the flip repeat spacing
 constexpr int      kFlipRepeats  = 2;     // extra sends after a state flip (3 total)
 constexpr uint32_t kReassertMs   = 2000;  // periodic re-assert, in case a notify was lost
 
@@ -42,7 +48,10 @@ EventSink s_evt = nullptr;
 
 std::mutex s_mtx;                 // guards the flow-control bookkeeping below
 std::atomic<uint8_t> s_codec{kCodecPcm16};
+uint8_t s_default_codec = kCodecPcm16;
 std::atomic<bool>    s_armed{false};
+agent_playback_buffer_level_cb_t s_buffer_level = nullptr;
+void* s_buffer_level_ctx = nullptr;
 
 // Flow control: how far ahead of real time we have pushed audio at the board.
 bool     s_paused = false;
@@ -68,6 +77,7 @@ int64_t NowUs() { return esp_timer_get_time(); }
 // anything. Valid because a speaker drains PCM16/16kHz at a fixed 32 bytes per ms.
 // Must be called with s_mtx held.
 uint32_t BufferedMsLocked() {
+    if (s_buffer_level) return static_cast<uint32_t>(s_buffer_level(s_buffer_level_ctx) / kBytesPerMs);
     const int64_t now = NowUs();
     const int64_t elapsed_ms = (now - s_base_us) / 1000;
     const int64_t have_ms    = static_cast<int64_t>(s_delivered / kBytesPerMs);
@@ -104,6 +114,8 @@ void Tick(void*) {
     uint8_t  state;
     uint32_t ms;
     bool     send = false;
+    bool     flipped = false;
+    uint32_t pause_ms = 0, resume_ms = 0;
     {
         std::lock_guard<std::mutex> lk(s_mtx);
         ms = BufferedMsLocked();
@@ -111,16 +123,16 @@ void Tick(void*) {
         const int64_t since_ms = (now - s_last_send_us) / 1000;
         const uint32_t cap = s_buffer_ms.load(std::memory_order_acquire);
         const uint32_t cap_pause  = cap * kPauseNum / kPauseDen;
-        const uint32_t cap_resume = cap * kResumeNum / kResumeDen;
-        const uint32_t pause_ms  = (kProdPauseMs  < cap_pause)  ? kProdPauseMs  : cap_pause;
-        const uint32_t resume_ms = (kProdResumeMs < cap_resume) ? kProdResumeMs : cap_resume;
+        const uint32_t cap_resume = s_buffer_level ? cap * 3 / 8 : cap * kResumeNum / kResumeDen;
+        pause_ms  = (kProdPauseMs  < cap_pause)  ? kProdPauseMs  : cap_pause;
+        resume_ms = (kProdResumeMs < cap_resume) ? kProdResumeMs : cap_resume;
 
         if (!s_paused && ms >= pause_ms) {
-            s_paused = true;  s_repeats = kFlipRepeats;  send = true;
+            s_paused = true;  s_repeats = kFlipRepeats;  send = true; flipped = true;
         } else if (s_paused && ms <= resume_ms) {
-            s_paused = false; s_repeats = kFlipRepeats;  send = true;
+            s_paused = false; s_repeats = kFlipRepeats;  send = true; flipped = true;
         } else if (s_repeats > 0) {
-            --s_repeats;      send = true;               // flips go out 3x, 200ms apart
+            --s_repeats;      send = true;               // flips go out 3x, kTickMs apart
         } else if (since_ms >= static_cast<int64_t>(kReassertMs)) {
             // Re-assert periodically: a dropped PAUSE notify would let the App flood us, and a
             // dropped RESUME would leave it muted forever. The payload is absolute state, so
@@ -129,6 +141,13 @@ void Tick(void*) {
         }
         if (send) s_last_send_us = now;
         state = s_paused ? kFlowPause : kFlowResume;
+    }
+    // Log only the state changes, not the repeats: if this oscillates, the band is wrong and that
+    // is the one line that says so. Silent until a board throttles, so it costs nothing normally.
+    if (flipped) {
+        ESP_LOGI(TAG, "downlink %s at %ums buffered (band %ums/%ums)",
+                 state == kFlowPause ? "PAUSE" : "RESUME",
+                 (unsigned)ms, (unsigned)pause_ms, (unsigned)resume_ms);
     }
     if (send) SendFlow(state, ms);
 }
@@ -149,13 +168,45 @@ void EnsureTicker() {
 }
 
 // Hand decoded PCM to the board and count it toward the backlog estimate.
+//
+// The PAUSE check here as well as in Tick(): the ticker only sees the backlog every kTickMs, but
+// the App can push 10x real time, so one tick's worth of arrivals can be several hundred ms and
+// blow straight through a 320ms buffer before any ticker runs. Checking on the delivery path means
+// the App is paused the moment the crossing block is decoded, with at most one block (31ms) of
+// overshoot. Runs on the transport's receive task, so it only does arithmetic plus the notify.
 void Deliver(const uint8_t* pcm, size_t bytes) {
     if (!s_pcm || !pcm || bytes == 0) return;
+
+    uint8_t  state;
+    uint32_t ms;
+    bool     send = false;
+    bool     flipped = false;
+    uint32_t pause_ms = 0;
     {
         std::lock_guard<std::mutex> lk(s_mtx);
-        s_delivered += bytes;
+        if (!s_buffer_level) s_delivered += bytes;
+        ms = BufferedMsLocked();
+        if (s_buffer_level) ms += static_cast<uint32_t>((bytes + kBytesPerMs - 1) / kBytesPerMs);
+        const uint32_t cap = s_buffer_ms.load(std::memory_order_acquire);
+        const uint32_t cap_pause = cap * kPauseNum / kPauseDen;
+        pause_ms = (kProdPauseMs < cap_pause) ? kProdPauseMs : cap_pause;
+        if (!s_paused && ms >= pause_ms) {
+            s_paused = true;  s_repeats = kFlipRepeats;  send = true; flipped = true;
+            s_last_send_us = NowUs();
+        }
+        state = s_paused ? kFlowPause : kFlowResume;
     }
+    // The board's sink first: if the App's PAUSE and the board's buffer are racing, dropping one
+    // more block is worse than one block of extra lead time.
     s_pcm(pcm, bytes);
+    if (send) {
+        if (flipped) {
+            ESP_LOGI(TAG, "downlink PAUSE at %ums buffered (band %ums, board %ums)",
+                     (unsigned)ms, (unsigned)pause_ms,
+                     (unsigned)s_buffer_ms.load(std::memory_order_acquire));
+        }
+        SendFlow(state, ms);
+    }
 }
 
 }  // namespace
@@ -174,14 +225,23 @@ bool SetCodec(uint8_t codec) {
             ESP_LOGW(TAG, "codec change to %u ignored mid-session", codec);
         return true;
     }
-    if (codec != s_codec.exchange(codec, std::memory_order_acq_rel))
+    if (codec != s_codec.exchange(codec, std::memory_order_acq_rel)) {
+        s_block_len = 0;
         ESP_LOGI(TAG, "downlink codec = %s", codec == kCodecImaAdpcm ? "IMA-ADPCM" : "PCM16");
+    }
     return true;
+}
+
+void SetDefaultCodec(uint8_t codec) {
+    s_default_codec = codec;
+    SetCodec(codec);
 }
 
 uint8_t CodecValue() { return s_codec.load(std::memory_order_acquire); }
 
 void Arm() {
+    // A prelude can arrive before the reply command. Keep its decoder and queue intact.
+    if (s_armed.load(std::memory_order_acquire)) return;
     if (s_codec.load(std::memory_order_acquire) == kCodecImaAdpcm) {
         // Staging buffers only exist for the ADPCM path. PSRAM if there is any; 1.3KB total.
         if (!s_block) {
@@ -198,7 +258,6 @@ void Arm() {
     }
     {
         std::lock_guard<std::mutex> lk(s_mtx);
-        s_block_len   = 0;
         s_paused      = false;
         s_repeats     = 0;
         s_base_us     = NowUs();
@@ -226,7 +285,6 @@ void Disarm() {
         was_paused  = s_paused;
         s_paused    = false;
         s_repeats   = 0;
-        s_block_len = 0;
     }
     // If we left the App paused it would stay silent into the next utterance, so send one last
     // RESUME on the way out.
@@ -238,6 +296,7 @@ bool IsArmed() { return s_armed.load(std::memory_order_acquire); }
 
 void Feed(const uint8_t* data, size_t len) {
     if (!data || len == 0) return;
+    if (!s_armed.load(std::memory_order_acquire)) Arm();
 
     if (s_codec.load(std::memory_order_acquire) == kCodecPcm16) {
         Deliver(data, len);   // already PCM16: straight through, no copy
@@ -268,7 +327,7 @@ void SetBufferMs(uint32_t playable_ms) {
     if (playable_ms < 120) playable_ms = 120;
     s_buffer_ms.store(playable_ms, std::memory_order_release);
     const uint32_t cap_pause  = playable_ms * kPauseNum / kPauseDen;
-    const uint32_t cap_resume = playable_ms * kResumeNum / kResumeDen;
+    const uint32_t cap_resume = s_buffer_level ? playable_ms * 3 / 8 : playable_ms * kResumeNum / kResumeDen;
     ESP_LOGI(TAG, "downlink flow control: board buffer %ums -> pause %ums / resume %ums",
              static_cast<unsigned>(playable_ms),
              static_cast<unsigned>(kProdPauseMs  < cap_pause  ? kProdPauseMs  : cap_pause),
@@ -282,10 +341,10 @@ uint32_t BufferMs() {
 void OnLinkState(bool connected) {
     if (connected) return;
     Disarm();
-    // Codec is a per-connection sticky setting and resets to raw PCM on disconnect, so an App
-    // that reconnects without re-declaring it gets the documented default.
-    if (s_codec.exchange(kCodecPcm16, std::memory_order_acq_rel) != kCodecPcm16)
-        ESP_LOGI(TAG, "downlink codec reset to PCM16 (link down)");
+    s_block_len = 0;
+    if (s_codec.exchange(s_default_codec, std::memory_order_acq_rel) != s_default_codec)
+        ESP_LOGI(TAG, "downlink codec reset to %s (link down)",
+                 s_default_codec == kCodecImaAdpcm ? "IMA-ADPCM" : "PCM16");
 }
 
 }  // namespace audio
@@ -294,4 +353,9 @@ void OnLinkState(bool connected) {
 // Public API (include/agent_link.h).
 extern "C" void agent_link_playback_set_buffer_ms(uint32_t playable_ms) {
     agentlink::audio::SetBufferMs(playable_ms);
+}
+
+extern "C" void agent_link_playback_set_buffer_level_callback(agent_playback_buffer_level_cb_t cb, void* ctx) {
+    agentlink::audio::s_buffer_level_ctx = ctx;
+    agentlink::audio::s_buffer_level = cb;
 }

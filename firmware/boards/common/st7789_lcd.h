@@ -41,6 +41,17 @@ struct St7789LcdConfig {
     // runs BLE + LVGL + a camera off the same 150KB); the DMA cost of more, smaller transfers is
     // minor, since the blit is dominated by the memcpy out of PSRAM rather than by the SPI.
     uint16_t stripe_rows    = 40;
+    // Vendor power/gamma sequence for panels whose reference init does more than esp_lcd's
+    // built-in SLPOUT/COLMOD/RAMCTRL. FoloToy's ST7789P3 needs one; a plain ST7789 does not.
+    // Sent after esp_lcd_panel_init() and before the colour commands, which override 0x36.
+    struct VendorCmd {
+        uint8_t  cmd;
+        uint16_t delay_ms;
+        uint8_t  len;
+        uint8_t  data[16];
+    };
+    const VendorCmd* vendor_cmds      = nullptr;
+    uint16_t         vendor_cmd_count = 0;
 };
 
 class St7789Lcd {

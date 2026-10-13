@@ -114,6 +114,20 @@ esp_err_t St7789Lcd::Init(const St7789LcdConfig& cfg) {
 
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(panel_), TAG, "reset");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel_),  TAG, "init");
+
+    // Vendor porch/power/gamma commands. esp_lcd's init only sends SLPOUT, COLMOD and RAMCTRL, so
+    // a panel whose reference init does more than that (FoloToy's ST7789P3) comes up with the
+    // wrong gamma and a washed-out tint. Before the colour commands below, since those rewrite
+    // 0x36 MADCTL.
+    if (cfg_.vendor_cmd_count) {
+        ESP_LOGI(TAG, "vendor init: %u commands", (unsigned)cfg_.vendor_cmd_count);
+    }
+    for (uint16_t i = 0; i < cfg_.vendor_cmd_count; ++i) {
+        const St7789LcdConfig::VendorCmd& v = cfg_.vendor_cmds[i];
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io_, v.cmd, v.data, v.len), TAG, "vendor cmd");
+        if (v.delay_ms) vTaskDelay(pdMS_TO_TICKS(v.delay_ms));
+    }
+
     if (cfg_.invert_color) (void)esp_lcd_panel_invert_color(panel_, true);
     (void)esp_lcd_panel_swap_xy(panel_, cfg_.swap_xy);
     (void)esp_lcd_panel_mirror(panel_, cfg_.mirror_x, cfg_.mirror_y);
@@ -183,6 +197,7 @@ esp_err_t St7789Lcd::DrawBitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
     int i = 0;
     for (uint16_t row = 0; row < h; row = static_cast<uint16_t>(row + cfg_.stripe_rows)) {
         const uint16_t rows_this = std::min<uint16_t>(cfg_.stripe_rows, static_cast<uint16_t>(h - row));
+        const uint32_t expect = done_count_.load(std::memory_order_acquire) + 1;
         memcpy(stripe_[i], src + static_cast<size_t>(row) * row_bytes,
                static_cast<size_t>(rows_this) * row_bytes);
         ESP_RETURN_ON_ERROR(
@@ -190,9 +205,15 @@ esp_err_t St7789Lcd::DrawBitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
                                       static_cast<uint16_t>(x + w),
                                       static_cast<uint16_t>(y + row + rows_this), stripe_[i]),
             TAG, "draw_bitmap");
+        // Block until the DMA is done with this stripe. LVGL in partial mode hands back the same
+        // buffer as soon as flush_ready() is called, so without this the next stripe memcpy races
+        // the DMA still reading it and the screen comes out as shuffled garbage.
+        if (!WaitDone(expect, 500)) {
+            ESP_LOGE(TAG, "blit tx timeout row=%u", static_cast<unsigned>(row));
+            return ESP_ERR_TIMEOUT;
+        }
         i ^= 1;
     }
-    (void)esp_lcd_panel_io_tx_param(io_, 0x00, nullptr, 0);
     return ESP_OK;
 }
 

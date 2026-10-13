@@ -358,6 +358,15 @@ esp_err_t agent_link_confirm(void);
 void agent_link_playback_set_buffer_ms(uint32_t playable_ms);
 
 /**
+ * @brief Supply the actual number of queued PCM bytes for downlink flow control.
+ *
+ * Register during board setup. The callback runs on transport and timer tasks and must
+ * return immediately. Without one, the SDK estimates playback from elapsed time.
+ */
+typedef size_t (*agent_playback_buffer_level_cb_t)(void* ctx);
+void agent_link_playback_set_buffer_level_callback(agent_playback_buffer_level_cb_t cb, void* ctx);
+
+/**
  * @brief Push a device→Agent event
  *
  * The event_id on the wire is the agent_event_t value. Use AGENT_EVT_CUSTOM (0x64) for a board-private packet

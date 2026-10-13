@@ -7,6 +7,7 @@
 //
 // Wraps the public esp_codec_dev component
 // Requires esp_codec_dev / esp_driver_i2c / esp_driver_i2s in REQUIRES
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -33,6 +34,11 @@ struct Es8311Config {
     int        sample_rate; // e.g. 16000
     int        mic_gain;    // ADC gain in dB (e.g. 30)
     int        out_volume;  // 0..100
+    // True on boards whose ES8311 has no external PA (pa_pin == GPIO_NUM_NC). The DAC reference
+    // is then idle, and the ES8311 mixes that reference into the right channel, so leaving it on
+    // prints the DAC's own idle output into the capture path.
+    bool       no_dac_ref;
+    float      pa_voltage;  // supply of the external PA; 0 when the board has none
 };
 
 class Es8311Codec {
@@ -53,6 +59,8 @@ public:
     // Write 'frames' mono 16-bit samples; blocks until the I2S DMA has room.
     esp_err_t WritePcm(const int16_t* data, size_t frames);
     esp_err_t SetVolume(uint8_t vol);        // 0..100
+    esp_err_t SetMute(bool mute);
+    bool      Muted() const { return muted_.load(std::memory_order_acquire); }
     esp_err_t SetMicGain(int gain_db);
 
     bool Ready() const { return codec_dev_ != nullptr; }
@@ -63,6 +71,7 @@ private:
     esp_err_t InitDuplexI2s();
     esp_err_t InitCodec();
     esp_err_t OpenDevice();
+    void     ApplyVolumeCurve();
 
     Es8311Config cfg_ = {};
     i2c_master_bus_handle_t      i2c_bus_   = nullptr;
@@ -74,5 +83,6 @@ private:
     const audio_codec_if_t*      codec_if_  = nullptr;
     esp_codec_dev_handle_t       codec_dev_ = nullptr;  // single IN_OUT handle backing both directions
     bool mic_on_   = false;
+    std::atomic<bool> muted_{false};
     bool dev_open_ = false;
 };

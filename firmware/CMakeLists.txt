@@ -77,6 +77,11 @@ if(EXISTS "${_sdkconfig}")
         else()
             list(APPEND _board_forced_options "CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760")
         endif()
+    elseif(_selected_board STREQUAL "BOARD_TYPE_FOLOTOY_AI_PASSPORT")
+        # C3 has no PSRAM. Defaults do not override values in an existing sdkconfig.
+        list(APPEND _board_forced_options "CONFIG_RTC_CLK_SRC_INT_RC=y"
+                                          "CONFIG_LV_MEM_SIZE_KILOBYTES=24"
+                                          "CONFIG_LV_DRAW_LAYER_SIMPLE_BUF_SIZE=6144")
     endif()
 
     set(_to_append "")

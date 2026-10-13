@@ -214,6 +214,52 @@
       ]
     },
     {
+      "board_type": "FOLOTOY_AI_PASSPORT",
+      "dir": "ai-passport",
+      "target": "esp32c3",
+      "model": "AI-PASSPORT",
+      "product": "FoloToy AI Passport",
+      "vendor": "FoloToy",
+      "buy": [
+        "https://ai-passport.folotoy.cn"
+      ],
+      "docs": [
+        "https://github.com/FoloToy/ai-passport",
+        "https://ai-passport.folotoy.cn"
+      ],
+      "aliases": [
+        "AI Passport",
+        "AIPassport",
+        "FoloPassport",
+        "FoloToy",
+        "folotoy",
+        "ai-passport",
+        "护照"
+      ],
+      "hardware": "ESP32-C3, 8 MB flash, no PSRAM; ST7789P3 240x320 SPI LCD; ES8311 codec (mic + speaker); three ADC keys (UP/DOWN/OK); CW2017 fuel gauge",
+      "identify": "Wearable badge with a 240x320 colour screen and three physical keys; USB-C (ESP32-C3 native USB Serial/JTAG on GPIO18/19)",
+      "flash_port": "USB-C (native USB Serial/JTAG). Download mode: hold the OK/BOOT-side key path if needed, or use esptool auto-reset.",
+      "use": "Push-to-talk with the agent through the Deotaland App over BLE: hold OK to speak, release to send; replies play on the speaker; screen colour shows link status",
+      "transport": "BLE",
+      "ble_name": "AIPassport",
+      "fw_model": "AI-PASSPORT",
+      "status": "supported",
+      "notes": "First Agent Link board on ESP32-C3. Build with idf.py set-target esp32c3. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
+      "zh": {
+        "product": "FoloToy AI Passport",
+        "vendor": "FoloToy",
+        "hardware": "ESP32-C3，8 MB Flash，无 PSRAM；ST7789P3 240x320 SPI 屏；ES8311 编解码（麦克风+扬声器）；三键 ADC 分压（上/下/确定）；CW2017 电量计",
+        "identify": "可穿戴式护照外形，240x320 彩屏，三个实体按键；USB-C（ESP32-C3 原生 USB Serial/JTAG，GPIO18/19）",
+        "flash_port": "USB-C（原生 USB Serial/JTAG）。一般可自动复位进入下载；不行再按住相关按键重试。",
+        "use": "通过 Deotaland App 走 BLE 和智能体按键对讲：按住确定键说话，松开发送；回复从喇叭播放；屏幕颜色表示连接状态",
+        "notes": "Agent Link 首个 ESP32-C3 板型。用 idf.py set-target esp32c3 编译。分区表是 partitions_esp32c3.csv（8 MB，双 OTA）。串口是 USB Serial/JTAG——UART0 TX 与背光 GPIO21 冲突。引脚与 FoloToy ai-passport 的 bsp_pins.h 一致。"
+      },
+      "sdkconfig": [
+        "CONFIG_BOARD_TYPE_FOLOTOY_AI_PASSPORT=y",
+        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+      ]
+    },
+    {
       "board_type": "M5STACK_STOPWATCH",
       "dir": "m5stack-stopwatch",
       "target": "esp32s3",

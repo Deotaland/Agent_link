@@ -87,6 +87,7 @@ Desktop.ini
 **/.vscode/settings.json
 **/.vscode/launch.json
 **/.vscode/ipch/
+.cache/
 
 # Claude Code local settings
 .claude/
