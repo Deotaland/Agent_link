@@ -35,12 +35,10 @@ struct St7789LcdConfig {
     int      gap_x          = 0;
     int      gap_y          = 0;
     bool     bl_active_high = true;
-    // Height of one blit stripe. Two buffers of width*stripe_rows*2 are allocated in INTERNAL DMA
-    // RAM and ping-ponged, so this is a direct trade of internal RAM against transfer count:
-    // 40 rows x 280px = 22KB each. Turn it down on a board that needs the RAM elsewhere (Korvo
-    // runs BLE + LVGL + a camera off the same 150KB); the DMA cost of more, smaller transfers is
-    // minor, since the blit is dominated by the memcpy out of PSRAM rather than by the SPI.
+    // DMA buffer size is width * stripe_rows * 2. Transfers complete before reuse.
     uint16_t stripe_rows    = 40;
+    // Small synchronous renderers can use one DMA stripe and a shallow SPI queue.
+    bool     single_buffer  = false;
     // Vendor power/gamma sequence for panels whose reference init does more than esp_lcd's
     // built-in SLPOUT/COLMOD/RAMCTRL. FoloToy's ST7789P3 needs one; a plain ST7789 does not.
     // Sent after esp_lcd_panel_init() and before the colour commands, which override 0x36.
@@ -70,6 +68,11 @@ public:
     // Blit a w*h RGB565 frame at (x,y). Blocks until the DMA completes, so 'pixels' may be reused/freed immediately after
     // 'pixels' may live in PSRAM. Byte order must match the panel
     esp_err_t DrawBitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const void* pixels);
+
+    // The caller draws into this shared stripe, then flushes it before reusing it.
+    uint8_t* StripeBuffer() const { return stripe_[0]; }
+    size_t StripeCapacity() const { return stripe_cap_; }
+    esp_err_t FlushStripe(uint16_t y, uint16_t rows);
 
     esp_err_t Backlight(bool on);
     esp_err_t DisplayOn();

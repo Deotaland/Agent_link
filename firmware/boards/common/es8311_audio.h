@@ -39,6 +39,7 @@ struct Es8311Config {
     // prints the DAC's own idle output into the capture path.
     bool       no_dac_ref;
     float      pa_voltage;  // supply of the external PA; 0 when the board has none
+    bool       use_default_volume_curve = false;  // keep codec-dev's -50..0 dB curve
 };
 
 class Es8311Codec {

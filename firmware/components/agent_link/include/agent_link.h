@@ -145,6 +145,13 @@ typedef struct {
     void (*on_listen)(bool start, uint32_t max_ms, void* ctx);
 
     void* ctx;  ///< Opaque pointer passed through to all callbacks
+
+    /**
+     * @brief VoiceReply business state: 0 success, 2 speaking, 3 drain, other values failure.
+     * @note Copy the event and return quickly. False ignores it with a successful ACK.
+     *       A NULL callback preserves the SDK's default audio handling.
+     */
+    bool (*on_voice_reply)(uint32_t session_id, uint8_t status, void* ctx);
 } agent_output_cb_t;
 
 /**

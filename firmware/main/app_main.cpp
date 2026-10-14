@@ -11,6 +11,9 @@ constexpr const char* TAG = "agent_link.app";
 
 void on_audio_out(const uint8_t* pcm16, size_t bytes, void*) { Board::GetInstance().PlayAudio(pcm16, bytes); }
 void on_audio_end(void*) { Board::GetInstance().AudioEnd(); }
+bool on_voice_reply(uint32_t session_id, uint8_t status, void*) {
+    return Board::GetInstance().OnVoiceReply(session_id, status);
+}
 void on_show_text(const char* utf8, void*) { Board::GetInstance().ShowText(utf8); }
 void on_haptic(uint32_t duration_ms, void*) { Board::GetInstance().Vibrate(duration_ms); }
 void on_led(uint32_t rgb, void*) { Board::GetInstance().SetLed(rgb); }
@@ -43,6 +46,7 @@ extern "C" void app_main(void) {
     agent_output_cb_t out = {};
     out.on_audio_out = on_audio_out;
     out.on_audio_end = on_audio_end;
+    out.on_voice_reply = on_voice_reply;
     out.on_show_text = on_show_text;
     out.on_haptic    = on_haptic;
     out.on_led       = on_led;

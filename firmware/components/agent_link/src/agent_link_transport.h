@@ -98,6 +98,8 @@ typedef struct agent_transport_s {
     bool      (*is_ready)(void* impl);
 
     void*     impl;  // Backend private context
+    /** Optional asynchronous stream error, retained until the next session starts. */
+    esp_err_t (*stream_error)(void* impl, agent_stream_t type);
 } agent_transport_t;
 
 /**

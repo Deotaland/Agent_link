@@ -472,6 +472,7 @@ agent_transport_t s_muse = {
     .stream_end   = muse_stream_end,
     .is_ready     = muse_is_ready,
     .impl         = nullptr,
+    .stream_error = nullptr,
 };
 }  // namespace
 

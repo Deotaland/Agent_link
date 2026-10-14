@@ -21,6 +21,7 @@
 #include "agent_link_transport.h"
 #include "ota_service.h"
 #include "audio_downlink.h"
+#include "voice_queue.h"
 
 #include <cstring>
 #include <queue>
@@ -29,6 +30,7 @@
 #include <atomic>
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
@@ -96,7 +98,11 @@ namespace {
 
     char     s_name[31] = "AgentLink";
     uint8_t  s_own_addr_type = 0;
+#if CONFIG_IDF_TARGET_ESP32C3
+    std::atomic<bool> s_connected{false};
+#else
     bool     s_connected = false;
+#endif
     uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
     // Set once nimble_port_init() has succeeded, and never cleared: ble_stop() does not deinit.
@@ -248,16 +254,29 @@ namespace {
     constexpr size_t   kMaxFrameSingleMbuf = 220;  // keep a frame in a single mbuf, avoiding chain-alloc failures on high-rate notify
     constexpr size_t   kMaxPcmSingleMbuf = kMaxFrameSingleMbuf - kVoiceOverhead;  // 205
     constexpr size_t   kFallbackPcmBytes = 80;   // conservative slice when the MTU is abnormal
-    constexpr size_t   kVoiceQueueHardCap = 96 * 1024;  // hard cap ~3s @ 32KB/s: when the link is bad, drop new frames to keep the head
-    constexpr uint32_t kVoiceMaxRetries = 300;  // per-slice congestion retry limit
+#if CONFIG_IDF_TARGET_ESP32C3
+    constexpr size_t   kVoiceQueueHardCap = 8 * 1024;
+    constexpr size_t   kVoiceHeapReserve = 12 * 1024;
+    constexpr uint32_t kVoiceHeapCaps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
+#else
+    constexpr size_t   kVoiceQueueHardCap = 96 * 1024;
+    constexpr uint32_t kVoiceMaxRetries = 300;
+#endif
 
     struct VoiceState {
         std::atomic<bool>     active{ false };
         std::atomic<bool>     end_req{ false };
         uint32_t              session_id = 0;
         std::atomic<uint32_t> sequence{ 0 };
+#if CONFIG_IDF_TARGET_ESP32C3
+        agentlink::VoiceQueue<kVoiceQueueHardCap> q;
+        portMUX_TYPE          mtx = portMUX_INITIALIZER_UNLOCKED;
+        std::atomic<bool>     abort_req{false};
+        std::atomic<esp_err_t> error{ESP_OK};
+#else
         std::queue<std::vector<uint8_t>> q;
         std::mutex            mtx;
+#endif
         std::atomic<size_t>   queued_bytes{ 0 };
         TaskHandle_t          task = nullptr;
     };
@@ -336,6 +355,140 @@ namespace {
         return Notify(s_h_voice, f, i) == ESP_OK;
     }
 
+#if CONFIG_IDF_TARGET_ESP32C3
+    void LogVoiceMemory(const char* stage) {
+        constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+        ESP_LOGI(TAG, "memory %s: free=%u largest=%u DMA=%u DMA_largest=%u", stage,
+                 (unsigned)heap_caps_get_free_size(caps),
+                 (unsigned)heap_caps_get_largest_free_block(caps),
+                 (unsigned)heap_caps_get_free_size(kVoiceHeapCaps),
+                 (unsigned)heap_caps_get_largest_free_block(kVoiceHeapCaps));
+    }
+
+    void VoiceTask(void*) {
+        uint8_t chunk[640];
+        for (;;) {
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            if (!s_voice.active.load(std::memory_order_acquire)) continue;
+            ESP_LOGI(TAG, "voice task started (session=%u)", (unsigned)s_voice.session_id);
+            while (s_connected && !s_voice.abort_req.load(std::memory_order_acquire)) {
+                taskENTER_CRITICAL(&s_voice.mtx);
+                const size_t bytes = s_voice.q.Pop(chunk, sizeof(chunk));
+                s_voice.queued_bytes.store(s_voice.q.Size(), std::memory_order_release);
+                const bool end = s_voice.end_req.load(std::memory_order_acquire);
+                taskEXIT_CRITICAL(&s_voice.mtx);
+                if (!bytes) {
+                    if (end) break;
+                    ulTaskNotifyTake(pdTRUE, 1);
+                    continue;
+                }
+                const uint16_t mtu = ble_att_mtu(s_conn_handle);
+                size_t max_pcm = mtu > kVoiceOverhead + 5 ? mtu - 3 - kVoiceOverhead : kFallbackPcmBytes;
+                if (max_pcm > kMaxPcmSingleMbuf) max_pcm = kMaxPcmSingleMbuf;
+                max_pcm &= ~size_t(1);
+                if (!max_pcm) max_pcm = 2;
+                for (size_t off = 0; off < bytes;) {
+                    const size_t n = bytes - off < max_pcm ? bytes - off : max_pcm;
+                    const uint32_t seq = s_voice.sequence.fetch_add(1, std::memory_order_relaxed);
+                    bool sent = false;
+                    bool low_heap = false;
+                    for (unsigned retry = 0; retry < 20; ++retry) {
+                        if (!s_connected || s_voice.abort_req.load(std::memory_order_acquire)) break;
+                        low_heap = heap_caps_get_free_size(kVoiceHeapCaps) < kVoiceHeapReserve ||
+                                   heap_caps_get_largest_free_block(kVoiceHeapCaps) < 2048;
+                        if (!low_heap && VoiceSendChunk(seq, chunk + off, n)) {
+                            sent = true;
+                            break;
+                        }
+                        vTaskDelay(1);
+                    }
+                    if (!sent) {
+                        if (s_connected && !s_voice.abort_req.load(std::memory_order_acquire)) {
+                            s_voice.error.store(low_heap ? ESP_ERR_NO_MEM : ESP_ERR_TIMEOUT, std::memory_order_release);
+                        }
+                        s_voice.abort_req.store(true, std::memory_order_release);
+                        break;
+                    }
+                    off += n;
+                }
+                // One bounded burst per PCM frame, followed by a real scheduler tick.
+                vTaskDelay(1);
+            }
+            if (!s_connected) s_voice.error.store(ESP_ERR_INVALID_STATE, std::memory_order_release);
+            taskENTER_CRITICAL(&s_voice.mtx);
+            s_voice.q.Clear();
+            s_voice.queued_bytes.store(0, std::memory_order_release);
+            s_voice.active.store(false, std::memory_order_release);
+            taskEXIT_CRITICAL(&s_voice.mtx);
+            ESP_LOGI(TAG, "voice: finished error=%s heap=%u largest=%u",
+                     esp_err_to_name(s_voice.error.load()),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            ESP_LOGI(TAG, "voice stack remaining=%u", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+        }
+    }
+
+    esp_err_t VoiceStart() {
+        if (!s_connected || s_voice.active.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
+        LogVoiceMemory("before voice");
+        if (heap_caps_get_free_size(kVoiceHeapCaps) < kVoiceHeapReserve ||
+            heap_caps_get_largest_free_block(kVoiceHeapCaps) < 2048) {
+            ESP_LOGW(TAG, "voice rejected: reserve requires %uB free and 2048B contiguous", (unsigned)kVoiceHeapReserve);
+            return ESP_ERR_NO_MEM;
+        }
+        if (!s_voice.task) {
+            const size_t free = heap_caps_get_free_size(kVoiceHeapCaps);
+            if (free < kVoiceHeapReserve + 6144 + 512) {
+                ESP_LOGW(TAG, "voice rejected: task plus reserve requires %uB", (unsigned)(kVoiceHeapReserve + 6144 + 512));
+                return ESP_ERR_NO_MEM;
+            }
+            if (xTaskCreate(VoiceTask, "agentlink_voice", 6144, nullptr, 6, &s_voice.task) != pdPASS) {
+                s_voice.task = nullptr;
+                ESP_LOGE(TAG, "voice task allocation failed");
+                return ESP_ERR_NO_MEM;
+            }
+        }
+        taskENTER_CRITICAL(&s_voice.mtx);
+        s_voice.q.Clear();
+        s_voice.queued_bytes.store(0);
+        s_voice.sequence.store(0);
+        s_voice.end_req.store(false);
+        s_voice.abort_req.store(false);
+        s_voice.error.store(ESP_OK);
+        s_voice.session_id = ++s_voice_counter;
+        s_voice.active.store(true, std::memory_order_release);
+        taskEXIT_CRITICAL(&s_voice.mtx);
+        ESP_LOGI(TAG, "voice session %u started (queue=%uB heap=%u largest=%u)",
+                 (unsigned)s_voice.session_id, (unsigned)kVoiceQueueHardCap,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        xTaskNotifyGive(s_voice.task);
+        return ESP_OK;
+    }
+
+    esp_err_t VoiceEnqueue(const uint8_t* data, size_t len) {
+        if (!data || !len || (len & 1u)) return ESP_ERR_INVALID_ARG;
+        taskENTER_CRITICAL(&s_voice.mtx);
+        esp_err_t error = s_voice.error.load(std::memory_order_acquire);
+        if (error == ESP_OK && (!s_voice.active.load() || s_voice.end_req.load())) error = ESP_ERR_INVALID_STATE;
+        if (error == ESP_OK && !s_voice.q.Push(data, len)) {
+            error = ESP_ERR_NO_MEM;
+            s_voice.error.store(error, std::memory_order_release);
+            s_voice.abort_req.store(true, std::memory_order_release);
+        }
+        s_voice.queued_bytes.store(s_voice.q.Size(), std::memory_order_release);
+        taskEXIT_CRITICAL(&s_voice.mtx);
+        if (s_voice.task) xTaskNotifyGive(s_voice.task);
+        return error;
+    }
+
+    esp_err_t VoiceEnd(bool complete) {
+        s_voice.end_req.store(true, std::memory_order_release);
+        if (!complete) s_voice.abort_req.store(true, std::memory_order_release);
+        if (s_voice.task) xTaskNotifyGive(s_voice.task);
+        return complete ? s_voice.error.load(std::memory_order_acquire) : ESP_OK;
+    }
+#else
     void VoiceTask(void*) {
         ESP_LOGI(TAG, "voice task started (session=%u)", static_cast<unsigned>(s_voice.session_id));
         while (true) {
@@ -429,11 +582,12 @@ namespace {
         return ESP_OK;
     }
 
-    esp_err_t VoiceEnd() {
+    esp_err_t VoiceEnd(bool /*complete*/) {
         if (!s_voice.active.load(std::memory_order_acquire)) return ESP_OK;
         s_voice.end_req.store(true, std::memory_order_release);  // the worker drains the rest, then exits on its own
         return ESP_OK;
     }
+#endif
 
     // ── L2CAP CoC receive (downlink TTS voice, PSM 0x0081) ──
     // Replenishing the rx buffer grants the peer credit and keeps the channel able to receive.
@@ -961,6 +1115,11 @@ namespace {
             s_l2cap_stalled.store(false, std::memory_order_release);
             s_l2cap_rearm_pending.store(false, std::memory_order_release);
             s_voice.end_req.store(true, std::memory_order_release);  // tell the voice worker to wrap up ASAP
+#if CONFIG_IDF_TARGET_ESP32C3
+            s_voice.error.store(ESP_ERR_INVALID_STATE, std::memory_order_release);
+            s_voice.abort_req.store(true, std::memory_order_release);
+            if (s_voice.task) xTaskNotifyGive(s_voice.task);
+#endif
             s_rec.truncated.store(true, std::memory_order_release);  // and the audio worker
             s_rec.end_req.store(true, std::memory_order_release);
             ESP_LOGI(TAG, "disconnected (reason=%d) — re-advertising", event->disconnect.reason);
@@ -1096,6 +1255,9 @@ namespace {
         ble_store_config_init();  // install the key store
         nimble_port_freertos_init(HostTask);
         ESP_LOGI(TAG, "BLE started — Services 0xFFA0/0xFFB0/0xFFC0 registered; advertising on sync");
+#if CONFIG_IDF_TARGET_ESP32C3
+        LogVoiceMemory("after BLE start");
+#endif
         return ESP_OK;
     }
 
@@ -1163,17 +1325,25 @@ namespace {
         return ESP_ERR_NOT_SUPPORTED;
     }
     esp_err_t ble_stream_end(void* /*impl*/, agent_stream_t type, bool complete, const uint8_t* meta, size_t meta_len) {
-        if (type == AGENT_STREAM_VOICE) return VoiceEnd();
+        if (type == AGENT_STREAM_VOICE) return VoiceEnd(complete);
         if (type == AGENT_STREAM_AUDIO) return AudioStreamEnd(complete, meta, meta_len);  // 0x53 (meta = final_header)
         if (type == AGENT_STREAM_IMAGE) return ImageEnd(complete);                          // 0x55
         return ESP_ERR_NOT_SUPPORTED;
     }
     bool ble_is_ready(void* /*impl*/) { return s_connected; }
 
+    esp_err_t ble_stream_error(void*, agent_stream_t type) {
+#if CONFIG_IDF_TARGET_ESP32C3
+        if (type == AGENT_STREAM_VOICE) return s_voice.error.load(std::memory_order_acquire);
+#endif
+        (void)type;
+        return ESP_OK;
+    }
+
     agent_transport_t s_ble = {
         ble_start, ble_stop, ble_send_ctrl,
         ble_stream_start, ble_send_stream, ble_stream_end,
-        ble_is_ready, nullptr,
+        ble_is_ready, nullptr, ble_stream_error,
     };
 }  // namespace
 

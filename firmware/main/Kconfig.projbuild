@@ -74,9 +74,6 @@ choice BOARD_TYPE
             agent_link_status_t only, so it runs on BLE or WiFi: pick the Transport backend below.
     config BOARD_TYPE_FOLOTOY_AI_PASSPORT
         bool "FoloToy AI Passport (ESP32-C3, ST7789 240x320, ES8311; hold OK to talk over BLE)"
-        select LV_FONT_MONTSERRAT_14
-        select LV_FONT_MONTSERRAT_20
-        select LV_FONT_MONTSERRAT_28
         help
             FoloToy AI Passport wearable: ESP32-C3, 8 MB flash, no PSRAM. Hold the OK key to
             talk to the agent over BLE; replies play on the speaker. Screen colour shows link

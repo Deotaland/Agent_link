@@ -155,17 +155,14 @@ esp_err_t Es8311Codec::OpenDevice() {
     fs.mclk_multiple   = 0;
     const int r = esp_codec_dev_open(codec_dev_, &fs);
     if (r != 0) { ESP_LOGE(TAG, "open codec=%d", r); return ESP_FAIL; }
-    ApplyVolumeCurve();
+    if (!cfg_.use_default_volume_curve) ApplyVolumeCurve();
     (void)esp_codec_dev_set_out_vol(codec_dev_, cfg_.out_volume);
     (void)esp_codec_dev_set_in_gain(codec_dev_, static_cast<float>(cfg_.mic_gain));
     dev_open_ = true;
     return ESP_OK;
 }
 
-// Without this the default curve stops at 0 dB at 100, while the ES8311 DAC register goes up to
-// +32 dB - so the top of the range was unusable headroom. The ES8311's own register range runs
-// -95.5 dB .. +32 dB (es8311.c vol_range); -50 dB as the quiet end keeps a usable low step without
-// pushing the DAC into its noisier part of the curve.
+// Existing amplified curve; boards can opt into codec-dev's default curve instead.
 void Es8311Codec::ApplyVolumeCurve() {
     static const esp_codec_dev_vol_map_t kMap[] = {
         {  0, -50.0f },

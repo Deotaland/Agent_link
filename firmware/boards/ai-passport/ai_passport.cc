@@ -18,7 +18,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
-#include "lvgl.h"   // LV_SYMBOL_* in toasts
 
 #include <atomic>
 #include <cmath>
@@ -35,13 +34,12 @@ enum class Btn : uint8_t { None, Up, Down, Ok };
 constexpr int64_t kMinTalkUs = 400 * 1000;
 constexpr int64_t kTapHintUs = 2000 * 1000;
 
-// Volume is 0..kMaxVolume in steps of 10. The codec maps it onto -50 dB .. +32 dB, see
-// Es8311Codec::ApplyVolumeCurve.
+// Volume is 0..kMaxVolume in steps of 10, using codec-dev's default -50..0 dB curve.
 constexpr int kMaxVolume = 100;
 
-// Pure-colour display test. Set to 1 to paint the panel solid colours in turn at boot, with LVGL
+// Pure-colour display test. Set to 1 to paint the panel solid colours in turn at boot, with the UI
 // left off, so what you see is the panel and the ST7789 driver alone. Keep in mind that it runs
-// straight into FillSolid(), bypassing LVGL's flush, so it cannot show a byte-order or gamma
+// straight into FillSolid(), bypassing the UI, so it cannot show a byte-order or gamma
 // problem - it only tells you how the panel itself behaves (inverted, swapped, washed out).
 constexpr bool kColorTest = 0;
 
@@ -91,12 +89,15 @@ constexpr St7789LcdConfig::VendorCmd kVendorCmds[] = {
 class AiPassportBoard : public Board {
 public:
     AiPassportBoard() {
+        LogMemory("before display");
         InitDisplay();
+        LogMemory("after display");
         if (kColorTest) {
             xTaskCreate(&AiPassportBoard::ColorTaskEntry, "color_test", 3072, this, 4, nullptr);
             return;   // nothing else starts: the test owns the screen
         }
         InitCodec();
+        LogMemory("after codec and playback buffer");
         InitAdcButtons();
         if (codec_ok_) {
             xTaskCreate(&AiPassportBoard::PttTaskEntry, "ptt_voice", 4096, this, 5, &ptt_task_);
@@ -119,24 +120,22 @@ public:
     }
 
     void PlayAudio(const uint8_t* pcm16, size_t bytes) override {
-        if (!play_buf_ || !pcm16 || bytes == 0) return;
-        received_bytes_.fetch_add(bytes, std::memory_order_relaxed);
-        last_audio_at_.store(esp_timer_get_time(), std::memory_order_release);
-        audio_ended_.store(false, std::memory_order_release);
-        // This runs on the BLE host task (L2CAP receive -> audio::Feed -> here), which is the
-        // 6 KB NimBLE stack, so it must not block.
-        //
-        // All-or-nothing on purpose. xStreamBufferSend(…, 0) writes whatever fits and reports the
-        // rest as unsent, which truncated replies mid-block - the log showed drops of 246/1010 and
-        // 484/1010 bytes, i.e. a partial 505-sample block, and cutting a waveform in half is the
-        // click you hear. A block that does not fit whole is refused instead, so the samples that
-        // do play stay contiguous. With 0x20 flow control working this path should never trigger.
-        const size_t room = xStreamBufferSpacesAvailable(play_buf_);
-        if (bytes > room) {
-            DropAccounting(bytes, bytes);
+        if (!play_buf_ || !pcm16 || !bytes || (bytes & 1u)) return;
+        taskENTER_CRITICAL(&audio_lock_);
+        const uint32_t token = session_token_.load(std::memory_order_acquire);
+        if (!link_ready_.load() || playback_hold_.load() || !voice::Session::AcceptsAudio(token) ||
+            play_generation_ != voice::TokenGeneration(token)) {
+            taskEXIT_CRITICAL(&audio_lock_);
             return;
         }
-        const size_t sent = xStreamBufferSend(play_buf_, pcm16, bytes, 0);
+        received_bytes_.fetch_add(bytes, std::memory_order_relaxed);
+        last_audio_at_.store(esp_timer_get_time(), std::memory_order_release);
+        if (!reply_control_.Ended(token)) audio_ended_.store(false, std::memory_order_release);
+        playback_done_.store(0, std::memory_order_release);
+        // Never block the transport callback or enqueue a partial PCM block.
+        const size_t room = xStreamBufferSpacesAvailable(play_buf_);
+        const size_t sent = bytes <= room ? xStreamBufferSend(play_buf_, pcm16, bytes, 0) : 0;
+        taskEXIT_CRITICAL(&audio_lock_);
         if (sent != bytes) DropAccounting(bytes - sent, bytes);
     }
 
@@ -154,11 +153,19 @@ public:
     }
 
     void AudioEnd() override {
-        // Deliberately does not touch the buffer. The App sending 0x05 status=3 means it has
-        // stopped pushing, not that we have finished playing: up to one buffer of the tail is
-        // still queued and the user has not heard it. Dropping it here would cut the end off
-        // every reply.
-        audio_ended_.store(true, std::memory_order_release);
+        taskENTER_CRITICAL(&audio_lock_);
+        if (reply_control_.Ended(session_token_.load())) audio_ended_.store(true, std::memory_order_release);
+        taskEXIT_CRITICAL(&audio_lock_);
+    }
+
+    bool OnVoiceReply(uint32_t, uint8_t status) override {
+        taskENTER_CRITICAL(&audio_lock_);
+        const uint32_t token = session_token_.load(std::memory_order_acquire);
+        const bool accepted = reply_control_.Post(token, status);
+        if (accepted && status == 3) audio_ended_.store(true, std::memory_order_release);
+        if (accepted && status != 2 && status != 3) playback_hold_.store(true, std::memory_order_release);
+        taskEXIT_CRITICAL(&audio_lock_);
+        return accepted;
     }
 
     // The agent's answer (and anything else it puts on the screen).
@@ -168,10 +175,20 @@ public:
     }
 
     void OnLinkStatus(const agent_link_status_t& st) override {
+        link_ready_.store(st.phase == AGENT_LINK_PHASE_READY, std::memory_order_release);
+        if (st.phase != AGENT_LINK_PHASE_READY) playback_hold_.store(true, std::memory_order_release);
         voice::Ui::Instance().SetStatus(st);
     }
 
 private:
+    static void LogMemory(const char* stage) {
+        constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+        ESP_LOGI(TAG, "memory %s: free=%u largest=%u DMA=%u", stage,
+                 (unsigned)heap_caps_get_free_size(caps),
+                 (unsigned)heap_caps_get_largest_free_block(caps),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+    }
+
     void InitDisplay() {
         St7789LcdConfig c = {};
         c.spi_host      = DISPLAY_SPI_HOST;
@@ -186,7 +203,8 @@ private:
         c.pclk_hz       = DISPLAY_SPI_CLK_HZ;
         c.spi_mode      = DISPLAY_SPI_MODE;
         c.invert_color  = DISPLAY_INVERT_COLOR;
-        c.stripe_rows   = 16;  // small DMA stripes — C3 has no PSRAM
+        c.stripe_rows   = 4;
+        c.single_buffer = true;
 #ifdef DISPLAY_HAS_VENDOR_CMDS
         c.vendor_cmds      = kVendorCmds;
         c.vendor_cmd_count = sizeof(kVendorCmds) / sizeof(kVendorCmds[0]);
@@ -203,8 +221,7 @@ private:
         }
     }
 
-    // Paint solid colours in turn, forever. LVGL never starts, so this exercises the panel init and
-    // the ST7789 driver's blit path only - which is the point: no UI state, no font, no LVGL buffer.
+    // Paint solid colours in turn to exercise the panel init and driver without the UI.
     // Owns its own task so it keeps going after the board constructor returns.
     static void ColorTaskEntry(void* arg) { static_cast<AiPassportBoard*>(arg)->RunColorTest(); }
 
@@ -240,11 +257,8 @@ private:
         c.sample_rate = AUDIO_SAMPLE_RATE;
         c.mic_gain    = 30;
         c.out_volume  = volume_;   // the UP/DOWN task adjusts from here
-        // FoloToy's own BSP sets no_dac_ref = true with the comment "Mono capture must use ADC,
-        // not the DAC reference". Left false, REG44 = 0x58 and the ES8311 mixes an internal
-        // reference built from the DAC output into the capture path - the speaker's own signal,
-        // amplified by +32 dB of DAC headroom. That is audible two ways: the mic hears the reply
-        // being played, and the DAC working that hard adds its own hiss on top of it.
+        c.use_default_volume_curve = true;
+        // Capture the microphone without the DAC reference.
         c.no_dac_ref  = true;
         // 5.0 V, not 0. With pa_voltage = 0 the driver substitutes 5.0 anyway, but saying it here
         // keeps the volume curve honest if that default ever changes.
@@ -253,7 +267,6 @@ private:
             ESP_LOGE(TAG, "codec init failed");
             return;
         }
-        codec_ok_ = true;
         (void)codec_.SetMute(true);
 
         play_buf_ = xStreamBufferCreate(kPlayBufBytes, kPlayFrameBytes);
@@ -274,6 +287,7 @@ private:
             return xStreamBufferBytesAvailable(board->play_buf_);
         }, this);
         agent_link_playback_set_buffer_ms(static_cast<uint32_t>(kPlayBufBytes / 32));
+        codec_ok_ = true;
     }
 
     void InitAdcButtons() {
@@ -375,13 +389,42 @@ private:
 
     void PlayLoop() {
         int16_t buf[kPlayFrameBytes / sizeof(int16_t)];
+        static const int16_t silence[kPlayFrameBytes / sizeof(int16_t)] = {};
         bool priming = true, played = false;
+        size_t pending_bytes = 0;
+        uint32_t generation = UINT32_MAX;
         uint32_t underruns = 0, partials = 0, write_errors = 0;
         uint32_t previous_received = 0;
         int64_t stats_at = esp_timer_get_time(), last_write = 0;
         while (true) {
             const int64_t now = esp_timer_get_time();
-            const size_t queued = xStreamBufferBytesAvailable(play_buf_);
+            const uint32_t token = session_token_.load(std::memory_order_acquire);
+            const uint32_t next_generation = voice::TokenGeneration(token);
+            if (generation != next_generation) {
+                MutePlayback();
+                if (played) {
+                    // Replace all 90 ms of queued DMA audio while the DAC is muted.
+                    for (unsigned i = 0; i < 5; ++i) {
+                        if (codec_.WritePcm(silence, sizeof(silence) / sizeof(silence[0])) != ESP_OK) {
+                            playback_error_.store(next_generation, std::memory_order_release);
+                            break;
+                        }
+                    }
+                }
+                taskENTER_CRITICAL(&audio_lock_);
+                xStreamBufferReset(play_buf_);
+                play_generation_ = next_generation;
+                audio_ended_.store(false, std::memory_order_release);
+                last_audio_at_.store(0, std::memory_order_release);
+                playback_done_.store(0);
+                taskEXIT_CRITICAL(&audio_lock_);
+                generation = next_generation;
+                priming = true;
+                played = false;
+                last_write = 0;
+                pending_bytes = 0;
+            }
+            const size_t queued = QueuedAudio() + pending_bytes;
             if (now - stats_at >= 2000 * 1000) {
                 const uint32_t received = received_bytes_.load(std::memory_order_relaxed);
                 const uint32_t span_ms = static_cast<uint32_t>((now - stats_at) / 1000);
@@ -394,121 +437,270 @@ private:
                 previous_received = received;
                 stats_at = now;
             }
-            if (priming) {
-                const size_t need = played ? kReprimeBytes : kPrimeBytes;
-                const bool tail = audio_ended_.load(std::memory_order_acquire) ||
-                    now - last_audio_at_.load(std::memory_order_acquire) >= 150 * 1000;
-                if (queued < need && !(queued && tail)) {
-                    if (last_write && now - last_write >= 120 * 1000 && !codec_.Muted()) {
-                        (void)codec_.SetMute(true);
-                    }
-                    if (!queued && now - last_audio_at_.load() >= 500 * 1000) played = false;
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    continue;
-                }
-                priming = false;
-                (void)codec_.SetMute(false);
-            }
-            const size_t n = xStreamBufferReceive(play_buf_, buf, sizeof(buf), pdMS_TO_TICKS(20));
-            if (!n) {
-                if (!audio_ended_.load()) ++underruns;
-                priming = true;
+            if (playback_hold_.load(std::memory_order_acquire) || !link_ready_.load() ||
+                !voice::Session::AcceptsAudio(token)) {
+                MutePlayback();
+                pause_ack_.store(pause_request_.load(std::memory_order_acquire), std::memory_order_release);
+                vTaskDelay(1);
                 continue;
             }
-            if (n < sizeof(buf) && !audio_ended_.load()) ++partials;
-            if (codec_.WritePcm(buf, n / sizeof(int16_t)) != ESP_OK) ++write_errors;
+            const bool ended = audio_ended_.load(std::memory_order_acquire);
+            const size_t need = played ? kReprimeBytes : kPrimeBytes;
+            const int64_t arrived = last_audio_at_.load(std::memory_order_acquire);
+            const bool tail = ended || (arrived && now - arrived >= 150 * 1000);
+            if (voice::Session::DrainReady(token, ended, queued, last_write, now)) {
+                MutePlayback();
+                playback_done_.store(generation, std::memory_order_release);
+                vTaskDelay(1);
+                continue;
+            }
+            taskENTER_CRITICAL(&audio_lock_);
+            const bool formal_requested = reply_control_.Started(token);
+            taskEXIT_CRITICAL(&audio_lock_);
+            if (!voice::Session::CanPlay(token, voice::Ui::Instance().SessionRendered(token), link_ready_.load(), playback_hold_.load(), formal_requested) ||
+                (priming && queued < need && !(queued && tail))) {
+                MutePlayback();
+                vTaskDelay(1);
+                continue;
+            }
+            taskENTER_CRITICAL(&audio_lock_);
+            const size_t n = pending_bytes ? pending_bytes : xStreamBufferReceive(play_buf_, buf, sizeof(buf), 0);
+            taskEXIT_CRITICAL(&audio_lock_);
+            if (!n) {
+                if (!last_write || now - last_write >= 90 * 1000) {
+                    MutePlayback();
+                    if (!ended && !priming) ++underruns;
+                    priming = true;
+                }
+                vTaskDelay(1);
+                continue;
+            }
+            taskENTER_CRITICAL(&audio_lock_);
+            const bool still_can_play = session_token_.load(std::memory_order_acquire) == token &&
+                voice::Session::CanPlay(token, voice::Ui::Instance().SessionRendered(token), link_ready_.load(),
+                                       playback_hold_.load(), reply_control_.Started(token));
+            taskEXIT_CRITICAL(&audio_lock_);
+            if (!still_can_play) {
+                pending_bytes = n;
+                MutePlayback();
+                vTaskDelay(1);
+                continue;
+            }
+            if (priming) (void)codec_.SetMute(false);
+            priming = false;
+            if (n < sizeof(buf) && !ended) ++partials;
+            if (codec_.WritePcm(buf, n / sizeof(int16_t)) != ESP_OK) {
+                ++write_errors;
+                MutePlayback();
+                playback_error_.store(generation, std::memory_order_release);
+            }
+            pending_bytes = 0;
             last_write = esp_timer_get_time();
             played = true;
         }
     }
 
+    size_t QueuedAudio() {
+        taskENTER_CRITICAL(&audio_lock_);
+        const size_t queued = xStreamBufferBytesAvailable(play_buf_);
+        taskEXIT_CRITICAL(&audio_lock_);
+        return queued;
+    }
+
+    void MutePlayback() {
+        if (!codec_.Muted()) (void)codec_.SetMute(true);
+    }
+
+    bool FinishReply(uint32_t generation) {
+        taskENTER_CRITICAL(&audio_lock_);
+        const bool finished = playback_done_.load(std::memory_order_acquire) == generation &&
+            audio_ended_.load(std::memory_order_acquire) && !xStreamBufferBytesAvailable(play_buf_) &&
+            session_.Finish(generation);
+        if (finished) playback_hold_.store(true, std::memory_order_release);
+        taskEXIT_CRITICAL(&audio_lock_);
+        return finished;
+    }
+
+    bool PauseSpeaker() {
+        playback_hold_.store(true, std::memory_order_release);
+        const uint32_t ticket = pause_request_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        const int64_t until = esp_timer_get_time() + 1000 * 1000;
+        while (pause_ack_.load(std::memory_order_acquire) != ticket) {
+            if (esp_timer_get_time() >= until) return false;
+            vTaskDelay(1);
+        }
+        return true;
+    }
+
+    void PublishSession() {
+        static const char* const names[] = {"Disconnected", "Ready", "Listening", "Thinking", "Speaking"};
+        const uint32_t previous = session_token_.load(std::memory_order_acquire);
+        const uint32_t token = session_.Token();
+        state_changed_at_ = esp_timer_get_time();
+        voice::Ui::Instance().SetSession(token);
+        taskENTER_CRITICAL(&audio_lock_);
+        reply_control_.Bind(token);
+        session_token_.store(token, std::memory_order_release);
+        taskEXIT_CRITICAL(&audio_lock_);
+        ESP_LOGI(TAG, "[voice] %s -> %s (generation=%u)", names[(unsigned)voice::TokenState(previous)],
+                 names[(unsigned)session_.State()], (unsigned)voice::TokenGeneration(token));
+    }
+
     // One 20 ms mic frame into the stream; returns the frame's level 0-100 for the meter.
-    int PumpMic(agent_stream_handle_t voice) {
+    esp_err_t PumpMic(agent_stream_handle_t stream, int* level) {
         static int16_t buf[AUDIO_SAMPLE_RATE / 50];   // PTT task only
         size_t got = 0;
-        if (codec_.ReadPcm(buf, sizeof(buf) / sizeof(buf[0]), &got) != ESP_OK || got == 0) return 0;
-        (void)agent_link_stream_write(voice, buf, got * sizeof(int16_t));
+        const esp_err_t read = codec_.ReadPcm(buf, sizeof(buf) / sizeof(buf[0]), &got);
+        if (read != ESP_OK || !got) return read == ESP_OK ? ESP_FAIL : read;
+        const esp_err_t sent = agent_link_stream_write(stream, buf, got * sizeof(int16_t));
+        if (sent != ESP_OK) return sent;
         double sum = 0;
         for (size_t i = 0; i < got; ++i) sum += static_cast<double>(buf[i]) * buf[i];
         const double rms = std::sqrt(sum / got) / 32768.0;
         const double db  = rms > 0 ? 20.0 * std::log10(rms) : -100.0;   // -60 dBFS..0 -> 0..100
-        return static_cast<int>((db + 60.0) * 100.0 / 60.0);
+        *level = static_cast<int>((db + 60.0) * 100.0 / 60.0);
+        return ESP_OK;
     }
 
     // Hold OK to talk: open AGENT_STREAM_VOICE, push 20 ms PCM frames, close on release.
     void PttLoop() {
-        bool talking = false;
-        agent_stream_handle_t voice = nullptr;
+        bool wait_release = false;
+        agent_stream_handle_t stream = nullptr;
         int64_t talk_since = 0;
         int64_t last_hint = 0;
 
         while (true) {
+            const bool ready = link_ready_.load(std::memory_order_acquire);
+            if (!ready && session_.State() != voice::SessionState::Disconnected) {
+                if (stream) (void)agent_link_stream_close(stream, false);
+                stream = nullptr;
+                (void)codec_.StopMic();
+                (void)PauseSpeaker();
+            }
+            if (session_.SetConnected(ready)) PublishSession();
             const bool pressed = (ReadButton() == Btn::Ok);
-            if (!talking) {
-                if (!pressed) {
-                    vTaskDelay(pdMS_TO_TICKS(20));
+            const int64_t now = esp_timer_get_time();
+            const uint32_t generation = voice::TokenGeneration(session_.Token());
+            taskENTER_CRITICAL(&audio_lock_);
+            const uint8_t replies = reply_control_.Take(session_.Token());
+            taskEXIT_CRITICAL(&audio_lock_);
+            if (replies & (voice::ReplyControl::Success | voice::ReplyControl::Failure)) {
+                FailSession(stream, replies & voice::ReplyControl::Success ? "Done" : "Agent reply failed");
+                stream = nullptr;
+                wait_release = pressed;
+                continue;
+            }
+            if ((replies & voice::ReplyControl::Start) && session_.Speak(generation)) PublishSession();
+            if (replies & voice::ReplyControl::End) (void)session_.Drain(generation, now);
+            const auto state = session_.State();
+            if (state == voice::SessionState::Thinking || state == voice::SessionState::Speaking) {
+                const esp_err_t error = agent_link_stream_error(AGENT_STREAM_VOICE);
+                if (error != ESP_OK || playback_error_.load(std::memory_order_acquire) == generation) {
+                    ESP_LOGW(TAG, "voice session failed: %s", esp_err_to_name(error));
+                    FailSession(stream, error != ESP_OK ? "Voice send failed" : "Playback stopped");
+                    stream = nullptr;
+                    wait_release = pressed;
                     continue;
                 }
+                if (FinishReply(generation)) {
+                    PublishSession();
+                } else if (session_.DrainTimedOut(now)) {
+                    ESP_LOGW(TAG, "reply drain timed out after 30 seconds");
+                    (void)PauseSpeaker();
+                    session_.Cancel();
+                    PublishSession();
+                } else if (session_.TimedOut(now)) {
+                    FailSession(stream, "Reply timed out");
+                    stream = nullptr;
+                } else if (state == voice::SessionState::Speaking &&
+                           !voice::Ui::Instance().SessionRendered(session_.Token()) && now - state_changed_at_ > 2000 * 1000) {
+                    FailSession(stream, "Screen unavailable");
+                    stream = nullptr;
+                }
+            }
+            if (!pressed) wait_release = false;
+            if (wait_release) {
+                vTaskDelay(1);
+                continue;
+            }
+            if (session_.State() != voice::SessionState::Listening) {
+                if (!pressed) { vTaskDelay(1); continue; }
                 vTaskDelay(pdMS_TO_TICKS(20));
                 if (ReadButton() != Btn::Ok) continue;
-                // A press while the link is still being set up confirms it (a no-op on BLE).
-                if (agent_link_state() != AGENT_STATE_READY) {
+                if (!ready) {
                     if (agent_link_confirm() == ESP_OK) {
-                        voice::Ui::Instance().Toast(LV_SYMBOL_OK "  Confirmed", 2000);
+                        voice::Ui::Instance().Toast("\xef\x80\x8c  Confirmed", 2000);
                     }
-                    while (ReadButton() == Btn::Ok) vTaskDelay(pdMS_TO_TICKS(50));
+                    wait_release = true;
                     continue;
                 }
+                if (!PauseSpeaker()) {
+                    FailSession(stream, "Playback busy");
+                    wait_release = true;
+                    continue;
+                }
+                session_.Listen();
+                voice::Ui::Instance().SetAnswer("");
+                PublishSession();
+                playback_hold_.store(false, std::memory_order_release);
                 if (codec_.StartMic() != ESP_OK) {
-                    ESP_LOGE(TAG, "mic start failed");
-                    voice::Ui::Instance().Toast("Microphone unavailable", 3000);
+                    FailSession(stream, "Microphone unavailable");
+                    wait_release = true;
                     continue;
                 }
-                if (agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &voice) != ESP_OK) {
-                    ESP_LOGW(TAG, "voice stream would not open");
-                    codec_.StopMic();
-                    voice::Ui::Instance().Toast("Can't talk right now", 3000);
+                if (agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &stream) != ESP_OK) {
+                    FailSession(stream, "Can't talk right now");
+                    stream = nullptr;
+                    wait_release = true;
                     continue;
                 }
-                talking = true;
                 talk_since = esp_timer_get_time();
-                voice::Ui::Instance().SetListening(true);
+                last_hint = talk_since;
                 ESP_LOGI(TAG, "PTT pressed, starting voice uplink");
             } else {
-                if (agent_link_state() != AGENT_STATE_READY) {
-                    StopTalking(voice, false);
-                    talking = false;
-                    ESP_LOGW(TAG, "connection lost, ending voice");
+                int level = 0;
+                const esp_err_t error = PumpMic(stream, &level);
+                if (error != ESP_OK || playback_error_.load() == generation) {
+                    ESP_LOGW(TAG, "recording stopped: %s", esp_err_to_name(error));
+                    FailSession(stream, "Recording stopped");
+                    stream = nullptr;
+                    wait_release = true;
                     continue;
                 }
-                voice::Ui::Instance().SetLevel(PumpMic(voice));   // paces the loop, ~20 ms
-                const int64_t now = esp_timer_get_time();
+                voice::Ui::Instance().SetLevel(level);
+                const int64_t sampled_at = esp_timer_get_time();
                 if (ReadButton() != Btn::Ok) {
                     vTaskDelay(pdMS_TO_TICKS(20));
                     if (ReadButton() != Btn::Ok) {
-                        StopTalking(voice, now - talk_since >= kMinTalkUs);
-                        talking = false;
+                        StopTalking(stream, sampled_at - talk_since >= kMinTalkUs);
+                        stream = nullptr;
                         ESP_LOGI(TAG, "PTT released, ending voice");
                     }
-                } else if (now - last_hint > kTapHintUs) {
-                    last_hint = now;
-                    voice::Ui::Instance().Toast(LV_SYMBOL_AUDIO "  Keep talking, release to send", 4000);
+                } else if (sampled_at - last_hint > kTapHintUs) {
+                    last_hint = sampled_at;
+                    voice::Ui::Instance().Toast("\xef\x80\xa8  Keep talking, release to send", 4000);
                 }
             }
         }
     }
 
-    void StopTalking(agent_stream_handle_t voice, bool send) {
-        agent_link_stream_close(voice, send);
-        codec_.StopMic();
-        voice::Ui::Instance().SetListening(false);
-        if (send) {
-            voice::Ui::Instance().SetThinking();
-            ESP_LOGI(TAG, "sent");
-        } else {
-            voice::Ui::Instance().Toast("Hold OK while you talk", 3000);
-            ESP_LOGI(TAG, "too short, dropped");
-        }
+    void StopTalking(agent_stream_handle_t stream, bool send) {
+        (void)codec_.StopMic();
+        session_.Release(send, esp_timer_get_time());
+        PublishSession();
+        const esp_err_t error = agent_link_stream_close(stream, send);
+        if (error != ESP_OK) FailSession(nullptr, "Voice send failed");
+        else if (!send) voice::Ui::Instance().Toast("Hold OK while you talk", 3000);
+    }
+
+    void FailSession(agent_stream_handle_t stream, const char* message) {
+        if (stream) (void)agent_link_stream_close(stream, false);
+        (void)codec_.StopMic();
+        (void)PauseSpeaker();
+        session_.Cancel();
+        voice::Ui::Instance().SetAnswer("");
+        PublishSession();
+        voice::Ui::Instance().Toast(message, 3000);
     }
 
     // One second of PCM with room for a full decoded L2CAP SDU.
@@ -526,6 +718,18 @@ private:
     TaskHandle_t         play_task_ = nullptr;
     TaskHandle_t         ptt_task_  = nullptr;
     TaskHandle_t         key_task_  = nullptr;
+    voice::Session       session_;
+    voice::ReplyControl  reply_control_;
+    portMUX_TYPE         audio_lock_ = portMUX_INITIALIZER_UNLOCKED;
+    uint32_t             play_generation_ = 0;
+    int64_t              state_changed_at_ = 0;
+    std::atomic<uint32_t> session_token_{0};
+    std::atomic<bool>     link_ready_{false};
+    std::atomic<bool>     playback_hold_{false};
+    std::atomic<uint32_t> pause_request_{0};
+    std::atomic<uint32_t> pause_ack_{0};
+    std::atomic<uint32_t> playback_done_{0};
+    std::atomic<uint32_t> playback_error_{0};
     std::atomic<uint32_t> drop_total_{0};
     std::atomic<uint32_t> received_bytes_{0};
     std::atomic<int64_t>  last_audio_at_{0};

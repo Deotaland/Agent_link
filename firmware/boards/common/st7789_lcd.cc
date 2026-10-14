@@ -77,7 +77,8 @@ esp_err_t St7789Lcd::Init(const St7789LcdConfig& cfg) {
     bus.miso_io_num     = -1;
     bus.quadwp_io_num   = -1;
     bus.quadhd_io_num   = -1;
-    bus.max_transfer_sz = static_cast<int>(cfg_.width) * static_cast<int>(cfg_.height) * 2;
+    bus.max_transfer_sz = static_cast<int>(cfg_.width) *
+                         (cfg_.single_buffer ? cfg_.stripe_rows : cfg_.height) * 2;
     esp_err_t ret = spi_bus_initialize(cfg_.spi_host, &bus, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {  // INVALID_STATE = already initialized, tolerate
         ESP_LOGE(TAG, "spi_bus_initialize: %s", esp_err_to_name(ret));
@@ -93,7 +94,7 @@ esp_err_t St7789Lcd::Init(const St7789LcdConfig& cfg) {
     io_cfg.lcd_param_bits    = 8;
     io_cfg.spi_mode          = cfg_.spi_mode & 3;
     // esp_lcd recycles each stripe's transactions internally per draw_bitmap
-    io_cfg.trans_queue_depth = 10;
+    io_cfg.trans_queue_depth = cfg_.single_buffer ? 1 : 10;
     ESP_RETURN_ON_ERROR(
         esp_lcd_new_panel_io_spi(
             static_cast<esp_lcd_spi_bus_handle_t>(cfg_.spi_host), &io_cfg, &io_),
@@ -147,7 +148,8 @@ esp_err_t St7789Lcd::EnsureStripe(size_t bytes) {
     if (stripe_[0] && stripe_cap_ >= bytes) return ESP_OK;
     for (auto*& s : stripe_) { if (s) { heap_caps_free(s); s = nullptr; } }
     stripe_cap_ = 0;
-    for (auto*& s : stripe_) {
+    for (unsigned i = 0; i < (cfg_.single_buffer ? 1u : 2u); ++i) {
+        auto*& s = stripe_[i];
         s = static_cast<uint8_t*>(
             heap_caps_aligned_alloc(4, bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         if (!s) {  // one failed -> free both, report OOM
@@ -212,9 +214,20 @@ esp_err_t St7789Lcd::DrawBitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
             ESP_LOGE(TAG, "blit tx timeout row=%u", static_cast<unsigned>(row));
             return ESP_ERR_TIMEOUT;
         }
-        i ^= 1;
+        if (!cfg_.single_buffer) i ^= 1;
     }
     return ESP_OK;
+}
+
+esp_err_t St7789Lcd::FlushStripe(uint16_t y, uint16_t rows) {
+    if (!panel_ || !stripe_[0]) return ESP_ERR_INVALID_STATE;
+    if (!rows || rows > cfg_.stripe_rows || y >= cfg_.height || rows > cfg_.height - y) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const uint32_t expect = done_count_.load(std::memory_order_acquire) + 1;
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_draw_bitmap(panel_, 0, y, cfg_.width, y + rows, stripe_[0]),
+                        TAG, "flush stripe");
+    return WaitDone(expect, 500) ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t St7789Lcd::Backlight(bool on) {

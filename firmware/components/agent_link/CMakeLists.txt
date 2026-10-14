@@ -1,20 +1,31 @@
-idf_component_register(
-    SRCS
+set(agent_link_sources
         "src/agent_link.cpp"
         "src/transport_ble.cpp"
         "src/transport_wifi.cpp"
         "src/transport_muse.cpp"
-        "src/wifi_provision.cpp"
         "src/ota_service.cpp"
         "src/audio_downlink.cpp"
         "src/protocol.cpp"
         "src/device_identity.cc"
+)
+
+set(agent_link_web_assets "portal/portal.html" "portal/connecting.html")
+if(CONFIG_IDF_TARGET_ESP32C3 AND CONFIG_AGENT_LINK_TRANSPORT_BLE)
+    set(agent_link_web_assets "")
+else()
+    list(APPEND agent_link_sources
+        "src/wifi_provision.cpp"
         "src/cloud/cloud_credential.cc"
         "src/cloud/cloud_api.cc"
         "src/cloud/cloud_session.cc"
         "src/cloud/cloud_mqtt.cc"
         "src/cloud/cloud_json.cc"
         "src/cloud/cloud_clock.cc"
+    )
+endif()
+
+idf_component_register(
+    SRCS ${agent_link_sources}
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src" "src/cloud"
     REQUIRES esp_common
@@ -25,7 +36,7 @@ idf_component_register(
                   # Muse transport (Meta's Home Link). Empty on the other transports, but a
                   # REQUIRES cannot follow Kconfig, so it is always listed.
                   muse_gadget
-    EMBED_TXTFILES "portal/portal.html" "portal/connecting.html"
+    EMBED_TXTFILES ${agent_link_web_assets}
 )
 
 # Designated-initializer structs here deliberately set only the fields they care about and leave the
