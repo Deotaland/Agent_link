@@ -35,7 +35,6 @@ constexpr int kTaskStack = 7 * 1024;
 
 constexpr int    kDownlinkQos   = 1;
 constexpr int    kUpQos         = 1;
-constexpr size_t kLogPayloadMax = 256;   // bytes of each downlink message that are printed
 
 esp_mqtt_client_handle_t s_client = nullptr;
 bool                     s_ws     = false;   // MQTT over WebSocket, rather than straight over TLS
@@ -95,14 +94,6 @@ void LogSuback(esp_mqtt_event_handle_t ev) {
     }
 }
 
-bool Printable(const char* p, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        const unsigned char c = static_cast<unsigned char>(p[i]);
-        if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') return false;
-    }
-    return true;
-}
-
 // Every downlink message is logged as it arrives, before it runs.
 void LogDownlink(esp_mqtt_event_handle_t ev) {
     // A message longer than esp-mqtt's buffer arrives as several events; only the first has the topic.
@@ -111,19 +102,9 @@ void LogDownlink(esp_mqtt_event_handle_t ev) {
                  ev->data_len, ev->current_data_offset, ev->total_data_len);
         return;
     }
-    const char*  data = ev->data ? ev->data : "";   // NULL for an empty message
-    const size_t len  = ev->data_len > 0 ? static_cast<size_t>(ev->data_len) : 0;
-    const size_t n    = len < kLogPayloadMax ? len : kLogPayloadMax;
-    const bool   more = n < static_cast<size_t>(ev->total_data_len);
-    if (Printable(data, n)) {
-        ESP_LOGI(TAG, "downlink %.*s (%dB, QoS %d%s): %.*s%s", ev->topic_len, ev->topic,
-                 ev->total_data_len, ev->qos, ev->retain ? ", retained" : "",
-                 static_cast<int>(n), data, more ? " ..." : "");
-    } else {
-        ESP_LOGI(TAG, "downlink %.*s (%dB, QoS %d%s), binary:", ev->topic_len, ev->topic,
-                 ev->total_data_len, ev->qos, ev->retain ? ", retained" : "");
-        ESP_LOG_BUFFER_HEX(TAG, data, n < 64 ? n : 64);
-    }
+    // The body may contain a one-use realtime token, so never print it.
+    ESP_LOGI(TAG, "downlink %.*s (%dB, QoS %d%s)", ev->topic_len, ev->topic,
+             ev->total_data_len, ev->qos, ev->retain ? ", retained" : "");
 }
 
 // A connection attempt failed below MQTT: in DNS, TCP or TLS, which esp-tls names, or in the

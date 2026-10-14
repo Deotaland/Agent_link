@@ -576,6 +576,21 @@ void Dispatch(const Request& rq, const cJSON* params) {
         Send(rq, NewResponse(rq, 0, nullptr));
         return;
     }
+    if (strcmp(action, "realtime_grant") == 0) {
+        const cJSON* url = cJSON_GetObjectItemCaseSensitive(params, "websocketUrl");
+        const cJSON* token = cJSON_GetObjectItemCaseSensitive(params, "connectToken");
+        if (!cJSON_IsString(url) || !cJSON_IsString(token)) {
+            Fail(rq, kErrInvalid, "params.websocketUrl and params.connectToken are required");
+            return;
+        }
+        const esp_err_t r = s_hooks.realtime_grant
+                                ? s_hooks.realtime_grant(url->valuestring, token->valuestring)
+                                : ESP_ERR_NOT_SUPPORTED;
+        if (r == ESP_OK) Send(rq, NewResponse(rq, 0, nullptr));
+        else Fail(rq, r == ESP_ERR_INVALID_ARG ? kErrInvalid : kErrRejected,
+                  r == ESP_ERR_INVALID_ARG ? "invalid realtime grant" : "realtime grant not queued");
+        return;
+    }
     if (strcmp(action, "ota_start") == 0) {
         // Over WiFi the device will download the image itself, which is not built yet.
         Fail(rq, kErrRejected, "OTA over WiFi is not implemented yet");
@@ -605,6 +620,19 @@ void Dispatch(const Request& rq, const cJSON* params) {
 
 void cloud_json_set_hooks(const cloud_json_hooks_t* hooks) {
     s_hooks = hooks ? *hooks : cloud_json_hooks_t{};
+}
+
+esp_err_t cloud_json_request_realtime(void) {
+    if (!s_hooks.publish || !cloud_clock_valid()) return ESP_ERR_INVALID_STATE;
+    const int64_t now = cloud_clock_now_ms();
+    const std::string id = NewMsgId(now);
+    char message[256];
+    const int n = snprintf(message, sizeof message,
+                           "{\"msg_id\":\"%s\",\"type\":\"event\",\"action\":\"realtime_request\","
+                           "\"timestamp\":%lld,\"params\":{},\"reply_to\":null,\"code\":null,\"message\":null}",
+                           id.c_str(), static_cast<long long>(now));
+    if (n <= 0 || n >= static_cast<int>(sizeof message)) return ESP_ERR_INVALID_SIZE;
+    return s_hooks.publish(message, static_cast<size_t>(n));
 }
 
 void cloud_json_handle_command(const char* json, size_t len) {

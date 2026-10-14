@@ -23,6 +23,7 @@
 #include "agent_link.h"          // agent_wifi_config_t, agent_platform_t, agent_link_status_t
 #include "cloud_json.h"
 #include "cloud_mqtt.h"
+#include "cloud_realtime.h"
 #include "cloud_session.h"
 #include "wifi_provision.h"
 
@@ -81,6 +82,12 @@ std::recursive_mutex s_core_mtx;
 
 bool                       s_cloud_started = false;
 std::atomic<agent_state_t> s_link{AGENT_STATE_DISCONNECTED};
+std::atomic<bool> s_realtime_wanted{false};
+char s_voice_hint[112] = {};
+void (*s_pcm)(const uint8_t*, size_t) = nullptr;
+void (*s_audio_end)(void) = nullptr;
+void (*s_audio_reset)(void) = nullptr;
+void (*s_text)(const char*) = nullptr;
 
 // Last status from the session, kept so portal changes can be re-reported without waiting for it.
 // Written by the session task and read elsewhere, hence the lock.
@@ -391,8 +398,11 @@ void Compose(const agent_cloud_status_t& c, agent_link_status_t* out) {
         break;
 
     case AGENT_CLOUD_ONLINE:
-        // Not READY: there is no data plane over WiFi yet. See OnCloudState.
-        say(AGENT_LINK_PHASE_CONNECTED, "Online", "Connected to the platform");
+        say(cloud_realtime_ready() ? AGENT_LINK_PHASE_READY : AGENT_LINK_PHASE_CONNECTED,
+            cloud_realtime_ready() ? "Voice ready" : "Online", "Connected to the platform");
+        taskENTER_CRITICAL(&s_status_lock);
+        if (s_voice_hint[0]) snprintf(out->hint, sizeof out->hint, "%s", s_voice_hint);
+        taskEXIT_CRITICAL(&s_status_lock);
         break;
 
     case AGENT_CLOUD_ALREADY_BOUND:
@@ -437,23 +447,52 @@ void ReportStatus() {
     s_on_status(&st);
 }
 
-// Cloud session -> link state: ONLINE maps to CONNECTED, anything else to DISCONNECTED. Never
-// READY yet: that would tell boards that streams and events work, and have the core push the
-// manifest as an event, while only commands and their responses cross MQTT so far.
+void UpdateLink() {
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
+    taskENTER_CRITICAL(&s_status_lock);
+    const bool online = s_last_cloud.state == AGENT_CLOUD_ONLINE;
+    taskEXIT_CRITICAL(&s_status_lock);
+    const agent_state_t want = !online ? AGENT_STATE_DISCONNECTED
+        : cloud_realtime_ready() ? AGENT_STATE_READY : AGENT_STATE_CONNECTED;
+    if (s_link.exchange(want) != want && s_on_state) s_on_state(want);
+    ReportStatus();
+}
+
+// MQTT stays connected between calls; READY requires session.ready from the voice server.
 void OnCloudState(const agent_cloud_status_t* st, void* /*ctx*/) {
     if (!st) return;
     taskENTER_CRITICAL(&s_status_lock);
     s_last_cloud = *st;
     taskEXIT_CRITICAL(&s_status_lock);
-    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
-    ReportStatus();
-
-    const agent_state_t want = (st->state == AGENT_CLOUD_ONLINE) ? AGENT_STATE_CONNECTED
-                                                                 : AGENT_STATE_DISCONNECTED;
-    if (s_link.exchange(want) != want) {
-        ESP_LOGI(TAG, "link -> %s", want == AGENT_STATE_CONNECTED ? "CONNECTED" : "DISCONNECTED");
-        if (s_on_state) s_on_state(want);
+    if (st->state != AGENT_CLOUD_ONLINE) {
+        s_realtime_wanted.store(false);
+        cloud_realtime_cancel();
     }
+    UpdateLink();
+}
+
+void OnRealtimeState(bool /*ready*/, const char* hint) {
+    taskENTER_CRITICAL(&s_status_lock);
+    snprintf(s_voice_hint, sizeof s_voice_hint, "%s", hint ? hint : "");
+    taskEXIT_CRITICAL(&s_status_lock);
+    UpdateLink();
+}
+
+void OnRealtimePcm(const uint8_t* pcm, size_t bytes) {
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
+    if (s_link == AGENT_STATE_READY && s_pcm) s_pcm(pcm, bytes);
+}
+void OnRealtimeEnd() {
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
+    if (s_audio_end) s_audio_end();
+}
+void OnRealtimeReset() {
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
+    if (s_audio_reset) s_audio_reset();
+}
+void OnRealtimeText(const char* text) {
+    std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
+    if (s_link == AGENT_STATE_READY && s_text) s_text(text);
 }
 
 // Whether the session may start requests. Besides an IP, it waits for the captive portal to close:
@@ -478,6 +517,12 @@ void OnDownlink(const char* data, size_t len, void* /*ctx*/) {
     cloud_json_handle_command(data, len);
 }
 
+esp_err_t OnRealtimeGrant(const char* websocket_url, const char* connect_token) {
+    if (cloud_realtime_direct_enabled()) return ESP_ERR_NOT_SUPPORTED;
+    if (!s_realtime_wanted || s_link == AGENT_STATE_DISCONNECTED) return ESP_ERR_INVALID_STATE;
+    return cloud_realtime_offer(websocket_url, connect_token);
+}
+
 // Started once from wifi_start(); the session waits for NetReady() itself.
 void StartCloudSession() {
     if (s_cloud_started) return;
@@ -497,11 +542,22 @@ void StartCloudSession() {
     cc.on_state    = &OnCloudState;
     cc.on_downlink = &OnDownlink;
 
-    const cloud_json_hooks_t hooks = {&DeliverToCore, &cloud_mqtt_publish_up};
+    const cloud_json_hooks_t hooks = {&DeliverToCore, &cloud_mqtt_publish_up, &OnRealtimeGrant};
     cloud_json_set_hooks(&hooks);
 
+    const cloud_realtime_callbacks_t realtime = {
+        &OnRealtimeState, &OnRealtimePcm, &OnRealtimeText, &OnRealtimeEnd, &OnRealtimeReset,
+    };
+    cloud_realtime_set_callbacks(&realtime);
+    if (cloud_realtime_start() != ESP_OK) {
+        ESP_LOGE(TAG, "realtime worker failed to start");
+    }
     const esp_err_t r = cloud_session_start(&cc);
-    if (r != ESP_OK) { ESP_LOGE(TAG, "cloud session failed to start: %s", esp_err_to_name(r)); return; }
+    if (r != ESP_OK) {
+        cloud_realtime_stop();
+        ESP_LOGE(TAG, "cloud session failed to start: %s", esp_err_to_name(r));
+        return;
+    }
     s_cloud_started = true;
 }
 
@@ -509,7 +565,7 @@ void StartCloudSession() {
 esp_err_t wifi_start(void* /*impl*/) {
     esp_err_t r = WifiInitOnce();
     if (r != ESP_OK) return r;
-    (void)s_on_conn; (void)s_on_stream;  // no media crosses WiFi yet
+    (void)s_on_conn; (void)s_on_stream;
 
     char ssid[33] = {0}, pass[65] = {0};
     if (s_cfg && s_cfg->ssid && s_cfg->ssid[0]) {
@@ -527,7 +583,9 @@ esp_err_t wifi_start(void* /*impl*/) {
 }
 
 void wifi_stop(void* /*impl*/) {
+    s_realtime_wanted.store(false);
     cloud_session_stop();
+    cloud_realtime_stop();
     s_cloud_started = false;
     if (s_link.exchange(AGENT_STATE_DISCONNECTED) != AGENT_STATE_DISCONNECTED && s_on_state) {
         std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
@@ -560,25 +618,20 @@ esp_err_t wifi_send_ctrl(void* /*impl*/, const uint8_t* frame, size_t len) {
     }
     return r;
 }
-esp_err_t wifi_stream_start(void* /*impl*/, agent_stream_t /*type*/, const uint8_t* /*meta*/, size_t /*meta_len*/) {
-    static bool said = false;
-    SayOnce(said, "stream open", "no media crosses WiFi yet");
-    return ESP_ERR_NOT_SUPPORTED;
+esp_err_t wifi_stream_start(void* /*impl*/, agent_stream_t type, const uint8_t* /*meta*/, size_t /*meta_len*/) {
+    return cloud_realtime_stream_start(type);
 }
-esp_err_t wifi_send_stream(void* /*impl*/, agent_stream_t /*type*/, const uint8_t* /*data*/, size_t /*len*/) {
-    static bool said = false;
-    SayOnce(said, "stream chunk", "no media crosses WiFi yet");
-    return ESP_ERR_NOT_SUPPORTED;
+esp_err_t wifi_send_stream(void* /*impl*/, agent_stream_t type, const uint8_t* data, size_t len) {
+    return cloud_realtime_stream_write(type, data, len);
 }
-esp_err_t wifi_stream_end(void* /*impl*/, agent_stream_t /*type*/, bool /*complete*/,
+esp_err_t wifi_stream_end(void* /*impl*/, agent_stream_t type, bool complete,
                           const uint8_t* /*meta*/, size_t /*meta_len*/) {
-    return ESP_ERR_NOT_SUPPORTED;
+    return cloud_realtime_stream_end(type, complete);
 }
 
-// Whether a data plane exists (READY), not just the link (CONNECTED). Always false until MQTT
-// carries messages.
+// Whether voice can be streamed, rather than just MQTT being online.
 bool wifi_is_ready(void* /*impl*/) {
-    return s_link.load(std::memory_order_acquire) == AGENT_STATE_READY;
+    return s_link.load(std::memory_order_acquire) == AGENT_STATE_READY && cloud_realtime_ready();
 }
 
 agent_transport_t s_wifi = {
@@ -612,6 +665,34 @@ extern "C" void agent_transport_wifi_set_platform(const agent_platform_t* p) { s
 extern "C" void agent_transport_wifi_set_status(void (*cb)(const agent_link_status_t*)) { s_on_status = cb; }
 
 extern "C" esp_err_t agent_transport_wifi_forget(void) { return cloud_session_forget(); }
+extern "C" void agent_transport_wifi_set_audio(void (*pcm)(const uint8_t*, size_t), void (*end)(void),
+                                               void (*reset)(void), void (*text)(const char*)) {
+    s_pcm = pcm; s_audio_end = end; s_audio_reset = reset; s_text = text;
+}
+
+extern "C" esp_err_t agent_transport_wifi_request_realtime(void) {
+    if (s_link == AGENT_STATE_READY) return ESP_OK;
+    const bool direct = cloud_realtime_direct_enabled();
+    if (s_link.load(std::memory_order_acquire) != AGENT_STATE_CONNECTED || (!direct && !cloud_mqtt_started())) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_realtime_wanted.store(true);
+    OnRealtimeState(false, direct ? "Requesting voice access" : "Waiting for voice gateway");
+    const esp_err_t r = direct ? cloud_realtime_request_direct() : cloud_json_request_realtime();
+    if (r != ESP_OK) {
+        s_realtime_wanted.store(false);
+        OnRealtimeState(false, "Voice request failed. Tap Connect to retry");
+    }
+    return r;
+}
+
+extern "C" esp_err_t agent_transport_wifi_end_realtime(void) {
+    s_realtime_wanted.store(false);
+    cloud_realtime_cancel();
+    OnRealtimeReset();
+    OnRealtimeState(false, "Connected to the platform");
+    return ESP_OK;
+}
 
 
 #else  // !SOC_WIFI_SUPPORTED
@@ -654,5 +735,9 @@ extern "C" void agent_transport_wifi_set_state(void (*)(agent_state_t)) {}
 extern "C" void agent_transport_wifi_set_platform(const agent_platform_t*) {}
 extern "C" void agent_transport_wifi_set_status(void (*)(const agent_link_status_t*)) {}
 extern "C" esp_err_t agent_transport_wifi_forget(void) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" void agent_transport_wifi_set_audio(void (*)(const uint8_t*, size_t), void (*)(void),
+                                               void (*)(void), void (*)(const char*)) {}
+extern "C" esp_err_t agent_transport_wifi_request_realtime(void) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_transport_wifi_end_realtime(void) { return ESP_ERR_NOT_SUPPORTED; }
 
 #endif  // SOC_WIFI_SUPPORTED

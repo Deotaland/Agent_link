@@ -10,3 +10,5 @@ license: "MIT"
 dependencies:
   idf:
     version: ">=5.0"
+  espressif/esp_audio_codec:
+    version: "2.2.1"

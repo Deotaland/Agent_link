@@ -755,6 +755,14 @@ void OnTransportAudioEnd() {
     if (s_have_out && s_out.on_audio_end) s_out.on_audio_end(s_out.ctx);
 }
 
+void OnTransportAudioReset() {
+    if (s_have_out && s_out.on_audio_reset) s_out.on_audio_reset(s_out.ctx);
+}
+
+void OnTransportText(const char* utf8) {
+    if (s_have_out && s_out.on_show_text) s_out.on_show_text(utf8, s_out.ctx);
+}
+
 // audio stage -> App (0x20 AudioFlowControl on the event channel).
 void AudioEventSink(uint8_t event_id, const uint8_t* payload, size_t len) {
     if (!s_tx || !s_tx->send_ctrl) return;
@@ -819,6 +827,8 @@ esp_err_t agent_link_init(const agent_link_config_t* cfg) {
         agent_transport_wifi_set_state(&OnWifiState);
         agent_transport_wifi_set_status(&OnWifiStatus);   // -> agent_link_config_t::on_status
         agent_transport_wifi_set_stream_recv(&OnStreamData);
+        agent_transport_wifi_set_audio(&OnDecodedPcm, &OnTransportAudioEnd,
+                                      &OnTransportAudioReset, &OnTransportText);
         break;
     case AGENT_TRANSPORT_MUSE:
         s_tx = agent_transport_muse();
@@ -948,6 +958,18 @@ esp_err_t agent_link_confirm(void) {
 }
 
 agent_state_t agent_link_state(void) { return s_state; }
+
+esp_err_t agent_link_request_realtime(void) {
+    if (!s_tx) return ESP_ERR_INVALID_STATE;
+    if (s_cfg.transport != AGENT_TRANSPORT_WIFI) return ESP_ERR_NOT_SUPPORTED;
+    return agent_transport_wifi_request_realtime();
+}
+
+esp_err_t agent_link_end_realtime(void) {
+    if (!s_tx) return ESP_ERR_INVALID_STATE;
+    if (s_cfg.transport != AGENT_TRANSPORT_WIFI) return ESP_ERR_NOT_SUPPORTED;
+    return agent_transport_wifi_end_realtime();
+}
 
 // ── Uplink: events / status (control plane, wired) ───────────────────────────────
 esp_err_t agent_link_report_battery(uint8_t percent, bool charging) {

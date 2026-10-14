@@ -58,3 +58,41 @@ config AGENT_LINK_MQTT_TOKEN_RENEW_S
         reconnect MQTT with the new one, so the renewal can be watched on the bench.
 
 endmenu
+
+menu "Agent Link realtime voice"
+
+config AGENT_LINK_REALTIME_DIRECT
+    bool "Request voice grants directly from Agent Stack"
+    depends on AGENT_LINK_TRANSPORT_WIFI
+    default n
+    help
+        Use a locally configured User API Key and session for device-side testing.
+        Otherwise request short-lived grants from the application backend over MQTT.
+
+config AGENT_LINK_REALTIME_BASE_URL
+    string "Agent Stack API base URL"
+    depends on AGENT_LINK_REALTIME_DIRECT
+    default ""
+
+config AGENT_LINK_REALTIME_OPUS
+    bool "Use Opus for direct realtime replies"
+    depends on AGENT_LINK_REALTIME_DIRECT
+    default y
+    help
+        Request mono Opus replies in 20 ms packets. Decode in software to 16 kHz
+        PCM for the board. Microphone upload remains PCM16 at 16 kHz.
+
+config AGENT_LINK_REALTIME_SESSION_ID
+    string "Agent Stack session ID"
+    depends on AGENT_LINK_REALTIME_DIRECT
+    default ""
+
+config AGENT_LINK_REALTIME_USER_API_KEY
+    string "Agent Stack User API Key"
+    depends on AGENT_LINK_REALTIME_DIRECT
+    default ""
+    help
+        Keep this key in your private sdkconfig. Never put it in defaults or source.
+        Firmware built with this key must remain private.
+
+endmenu

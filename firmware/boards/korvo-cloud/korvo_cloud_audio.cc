@@ -1,12 +1,14 @@
 // Codec + playback + mic fan-out. See korvo_cloud_audio.h.
 
 #include "korvo_cloud_audio.h"
+#include "voice_playback.h"
 
 #include <cstring>
 
 #include "agent_link.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/task.h"
 
 namespace {
@@ -59,21 +61,63 @@ esp_err_t KorvoCloudAudio::Init(const Config& cfg) {
 }
 
 void KorvoCloudAudio::PlayPcm(const uint8_t* pcm16, size_t bytes) {
+    std::lock_guard<std::mutex> lock(play_mutex_);
     if (!play_buf_ || !pcm16 || bytes == 0) return;
+    // Let the consumer finish clearing an interrupted reply before accepting a new one.
+    if (play_generation_.load() != play_cleared_.load()) return;
+    play_finished_.store(false);
     const size_t sent = xStreamBufferSend(play_buf_, pcm16, bytes, 0);   // 0 = never block the caller
     if (sent < bytes) {
+        play_dropped_.fetch_add(bytes - sent);
         ESP_LOGW(TAG, "play buffer full - dropped %u/%u bytes",
                  static_cast<unsigned>(bytes - sent), static_cast<unsigned>(bytes));
     }
 }
 
+void KorvoCloudAudio::StopPlayback() { play_generation_.fetch_add(1); }
+
+void KorvoCloudAudio::EndPlayback() { play_finished_.store(true); }
+
 void KorvoCloudAudio::PlayTaskEntry(void* arg) { static_cast<KorvoCloudAudio*>(arg)->PlayLoop(); }
 
 void KorvoCloudAudio::PlayLoop() {
     int16_t buf[kPlayChunkSamples];
+    const size_t capacity = xStreamBufferSpacesAvailable(play_buf_);
+    const size_t threshold = kc_audio::PrebufferBytes(capacity);
+    kc_audio::PlaybackGate gate(threshold);
+    size_t played = 0;
+    ESP_LOGI(TAG, "speaker prebuffer: reply end or %u ms", static_cast<unsigned>(threshold / 32));
     while (true) {
-        const size_t n = xStreamBufferReceive(play_buf_, buf, sizeof(buf), portMAX_DELAY);
-        if (n >= sizeof(int16_t)) (void)codec_.WritePcm(buf, n / sizeof(int16_t));
+        const uint32_t generation = play_generation_.load();
+        if (generation != play_cleared_.load()) {
+            std::lock_guard<std::mutex> lock(play_mutex_);
+            while (xStreamBufferReceive(play_buf_, buf, sizeof(buf), 0)) {}
+            play_finished_.store(false);
+            play_dropped_.store(0);
+            gate.Reset();
+            played = 0;
+            play_cleared_.store(generation);
+        }
+        const size_t available = xStreamBufferBytesAvailable(play_buf_);
+        const bool finished = play_finished_.load();
+        if (!gate.Ready(available, finished, esp_timer_get_time() / 1000)) {
+            if (finished && !available && played) {
+                ESP_LOGI(TAG, "speaker drained: %u ms, underruns=%u, dropped=%u bytes",
+                         static_cast<unsigned>(played / 32), gate.Underruns(),
+                         static_cast<unsigned>(play_dropped_.exchange(0)));
+                played = 0;
+                gate.Reset();
+            }
+            vTaskDelay(1);  // Always block; sub-tick millisecond delays become zero.
+            continue;
+        }
+        const size_t n = xStreamBufferReceive(play_buf_, buf, sizeof(buf), 0);
+        if (generation != play_generation_.load()) continue;
+        if (n >= sizeof(int16_t)) {
+            if (codec_.WritePcm(buf, n / sizeof(int16_t)) != ESP_OK)
+                ESP_LOGW(TAG, "speaker I2S write failed");
+            played += n;
+        }
     }
 }
 
@@ -87,7 +131,10 @@ esp_err_t KorvoCloudAudio::OpenAudioStream() {
 void KorvoCloudAudio::StartAsr() { want_asr_.store(true,  std::memory_order_release); }
 void KorvoCloudAudio::StopAsr()  { want_asr_.store(false, std::memory_order_release); }
 
-void KorvoCloudAudio::StartCommand() { want_cmd_.store(true,  std::memory_order_release); }
+void KorvoCloudAudio::StartCommand() {
+    StopPlayback();
+    want_cmd_.store(true, std::memory_order_release);
+}
 void KorvoCloudAudio::StopCommand()  { want_cmd_.store(false, std::memory_order_release); }
 
 void KorvoCloudAudio::MicTaskEntry(void* arg) { static_cast<KorvoCloudAudio*>(arg)->MicLoop(); }
@@ -161,7 +208,7 @@ void KorvoCloudAudio::MicLoop() {
         // One read, fanned out to whichever uplinks are live.
         size_t got = 0;
         if (codec_.ReadPcm(buf, frame, &got) != ESP_OK || got == 0) {
-            vTaskDelay(pdMS_TO_TICKS(5));   // read failed: don't spin
+            vTaskDelay(1);   // read failed: block for at least one tick
             continue;
         }
         const size_t bytes = got * sizeof(int16_t);
@@ -187,10 +234,13 @@ void KorvoCloudAudio::MicLoop() {
                 cmd_on_.store(false, std::memory_order_release);
                 want_cmd_.store(false, std::memory_order_release);
             } else {
-                // ESP_ERR_NO_MEM here means the SDK's voice queue hit its cap and dropped this
-                // frame to keep the head of the utterance. It logs that itself and the session
-                // stays open on purpose, so - unlike the ASR path - do NOT tear the stream down.
-                (void)agent_link_stream_write(voice_stream_, buf, bytes);
+                const esp_err_t r = agent_link_stream_write(voice_stream_, buf, bytes);
+                if (r != ESP_OK) {
+                    ESP_LOGW(TAG, "voice upload failed (%s), ending capture", esp_err_to_name(r));
+                    agent_link_stream_close(voice_stream_, false);
+                    cmd_on_.store(false, std::memory_order_release);
+                    want_cmd_.store(false, std::memory_order_release);
+                }
             }
         }
     }

@@ -79,16 +79,15 @@ idf_component_register(
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
 
-# The Muse boards: LVGL's heap is a static array (LV_MEM_SIZE) that would otherwise sit in internal
-# RAM, which BLE, Wi-Fi and TLS need at once while it pairs. The repo-root CMakeLists turns on
-# SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY for these boards, and EXT_RAM_BSS_ATTR then puts the array
+# Network boards: LVGL's static heap would otherwise compete with Wi-Fi and TLS for internal RAM.
+# The repo-root CMakeLists turns on SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY, and the attribute puts it
 # in PSRAM; LVGL leaves LV_ATTRIBUTE_LARGE_RAM_ARRAY to be defined from outside. (Target properties,
 # not REQUIRES, so a CONFIG_ test is fine here.)
 if(BOARD_HAS_AVATAR)
     message(STATUS "${BOARD_DIR}: avatar renderer found, the UI will draw it")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE VOICE_UI_AVATAR=1)
 endif()
-if(CONFIG_BOARD_TYPE_ROROLEE_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_OLD_MUSE)
+if(CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY)
     idf_component_get_property(lvgl_lib lvgl__lvgl COMPONENT_LIB)
     target_compile_options(${lvgl_lib} PRIVATE -include esp_attr.h)
     target_compile_definitions(${lvgl_lib} PRIVATE LV_ATTRIBUTE_LARGE_RAM_ARRAY=EXT_RAM_BSS_ATTR)

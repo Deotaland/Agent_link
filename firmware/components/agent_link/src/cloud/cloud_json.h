@@ -14,7 +14,7 @@
 // code (0 = success) and a message, and its action is the request's plus "_status". The action
 // "raw" carries a BLE command id and payload for commands a board implements itself.
 //
-// Events are not published yet: send_ctrl frames outside a request are refused.
+// The realtime_request event is published explicitly; send_ctrl frames outside a request are refused.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -29,6 +29,8 @@ typedef struct {
     void (*deliver)(const uint8_t* frame, size_t len);
     /** Publish one JSON response on `up`. */
     esp_err_t (*publish)(const char* json, size_t len);
+    /** Queue a one-use Agent Stack realtime grant; the callback must not block. */
+    esp_err_t (*realtime_grant)(const char* websocket_url, const char* connect_token);
 } cloud_json_hooks_t;
 
 /** @brief Install the hooks. The struct is copied. */
@@ -40,6 +42,9 @@ void cloud_json_set_hooks(const cloud_json_hooks_t* hooks);
  *       the board's callbacks.
  */
 void cloud_json_handle_command(const char* json, size_t len);
+
+/** @brief Publish the device's request for a realtime voice grant on `up`. */
+esp_err_t cloud_json_request_realtime(void);
 
 /**
  * @brief A frame the core sent through send_ctrl, from any task.

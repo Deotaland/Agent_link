@@ -29,8 +29,9 @@ namespace kc_ui {
 
 enum class Mode {
     kHome,     // page 0: link status
-    kApps,     // page 1: the camera icon
+    kApps,     // page 1: camera and voice request icons
     kCamera,   // live preview; the preview task owns the panel here
+    kVoice,    // realtime push-to-talk
     kShade,    // pull-down detail panel
 };
 
@@ -53,5 +54,6 @@ void SetLinkStatus(const agent_link_status_t& st);
 
 // The agent_link transport came up or went down (the dot in the status bar).
 void SetLinkState(bool connected);
+void SetVoiceText(const char* utf8);
 
 }  // namespace kc_ui

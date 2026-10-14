@@ -145,6 +145,9 @@ typedef struct {
     void (*on_listen)(bool start, uint32_t max_ms, void* ctx);
 
     void* ctx;  ///< Opaque pointer passed through to all callbacks
+
+    /** Stop queued speech immediately when a turn is interrupted or the call closes. */
+    void (*on_audio_reset)(void* ctx);
 } agent_output_cb_t;
 
 /**
@@ -284,6 +287,14 @@ void          agent_link_stop(void);
 
 /** Get current connection state */
 agent_state_t agent_link_state(void);
+
+/** Request a realtime voice grant from the configured WiFi grant source.
+ *  Returns ESP_OK when the request is queued, not when a voice session is established.
+ */
+esp_err_t agent_link_request_realtime(void);
+
+/** End a realtime call and discard pending grants and microphone packets. */
+esp_err_t agent_link_end_realtime(void);
 
 // The next three functions are safe to call from any task, even before agent_link_init() (boards
 // are constructed before init and may call them from their constructors).

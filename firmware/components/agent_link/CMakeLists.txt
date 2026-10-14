@@ -13,6 +13,7 @@ idf_component_register(
         "src/cloud/cloud_api.cc"
         "src/cloud/cloud_session.cc"
         "src/cloud/cloud_mqtt.cc"
+        "src/cloud/cloud_realtime.cc"
         "src/cloud/cloud_json.cc"
         "src/cloud/cloud_clock.cc"
     INCLUDE_DIRS "include"
@@ -21,7 +22,7 @@ idf_component_register(
     PRIV_REQUIRES log bt nvs_flash freertos
                   esp_wifi esp_netif esp_event esp_http_server esp_timer lwip
                   app_update esp_partition esp_app_format mbedtls
-                  esp_http_client json mqtt tcp_transport
+                  esp_http_client json mqtt tcp_transport esp_audio_codec
                   # Muse transport (Meta's Home Link). Empty on the other transports, but a
                   # REQUIRES cannot follow Kconfig, so it is always listed.
                   muse_gadget

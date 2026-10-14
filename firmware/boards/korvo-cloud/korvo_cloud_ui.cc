@@ -1,4 +1,5 @@
 #include "korvo_cloud_ui.h"
+#include "voice_text.h"
 
 #include "config.h"
 #include "esp_heap_caps.h"
@@ -47,6 +48,7 @@ constexpr uint32_t kColErr   = 0xFF5C5C;
 constexpr uint32_t kColCode  = 0x2FA8FF;
 constexpr uint32_t kColCam   = 0x2FA8FF;
 constexpr uint32_t kColCam2  = 0x1C6FD0;
+constexpr uint32_t kColVoice = 0xA075EB;
 
 St7789Lcd*       s_lcd   = nullptr;
 Cst816Touch*     s_touch = nullptr;
@@ -76,6 +78,7 @@ std::atomic<uint32_t> s_status_rev{0};
 lv_obj_t* s_scr_home  = nullptr;
 lv_obj_t* s_scr_apps  = nullptr;
 lv_obj_t* s_scr_shade = nullptr;
+lv_obj_t* s_scr_voice = nullptr;
 
 // Which page to come back to when Camera or Shade is dismissed. Only ever a real page.
 std::atomic<Mode> s_last_page{Mode::kHome};
@@ -84,6 +87,16 @@ lv_obj_t* s_link_dot = nullptr;
 lv_obj_t* s_title    = nullptr;   // what the board is doing, one line
 lv_obj_t* s_big      = nullptr;   // the activation code, or a status word
 lv_obj_t* s_hint     = nullptr;   // what the user should do about it
+lv_obj_t* s_voice_hint = nullptr;
+int64_t   s_last_voice_request_us = 0;
+lv_obj_t* s_call_status = nullptr;
+lv_obj_t* s_call_text = nullptr;
+lv_obj_t* s_ptt = nullptr;
+lv_obj_t* s_ptt_label = nullptr;
+lv_obj_t* s_connect = nullptr;
+bool s_ptt_held = false;
+char s_voice_text[512] = {};
+std::atomic<uint32_t> s_text_rev{0};
 
 lv_obj_t* s_sh_state = nullptr;   // shade rows
 lv_obj_t* s_sh_msg   = nullptr;
@@ -203,6 +216,25 @@ void DrawCameraGlyph(lv_obj_t* tile) {
     lv_obj_align(flash, LV_ALIGN_TOP_RIGHT, -10, 10);
 }
 
+void DrawVoiceGlyph(lv_obj_t* tile) {
+    lv_obj_t* mic = Plain(tile);
+    lv_obj_set_size(mic, 22, 30);
+    lv_obj_align(mic, LV_ALIGN_CENTER, 0, -7);
+    lv_obj_set_style_radius(mic, 11, 0);
+    lv_obj_set_style_bg_color(mic, lv_color_hex(kColText), 0);
+    lv_obj_set_style_bg_opa(mic, LV_OPA_COVER, 0);
+    lv_obj_t* stem = Plain(tile);
+    lv_obj_set_size(stem, 4, 13);
+    lv_obj_align(stem, LV_ALIGN_CENTER, 0, 16);
+    lv_obj_set_style_bg_color(stem, lv_color_hex(kColText), 0);
+    lv_obj_set_style_bg_opa(stem, LV_OPA_COVER, 0);
+    lv_obj_t* base = Plain(tile);
+    lv_obj_set_size(base, 24, 4);
+    lv_obj_align(base, LV_ALIGN_CENTER, 0, 25);
+    lv_obj_set_style_bg_color(base, lv_color_hex(kColText), 0);
+    lv_obj_set_style_bg_opa(base, LV_OPA_COVER, 0);
+}
+
 // Home
 //   0..26     status bar
 //   40..146   the cloud state block — title, one big line, a wrapped hint
@@ -249,6 +281,86 @@ void OnCameraIcon(lv_event_t* /*e*/) {
     s_want.store(Mode::kCamera, std::memory_order_release);
 }
 
+void ConnectVoice(lv_event_t* /*e*/) {
+    if (agent_link_state() == AGENT_STATE_READY || s_last_voice_request_us) return;
+    const esp_err_t r = agent_link_request_realtime();
+    if (r == ESP_OK) s_last_voice_request_us = esp_timer_get_time();
+    else if (s_call_status) lv_label_set_text(s_call_status, "Connect to the platform first");
+    ESP_LOGI(TAG, "voice request: %s", esp_err_to_name(r));
+}
+
+void StopTalking() {
+    s_ptt_held = false;
+    if (s_audio) s_audio->StopCommand();
+    if (s_ptt_label) lv_label_set_text(s_ptt_label, "Hold to talk");
+}
+
+void EndVoice(lv_event_t* /*e*/) {
+    StopTalking();
+    s_want.store(Mode::kApps);
+}
+
+void OnPtt(lv_event_t* e) {
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        if (!s_audio || agent_link_state() != AGENT_STATE_READY) return;
+        s_ptt_held = true;
+        s_audio->StartCommand();
+        lv_label_set_text(s_ptt_label, "Listening... release to send");
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        if (s_ptt_held) StopTalking();
+    }
+}
+
+void OnVoiceIcon(lv_event_t* /*e*/) {
+    if (!s_voice_hint) return;
+    if (!s_audio) {
+        lv_label_set_text(s_voice_hint, "no audio");
+        return;
+    }
+    s_want.store(Mode::kVoice);
+    ConnectVoice(nullptr);
+}
+
+lv_obj_t* VoiceButton(int32_t x, int32_t y, int32_t width, const char* caption) {
+    lv_obj_t* button = lv_button_create(s_scr_voice);
+    lv_obj_set_size(button, width, 34);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_set_style_bg_color(button, lv_color_hex(kColCard), 0);
+    lv_obj_t* label = Label(button, caption, kColText, &lv_font_montserrat_14);
+    lv_obj_center(label);
+    return button;
+}
+
+void BuildVoice() {
+    s_scr_voice = lv_obj_create(nullptr);
+    lv_obj_remove_style_all(s_scr_voice);
+    lv_obj_set_style_bg_color(s_scr_voice, lv_color_hex(kColBg), 0);
+    lv_obj_set_style_bg_opa(s_scr_voice, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_scr_voice, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* title = Label(s_scr_voice, "Voice", kColVoice, &lv_font_montserrat_14);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    s_call_status = Label(s_scr_voice, "Connecting voice", kColMuted, &lv_font_montserrat_14);
+    lv_obj_set_size(s_call_status, kUiW - 2 * kPad, 36);
+    lv_obj_align(s_call_status, LV_ALIGN_TOP_MID, 0, 38);
+    lv_obj_set_style_text_align(s_call_status, LV_TEXT_ALIGN_CENTER, 0);
+    s_call_text = Label(s_scr_voice, "", kColText, &lv_font_montserrat_14);
+    lv_obj_set_size(s_call_text, kUiW - 2 * kPad, 56);
+    lv_obj_align(s_call_text, LV_ALIGN_TOP_MID, 0, 76);
+    lv_label_set_long_mode(s_call_text, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(s_call_text, LV_TEXT_ALIGN_LEFT, 0);
+    s_ptt = VoiceButton(kPad, 136, kUiW - 2 * kPad, "Hold to talk");
+    lv_obj_set_height(s_ptt, 44);
+    s_ptt_label = lv_obj_get_child(s_ptt, 0);
+    lv_obj_set_style_bg_color(s_ptt, lv_color_hex(kColVoice), 0);
+    lv_obj_add_event_cb(s_ptt, OnPtt, LV_EVENT_ALL, nullptr);
+    s_connect = VoiceButton(kPad, 188, 112, "Connect");
+    lv_obj_add_event_cb(s_connect, ConnectVoice, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* end = VoiceButton(kUiW - kPad - 112, 188, 112, "End call");
+    lv_obj_add_event_cb(end, EndVoice, LV_EVENT_CLICKED, nullptr);
+    BuildPill(s_scr_voice);
+}
+
 // Apps
 void BuildApps() {
     s_scr_apps = lv_obj_create(nullptr);
@@ -268,7 +380,7 @@ void BuildApps() {
 
     lv_obj_t* icon = Plain(s_scr_apps);
     lv_obj_set_size(icon, 76, 76);
-    lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 62);
+    lv_obj_align(icon, LV_ALIGN_TOP_MID, -52, 62);
     lv_obj_set_style_radius(icon, 20, 0);
     lv_obj_set_style_bg_color(icon, lv_color_hex(kColCam), 0);
     lv_obj_set_style_bg_grad_color(icon, lv_color_hex(kColCam2), 0);
@@ -279,10 +391,24 @@ void BuildApps() {
     DrawCameraGlyph(icon);
 
     lv_obj_t* cap = Label(s_scr_apps, "Camera", kColText, &lv_font_montserrat_14);
-    lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, 148);
+    lv_obj_align(cap, LV_ALIGN_TOP_MID, -52, 148);
 
-    lv_obj_t* hint = Label(s_scr_apps, "tap to preview", kColMuted, &lv_font_montserrat_14);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 170);
+    lv_obj_t* hint = Label(s_scr_apps, "preview", kColMuted, &lv_font_montserrat_14);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, -52, 170);
+
+    lv_obj_t* voice = Plain(s_scr_apps);
+    lv_obj_set_size(voice, 76, 76);
+    lv_obj_align(voice, LV_ALIGN_TOP_MID, 52, 62);
+    lv_obj_set_style_radius(voice, 20, 0);
+    lv_obj_set_style_bg_color(voice, lv_color_hex(kColVoice), 0);
+    lv_obj_set_style_bg_opa(voice, LV_OPA_COVER, 0);
+    lv_obj_add_flag(voice, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(voice, OnVoiceIcon, LV_EVENT_CLICKED, nullptr);
+    DrawVoiceGlyph(voice);
+    lv_obj_t* voice_cap = Label(s_scr_apps, "Voice", kColText, &lv_font_montserrat_14);
+    lv_obj_align(voice_cap, LV_ALIGN_TOP_MID, 52, 148);
+    s_voice_hint = Label(s_scr_apps, "request", kColMuted, &lv_font_montserrat_14);
+    lv_obj_align(s_voice_hint, LV_ALIGN_TOP_MID, 52, 170);
 
     BuildDots(s_scr_apps, s_dot_apps);
     BuildPill(s_scr_apps);
@@ -391,6 +517,22 @@ void RefreshStatus() {
     st = s_status;
     taskEXIT_CRITICAL(&s_status_lock);
 
+    if (s_ptt && s_connect) {
+        const bool ready = st.phase == AGENT_LINK_PHASE_READY;
+        if (ready) {
+            s_last_voice_request_us = 0;
+            lv_obj_remove_state(s_ptt, LV_STATE_DISABLED);
+            lv_obj_add_state(s_connect, LV_STATE_DISABLED);
+        } else {
+            StopTalking();
+            if (s_audio) s_audio->StopAsr();
+            lv_obj_add_state(s_ptt, LV_STATE_DISABLED);
+            lv_obj_remove_state(s_connect, LV_STATE_DISABLED);
+        }
+        lv_label_set_text(s_call_status, st.hint[0] ? st.hint : st.title);
+        lv_label_set_text(s_voice_hint, ready ? "ready" : "open");
+    }
+
     if (s_title && s_big && s_hint) {
         lv_label_set_text(s_title, PhaseCaption(st));
 
@@ -407,9 +549,8 @@ void RefreshStatus() {
     char buf[48];
     if (s_sh_state) lv_label_set_text(s_sh_state, PhaseWord(st.phase));
     if (s_sh_msg) {
-        const char* tx = st.transport == AGENT_TRANSPORT_WIFI ? "WiFi" : "BLE";
-        if (st.detail != 0) snprintf(buf, sizeof buf, "%s, code %d", tx, st.detail);
-        else                snprintf(buf, sizeof buf, "%s", tx);
+        if (st.detail != 0) snprintf(buf, sizeof buf, "Link, code %d", st.detail);
+        else                snprintf(buf, sizeof buf, "Link status");
         lv_label_set_text(s_sh_msg, buf);
     }
     if (s_sh_sn) {
@@ -422,6 +563,12 @@ void RefreshStatus() {
 void ApplyMode(Mode want) {
     const Mode from = s_mode.load(std::memory_order_acquire);
     if (want == from) return;
+    if (from == Mode::kVoice) {
+        StopTalking();
+        if (s_audio) { s_audio->StopAsr(); s_audio->StopPlayback(); }
+        s_last_voice_request_us = 0;
+        (void)agent_link_end_realtime();
+    }
 
     if (want == Mode::kCamera) {
         // Stop LVGL reaching the panel first, then wipe it: the preview is 240 wide on a 280 wide
@@ -436,6 +583,7 @@ void ApplyMode(Mode want) {
 
     lv_obj_t* scr = want == Mode::kShade ? s_scr_shade
                   : want == Mode::kApps  ? s_scr_apps
+                  : want == Mode::kVoice ? s_scr_voice
                                          : s_scr_home;
     if (scr) lv_screen_load(scr);
     s_mode.store(want, std::memory_order_release);
@@ -454,7 +602,8 @@ void ApplyMode(Mode want) {
     RefreshDots();
     lv_obj_invalidate(lv_screen_active());
     ESP_LOGI(TAG, "screen -> %s", want == Mode::kShade ? "shade"
-                                : want == Mode::kApps  ? "apps" : "home");
+                                : want == Mode::kApps  ? "apps"
+                                : want == Mode::kVoice ? "voice" : "home");
 }
 
 // Edge gestures, read straight from the touch stream because Camera is not an LVGL screen.
@@ -574,9 +723,26 @@ void RenderTask(void*) {
         const uint32_t status_rev = s_status_rev.load(std::memory_order_acquire);
         if (status_rev != seen_status) { seen_status = status_rev; RefreshStatus(); }
 
+        if (s_last_voice_request_us && esp_timer_get_time() - s_last_voice_request_us > 30000000) {
+            s_last_voice_request_us = 0;
+            (void)agent_link_end_realtime();
+            lv_label_set_text(s_call_status, "Voice timed out. Tap Connect to retry");
+        }
+        static uint32_t seen_text = 0;
+        const uint32_t text_rev = s_text_rev.load(std::memory_order_acquire);
+        if (text_rev != seen_text) {
+            char text[sizeof s_voice_text];
+            taskENTER_CRITICAL(&s_status_lock);
+            memcpy(text, s_voice_text, sizeof text);
+            taskEXIT_CRITICAL(&s_status_lock);
+            lv_label_set_text(s_call_text, text);
+            seen_text = text_rev;
+        }
+
         uint32_t next = lv_timer_handler();  // renders + flushes only if something changed
         if (next == LV_NO_TIMER_READY || next > 30) next = 30;
-        vTaskDelay(pdMS_TO_TICKS(next < 5 ? 5 : next));
+        const TickType_t delay = pdMS_TO_TICKS(next);
+        vTaskDelay(delay ? delay : 1);
     }
 }
 
@@ -616,6 +782,7 @@ esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio) {
 
     BuildHome();
     BuildApps();
+    BuildVoice();
     BuildShade();
     lv_screen_load(s_scr_home);
     RefreshStatus();
@@ -659,6 +826,16 @@ void SetLinkState(bool connected) {
     if (connected == s_connected.load(std::memory_order_acquire)) return;
     s_connected.store(connected, std::memory_order_release);
     s_link_rev.fetch_add(1, std::memory_order_release);
+}
+
+void SetVoiceText(const char* utf8) {
+    if (!utf8) return;
+    char readable[sizeof s_voice_text] = {};
+    CopyVoiceText(readable, sizeof readable, utf8);
+    taskENTER_CRITICAL(&s_status_lock);
+    memcpy(s_voice_text, readable, sizeof readable);
+    taskEXIT_CRITICAL(&s_status_lock);
+    s_text_rev.fetch_add(1, std::memory_order_release);
 }
 
 }  // namespace kc_ui

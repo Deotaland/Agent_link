@@ -15,6 +15,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 
 #include "agent_link_stream.h"
 #include "driver/gpio.h"
@@ -46,6 +47,8 @@ public:
     // Downlink TTS (PCM16 16k mono). Non-blocking; drops with a warning if the buffer is full,
     // which only happens when the link outruns real time by more than the buffer holds.
     void PlayPcm(const uint8_t* pcm16, size_t bytes);
+    void EndPlayback();
+    void StopPlayback();
 
     // Bulk mic uplink. Needs the link READY.
     void StartAsr();
@@ -70,6 +73,11 @@ private:
     bool    codec_ok_ = false;
 
     StreamBufferHandle_t play_buf_ = nullptr;
+    std::mutex play_mutex_;
+    std::atomic<uint32_t> play_generation_{0};
+    std::atomic<uint32_t> play_cleared_{0};
+    std::atomic<bool> play_finished_{false};
+    std::atomic<size_t> play_dropped_{0};
 
     // Open while the corresponding uplink is running; both may be open at once.
     agent_stream_handle_t audio_stream_ = nullptr;

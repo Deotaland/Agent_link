@@ -78,7 +78,9 @@ public:
     void PlayAudio(const uint8_t* pcm16, size_t bytes) override {
         if (audio_ok_) audio_.PlayPcm(pcm16, bytes);
     }
-    void AudioEnd() override { ESP_LOGI(TAG, "AudioEnd (buffer plays out, then silence)"); }
+    void AudioEnd() override { if (audio_ok_) audio_.EndPlayback(); }
+    void AudioReset() override { if (audio_ok_) audio_.StopPlayback(); }
+    void ShowText(const char* utf8) override { kc_ui::SetVoiceText(utf8); }
 
     void OnListen(bool start, uint32_t max_ms) override {
         if (!audio_ok_) return;

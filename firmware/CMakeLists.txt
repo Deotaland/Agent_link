@@ -6,7 +6,11 @@ endif()
 # Board selection: idf.py menuconfig -> Agent Link Device -> Board Type (see boards/README.md).
 # Target-wide sdkconfig defaults (PSRAM on, flash size, ...) live in sdkconfig.defaults /
 # sdkconfig.defaults.<target> - native ESP-IDF, applied automatically by `idf.py set-target`.
-set(_sdkconfig "${CMAKE_CURRENT_LIST_DIR}/sdkconfig")
+if(DEFINED SDKCONFIG AND NOT "${SDKCONFIG}" STREQUAL "")
+    get_filename_component(_sdkconfig "${SDKCONFIG}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+else()
+    set(_sdkconfig "${CMAKE_CURRENT_LIST_DIR}/sdkconfig")
+endif()
 if(EXISTS "${_sdkconfig}")
     file(STRINGS "${_sdkconfig}" _sdkconfig_lines)
 
@@ -39,6 +43,10 @@ if(EXISTS "${_sdkconfig}")
     # segment holds the upload until lwIP's retransmission timer (half a second or more). Meta's
     # own firmware uses 16 KB. lwIP's buffers are in PSRAM on these boards.
     set(_deep_tcp_boards BOARD_TYPE_ROROLEE_MUSE BOARD_TYPE_WOWNNY_MUSE BOARD_TYPE_WOWNNY_OLD_MUSE)
+    if("CONFIG_AGENT_LINK_TRANSPORT_WIFI=y" IN_LIST _sdkconfig_lines)
+        list(APPEND _bss_psram_boards BOARD_TYPE_ESP32S3_KORVO_CLOUD)
+        list(APPEND _deep_tcp_boards BOARD_TYPE_ESP32S3_KORVO_CLOUD)
+    endif()
 
     set(_board_forced_options "")
     if("${_selected_board}" IN_LIST _s3_boards)
@@ -76,6 +84,11 @@ if(EXISTS "${_sdkconfig}")
             list(APPEND _board_forced_options "CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384")
         else()
             list(APPEND _board_forced_options "CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760")
+        endif()
+        if(_selected_board STREQUAL "BOARD_TYPE_ESP32S3_KORVO_CLOUD" AND
+           "CONFIG_AGENT_LINK_TRANSPORT_WIFI=y" IN_LIST _sdkconfig_lines)
+            list(APPEND _board_forced_options "CONFIG_LWIP_TCP_WND_DEFAULT=32768"
+                                              "CONFIG_LWIP_TCP_RECVMBOX_SIZE=26")
         endif()
     endif()
 
