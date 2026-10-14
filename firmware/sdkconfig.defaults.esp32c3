@@ -1,0 +1,34 @@
+# FoloToy AI Passport and any future ESP32-C3 boards: 8 MB flash, no PSRAM.
+# Applied automatically by `idf.py set-target esp32c3` after sdkconfig.defaults.
+
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE=n
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_esp32c3.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_esp32c3.csv"
+
+# USB Serial/JTAG console (GPIO18/19). UART0 TX defaults to GPIO21, which is the
+# backlight on AI Passport — do not use UART0 for the console on this chip family.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# No PSRAM on C3 — shrink NimBLE pools so BLE + codec + a small display fit in ~400 KB SRAM.
+# Voice uplink still needs L2CAP CoC (kept from sdkconfig.defaults).
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=48
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_SIZE=256
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=48
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_SIZE=320
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=12
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=4096
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL=y
+
+# Keep LVGL available for boards that want it, but tiny by default on C3. LVGL's own default
+# pool is 64 KB of static DRAM, which on a 400 KB chip leaves too little for NimBLE: the host
+# stack aborts in ble_gatts_start. The layer buffer defaults to 24 KB, also static, also too big.
+CONFIG_LV_MEM_SIZE_KILOBYTES=24
+CONFIG_LV_DRAW_LAYER_SIMPLE_BUF_SIZE=6144
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_28=y

@@ -140,6 +140,9 @@ esp_err_t agent_link_stream_send(agent_stream_t kind, const agent_stream_opts_t*
 /** @brief Whether a stream of this kind is currently open. */
 bool agent_link_stream_is_open(agent_stream_t kind);
 
+/** Last asynchronous stream failure; ESP_OK when none is reported. Resets on the next open. */
+esp_err_t agent_link_stream_error(agent_stream_t kind);
+
 #ifdef __cplusplus
 }
 #endif

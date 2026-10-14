@@ -27,6 +27,10 @@ public:
     virtual void PlayAudio(const uint8_t* pcm16, size_t bytes) { (void)pcm16; (void)bytes; }
     virtual void AudioEnd() {}
     virtual void AudioReset() {}
+    virtual bool OnVoiceReply(uint32_t session_id, uint8_t status) {
+        (void)session_id; (void)status;
+        return true;
+    }
     virtual void ShowText(const char* utf8) { (void)utf8; }
     virtual void Vibrate(uint32_t duration_ms) { (void)duration_ms; }
     virtual void SetLed(uint32_t rgb) { (void)rgb; }   // RGB 0x00RRGGBB; the SDK's led0 endpoint routes here

@@ -601,7 +601,20 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
         } else if (f.payload.size() == 6 && !agentlink::audio::SetCodec(f.payload[5])) {
             status = 1; error = 1004;          // downlink_codec > 1
         } else {
-            switch (f.payload[4]) {
+            const uint32_t session_id = static_cast<uint32_t>(f.payload[0]) |
+                (static_cast<uint32_t>(f.payload[1]) << 8) | (static_cast<uint32_t>(f.payload[2]) << 16) |
+                (static_cast<uint32_t>(f.payload[3]) << 24);
+            const uint8_t reply_status = f.payload[4];
+            const bool missing_channel = reply_status == 2 &&
+                (s_cfg.transport == AGENT_TRANSPORT_BLE || s_cfg.transport == AGENT_TRANSPORT_BOTH) &&
+                !agent_transport_ble_l2cap_ready();
+            const uint8_t effective_status = missing_channel ? 1 : reply_status;
+            const bool accepted = !s_have_out || !s_out.on_voice_reply ||
+                s_out.on_voice_reply(session_id, effective_status, s_out.ctx);
+            ESP_LOGI(TAG, "VoiceReply: session=%u status=%u %s", (unsigned)session_id,
+                     (unsigned)reply_status, accepted ? "accepted" : "ignored");
+            if (missing_channel) ESP_LOGW(TAG, "VoiceReply: audio channel unavailable");
+            if (accepted) switch (effective_status) {
             case 2:
                 agentlink::audio::Arm();
                 break;
@@ -610,7 +623,8 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
                 if (s_have_out && s_out.on_audio_end) s_out.on_audio_end(s_out.ctx);
                 break;
             default:
-                break;                         // 0 = success, 1 = failure: nothing audio-side
+                if (s_have_out && s_out.on_voice_reply) agentlink::audio::Disarm();
+                break;
             }
         }
     } else if (f.command_id == 0x03) {
@@ -1254,6 +1268,12 @@ esp_err_t agent_link_stream_close(agent_stream_handle_t h, bool complete) {
     h->open = false;
     if (!s_tx || !s_tx->stream_end) return ESP_ERR_INVALID_STATE;
     return s_tx->stream_end(s_tx->impl, h->kind, complete, nullptr, 0);
+}
+
+esp_err_t agent_link_stream_error(agent_stream_t kind) {
+    if (kind < 0 || kind >= AGENT_STREAM_KIND_COUNT) return ESP_ERR_INVALID_ARG;
+    if (!s_tx) return ESP_ERR_INVALID_STATE;
+    return s_tx->stream_error ? s_tx->stream_error(s_tx->impl, kind) : ESP_OK;
 }
 
 esp_err_t agent_link_stream_send(agent_stream_t kind, const agent_stream_opts_t* opts,

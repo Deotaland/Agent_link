@@ -13,11 +13,11 @@
 //     keeping it online with the platform, by heartbeat and over MQTT. Its progress becomes the
 //     link state; see OnCloudState.
 //
-// Built only where SOC_WIFI_SUPPORTED (esp_wifi.h does not compile on the ESP32-P4). Other targets
-// get the stub at the end of the file, whose start() fails.
+// The C3 BLE build leaves the unused WiFi backend out of its internal RAM.
 #include "soc/soc_caps.h"
+#include "sdkconfig.h"
 
-#if SOC_WIFI_SUPPORTED
+#if SOC_WIFI_SUPPORTED && !(CONFIG_IDF_TARGET_ESP32C3 && CONFIG_AGENT_LINK_TRANSPORT_BLE)
 
 #include "agent_link_transport.h"
 #include "agent_link.h"          // agent_wifi_config_t, agent_platform_t, agent_link_status_t
@@ -637,7 +637,7 @@ bool wifi_is_ready(void* /*impl*/) {
 agent_transport_t s_wifi = {
     wifi_start, wifi_stop, wifi_send_ctrl,
     wifi_stream_start, wifi_send_stream, wifi_stream_end,
-    wifi_is_ready, nullptr,
+    wifi_is_ready, nullptr, nullptr,
 };
 }  // namespace
 
@@ -697,8 +697,7 @@ extern "C" esp_err_t agent_transport_wifi_end_realtime(void) {
 
 #else  // !SOC_WIFI_SUPPORTED
 
-// Stub for targets without a WiFi radio. agent_link.cpp references this backend unconditionally;
-// selecting it here fails at start().
+// Stub for targets or builds without this backend.
 #include "agent_link_transport.h"
 #include "esp_log.h"
 
@@ -706,8 +705,7 @@ namespace {
 constexpr const char* TAG = "agent_link.wifi";
 
 esp_err_t nowifi_start(void*) {
-    ESP_LOGE(TAG, "the WiFi transport was selected, but this chip has no WiFi radio — "
-                  "pick the BLE transport, or a board on a target that has one");
+    ESP_LOGE(TAG, "WiFi transport is unavailable in this build");
     return ESP_ERR_NOT_SUPPORTED;
 }
 void      nowifi_stop(void*) {}
@@ -720,7 +718,7 @@ bool      nowifi_ready(void*) { return false; }
 agent_transport_t s_wifi = {
     nowifi_start, nowifi_stop, nowifi_ctrl,
     nowifi_sopen, nowifi_swrite, nowifi_sclose,
-    nowifi_ready, nullptr,
+    nowifi_ready, nullptr, nullptr,
 };
 }  // namespace
 
@@ -740,4 +738,4 @@ extern "C" void agent_transport_wifi_set_audio(void (*)(const uint8_t*, size_t),
 extern "C" esp_err_t agent_transport_wifi_request_realtime(void) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" esp_err_t agent_transport_wifi_end_realtime(void) { return ESP_ERR_NOT_SUPPORTED; }
 
-#endif  // SOC_WIFI_SUPPORTED
+#endif

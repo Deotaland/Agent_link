@@ -29,6 +29,8 @@ elseif(CONFIG_BOARD_TYPE_WOWNNY_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_OLD_MUSE)
     set(BOARD_DIR "wownny-muse")   # both revisions, config.h has the pin differences
 elseif(CONFIG_BOARD_TYPE_M5STACK_STOPWATCH)
     set(BOARD_DIR "m5stack-stopwatch")
+elseif(CONFIG_BOARD_TYPE_FOLOTOY_AI_PASSPORT)
+    set(BOARD_DIR "ai-passport")
 # Add a new board: add a line elseif(CONFIG_BOARD_TYPE_XXX) set(BOARD_DIR "your-board")
 endif()
 
@@ -75,7 +77,7 @@ idf_component_register(
     INCLUDE_DIRS ${INCLUDE_DIRS}
     REQUIRES agent_link esp_driver_gpio esp_driver_spi esp_lcd esp_lcd_sh8501 esp_lcd_sh8501_lk
              esp_lcd_gc9d01 esp_codec_dev esp_driver_i2c esp_driver_i2s nvs_flash esp_partition
-             fatfs esp_wifi)
+             fatfs esp_wifi esp_adc)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
 

@@ -77,7 +77,8 @@ esp_err_t St7789Lcd::Init(const St7789LcdConfig& cfg) {
     bus.miso_io_num     = -1;
     bus.quadwp_io_num   = -1;
     bus.quadhd_io_num   = -1;
-    bus.max_transfer_sz = static_cast<int>(cfg_.width) * static_cast<int>(cfg_.height) * 2;
+    bus.max_transfer_sz = static_cast<int>(cfg_.width) *
+                         (cfg_.single_buffer ? cfg_.stripe_rows : cfg_.height) * 2;
     esp_err_t ret = spi_bus_initialize(cfg_.spi_host, &bus, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {  // INVALID_STATE = already initialized, tolerate
         ESP_LOGE(TAG, "spi_bus_initialize: %s", esp_err_to_name(ret));
@@ -93,7 +94,7 @@ esp_err_t St7789Lcd::Init(const St7789LcdConfig& cfg) {
     io_cfg.lcd_param_bits    = 8;
     io_cfg.spi_mode          = cfg_.spi_mode & 3;
     // esp_lcd recycles each stripe's transactions internally per draw_bitmap
-    io_cfg.trans_queue_depth = 10;
+    io_cfg.trans_queue_depth = cfg_.single_buffer ? 1 : 10;
     ESP_RETURN_ON_ERROR(
         esp_lcd_new_panel_io_spi(
             static_cast<esp_lcd_spi_bus_handle_t>(cfg_.spi_host), &io_cfg, &io_),
@@ -114,6 +115,20 @@ esp_err_t St7789Lcd::Init(const St7789LcdConfig& cfg) {
 
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(panel_), TAG, "reset");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel_),  TAG, "init");
+
+    // Vendor porch/power/gamma commands. esp_lcd's init only sends SLPOUT, COLMOD and RAMCTRL, so
+    // a panel whose reference init does more than that (FoloToy's ST7789P3) comes up with the
+    // wrong gamma and a washed-out tint. Before the colour commands below, since those rewrite
+    // 0x36 MADCTL.
+    if (cfg_.vendor_cmd_count) {
+        ESP_LOGI(TAG, "vendor init: %u commands", (unsigned)cfg_.vendor_cmd_count);
+    }
+    for (uint16_t i = 0; i < cfg_.vendor_cmd_count; ++i) {
+        const St7789LcdConfig::VendorCmd& v = cfg_.vendor_cmds[i];
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io_, v.cmd, v.data, v.len), TAG, "vendor cmd");
+        if (v.delay_ms) vTaskDelay(pdMS_TO_TICKS(v.delay_ms));
+    }
+
     if (cfg_.invert_color) (void)esp_lcd_panel_invert_color(panel_, true);
     (void)esp_lcd_panel_swap_xy(panel_, cfg_.swap_xy);
     (void)esp_lcd_panel_mirror(panel_, cfg_.mirror_x, cfg_.mirror_y);
@@ -133,7 +148,8 @@ esp_err_t St7789Lcd::EnsureStripe(size_t bytes) {
     if (stripe_[0] && stripe_cap_ >= bytes) return ESP_OK;
     for (auto*& s : stripe_) { if (s) { heap_caps_free(s); s = nullptr; } }
     stripe_cap_ = 0;
-    for (auto*& s : stripe_) {
+    for (unsigned i = 0; i < (cfg_.single_buffer ? 1u : 2u); ++i) {
+        auto*& s = stripe_[i];
         s = static_cast<uint8_t*>(
             heap_caps_aligned_alloc(4, bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         if (!s) {  // one failed -> free both, report OOM
@@ -183,6 +199,7 @@ esp_err_t St7789Lcd::DrawBitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
     int i = 0;
     for (uint16_t row = 0; row < h; row = static_cast<uint16_t>(row + cfg_.stripe_rows)) {
         const uint16_t rows_this = std::min<uint16_t>(cfg_.stripe_rows, static_cast<uint16_t>(h - row));
+        const uint32_t expect = done_count_.load(std::memory_order_acquire) + 1;
         memcpy(stripe_[i], src + static_cast<size_t>(row) * row_bytes,
                static_cast<size_t>(rows_this) * row_bytes);
         ESP_RETURN_ON_ERROR(
@@ -190,10 +207,27 @@ esp_err_t St7789Lcd::DrawBitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
                                       static_cast<uint16_t>(x + w),
                                       static_cast<uint16_t>(y + row + rows_this), stripe_[i]),
             TAG, "draw_bitmap");
-        i ^= 1;
+        // Block until the DMA is done with this stripe. LVGL in partial mode hands back the same
+        // buffer as soon as flush_ready() is called, so without this the next stripe memcpy races
+        // the DMA still reading it and the screen comes out as shuffled garbage.
+        if (!WaitDone(expect, 500)) {
+            ESP_LOGE(TAG, "blit tx timeout row=%u", static_cast<unsigned>(row));
+            return ESP_ERR_TIMEOUT;
+        }
+        if (!cfg_.single_buffer) i ^= 1;
     }
-    (void)esp_lcd_panel_io_tx_param(io_, 0x00, nullptr, 0);
     return ESP_OK;
+}
+
+esp_err_t St7789Lcd::FlushStripe(uint16_t y, uint16_t rows) {
+    if (!panel_ || !stripe_[0]) return ESP_ERR_INVALID_STATE;
+    if (!rows || rows > cfg_.stripe_rows || y >= cfg_.height || rows > cfg_.height - y) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const uint32_t expect = done_count_.load(std::memory_order_acquire) + 1;
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_draw_bitmap(panel_, 0, y, cfg_.width, y + rows, stripe_[0]),
+                        TAG, "flush stripe");
+    return WaitDone(expect, 500) ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t St7789Lcd::Backlight(bool on) {
