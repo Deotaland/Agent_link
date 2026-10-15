@@ -1,5 +1,6 @@
 #include "../boards/ai-passport/voice_session.h"
 #include "../components/agent_link/src/voice_queue.h"
+#include "../components/agent_link/src/ble_voice_packet.h"
 
 #include <array>
 #include <cassert>
@@ -183,9 +184,66 @@ static void TestQueue() {
     }
 }
 
+static void TestBleVoicePackets() {
+    // Microphone reads are 640 bytes; BLE packets cross those read boundaries.
+    for (uint16_t mtu : {uint16_t(23), uint16_t(185), uint16_t(247), uint16_t(512)}) {
+        agentlink::VoiceQueue<agentlink::ble::kVoiceQueueBytes> queue;
+        std::array<uint8_t, 32000> pcm{};
+        std::array<uint8_t, agentlink::ble::kVoiceMaxPcmBytes> packet{};
+        for (size_t i = 0; i < pcm.size(); ++i) pcm[i] = static_cast<uint8_t>((i * 31 + i / 256) % 251);
+        size_t delivered = 0;
+        size_t packets = 0;
+        const auto send = [&](bool drain) {
+            for (;;) {
+                const size_t bytes = agentlink::ble::VoicePacketBytes(queue.Size(), mtu, drain);
+                if (!bytes) break;
+                assert(bytes % 2 == 0);
+                assert(bytes + agentlink::ble::kVoiceHeaderBytes <= size_t(mtu) - 3);
+                assert(bytes <= agentlink::ble::kVoiceMaxPcmBytes);
+                assert(queue.Pop(packet.data(), bytes) == bytes);
+                for (size_t i = 0; i < bytes; ++i) assert(packet[i] == pcm[delivered++]);
+                ++packets;
+            }
+        };
+        for (size_t input = 0; input < pcm.size(); input += 640) {
+            assert(queue.Push(pcm.data() + input, 640));
+            // Capture continues during half a second of notification backpressure.
+            if (input >= 16000) send(false);
+        }
+        send(true);
+        assert(delivered == pcm.size());
+        assert(queue.Size() == 0);
+        if (mtu == 512) assert(packets == 65);
+        if (mtu == 247) assert(packets == 141);
+    }
+
+    agentlink::VoiceQueue<8192> queue;
+    std::array<uint8_t, 640> pcm{};
+    std::array<uint8_t, agentlink::ble::kVoiceMaxPcmBytes> packet{};
+    assert(queue.Push(pcm.data(), 640));
+    assert(queue.Pop(packet.data(), agentlink::ble::VoicePacketBytes(queue.Size(), 512, false)) == 494);
+    // Release sends the final 146 bytes even though they do not fill a packet.
+    assert(agentlink::ble::VoicePacketBytes(queue.Size(), 512, false) == 0);
+    assert(queue.Size() == 146);
+    assert(queue.Pop(packet.data(), agentlink::ble::VoicePacketBytes(queue.Size(), 512, true)) == 146);
+    for (uint16_t mtu : {uint16_t(0), uint16_t(18), uint16_t(19), uint16_t(22)}) {
+        assert(agentlink::ble::VoicePacketBytes(640, mtu, false) == 0);
+        assert(agentlink::ble::VoicePacketBytes(640, mtu, true) == 0);
+    }
+
+    // A healthy total does not make an exhausted individual pool usable.
+    assert(!agentlink::ble::VoiceBuffersReady(0, 96));
+    assert(!agentlink::ble::VoiceBuffersReady(96, 0));
+    assert(!agentlink::ble::VoiceBuffersReady(12, 96));
+    assert(!agentlink::ble::VoiceBuffersReady(96, 13));
+    assert(agentlink::ble::VoiceBuffersReady(13, 14));
+    assert(agentlink::ble::VoiceBuffersReady(96, 96));
+}
+
 int main() {
     TestSession();
     TestReplyControl();
     TestQueue();
-    std::puts("PASS: preludes stay Thinking; commands control Speaking/drain; stale events, gates and bounded FIFO");
+    TestBleVoicePackets();
+    std::puts("PASS: voice sessions, bounded FIFO and BLE packet integrity across MTUs, backpressure and final drain");
 }

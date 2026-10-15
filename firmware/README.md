@@ -206,7 +206,7 @@ GATT layout:
 - Service `0xFFB0` (file/OTA): `0xFFB1` command (App writes `0x37`/`0x56`, device notifies the response). Present so the shipping App's OTA path works unchanged.
 - L2CAP CoC on PSM `0x0081` receives downlink TTS audio and forwards it to `on_audio_out`, and carries the firmware image while an OTA is running. Recording and file uplink over the same channel are not implemented yet.
 
-Device I/O rides the control plane: a self-describing manifest (event `0x18`), typed readings (event `0x19`), an actuator command (`0x33`), and a manifest pull (`0x34`). A voice-uplink frame is the 6-byte header followed by `session_id` (4), `sequence` (4), `flags` (1), and PCM; the whole frame is kept at or below 220 bytes, with per-notify PCM sized to `min(MTU - 3 - 15, 205)` and rounded down to an even length.
+Device I/O rides the control plane: a self-describing manifest (event `0x18`), typed readings (event `0x19`), an actuator command (`0x33`), and a manifest pull (`0x34`). A voice-uplink frame is the 6-byte header followed by `session_id` (4), `sequence` (4), `flags` (1), and PCM. Per-notify PCM is sized to `min(MTU - 3 - 15, 494)` on ESP32-C3 and `min(MTU - 3 - 15, 205)` on other chips, rounded down to an even length. C3 packets span microphone reads; the final short packet is sent when recording ends.
 
 ## Using only the SDK
 

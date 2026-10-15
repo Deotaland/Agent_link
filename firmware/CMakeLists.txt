@@ -99,6 +99,10 @@ if(EXISTS "${_sdkconfig}")
     elseif(_selected_board STREQUAL "BOARD_TYPE_FOLOTOY_AI_PASSPORT")
         # C3 has no PSRAM. Defaults do not override values in an existing sdkconfig.
         list(APPEND _board_forced_options "CONFIG_RTC_CLK_SRC_INT_RC=y")
+        if("CONFIG_AGENT_LINK_TRANSPORT_BLE=y" IN_LIST _sdkconfig_lines)
+            list(APPEND _board_forced_options "CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=96"
+                                              "CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=96")
+        endif()
     endif()
 
     set(_to_append "")

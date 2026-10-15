@@ -29,7 +29,14 @@ reply; a new press or disconnect cancels the old generation. An empty formal
 reply drains immediately. Speaking has no silence timeout; an explicitly
 requested drain has a 30 s limit. Session IDs are logged without validation.
 
-The 32 KiB playback buffer and bounded 8 KiB voice queue remain allocated.
+The 32 KiB playback buffer and bounded 24 KiB voice queue remain allocated.
+The BLE profile uses 96 blocks in each MSYS pool and checks their free counts
+separately, reserving 12 blocks per pool for control traffic. VoiceChunk carries
+up to 494 bytes of continuous PCM at ATT MTU 512, with smaller packets at lower
+MTUs. A congested packet can wait up to 2 seconds; queue overflow still ends the
+session to avoid sending audio with gaps. Per-second flow logs show capture and
+submission rates, queue depth and both pool counts. Submission is not a phone
+receipt acknowledgement.
 The C3 BLE build omits the unused WiFi transport implementation, provisioning and
 cloud sources. The shared component dependencies remain unconditional.
 

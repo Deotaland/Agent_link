@@ -22,6 +22,9 @@
 #include "ota_service.h"
 #include "audio_downlink.h"
 #include "voice_queue.h"
+#if CONFIG_IDF_TARGET_ESP32C3
+#include "ble_voice_packet.h"
+#endif
 
 #include <cstring>
 #include <queue>
@@ -31,6 +34,7 @@
 
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
@@ -48,6 +52,9 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "os/os_mbuf.h"      // os_msys_get_pkthdr / os_mbuf_copydata
+#if CONFIG_IDF_TARGET_ESP32C3
+#include "os/os_mempool.h"
+#endif
 
 extern "C" void ble_store_config_init(void);
 
@@ -120,6 +127,9 @@ namespace {
     uint16_t s_h_file = 0; // 0xFFB1 (file / OTA command channel)
     uint16_t s_h_voice = 0; // 0xFFA1 (voice upload)
     uint16_t s_h_batt = 0; // 0x2A19 (battery, notify)
+#if CONFIG_IDF_TARGET_ESP32C3
+    std::atomic<bool> s_voice_notify_enabled{false};
+#endif
 
     // Standard-service values (returned by the read callback; battery notifies 0x2A19 on change).
     uint8_t s_batt_level = 0;              // current battery level 0-100
@@ -239,23 +249,27 @@ namespace {
         return ESP_OK;
     }
 
-    esp_err_t Notify(uint16_t handle, const uint8_t* data, size_t len) {
+    esp_err_t Notify(uint16_t handle, const uint8_t* data, size_t len, int* nimble_rc = nullptr) {
+        if (nimble_rc) *nimble_rc = 0;
         if (!s_connected || handle == 0) return ESP_ERR_INVALID_STATE;
         struct os_mbuf* om = ble_hs_mbuf_from_flat(data, len);
         if (!om) return ESP_ERR_NO_MEM;
         int rc = ble_gatts_notify_custom(s_conn_handle, handle, om);  // on failure NimBLE has already freed om
+        if (nimble_rc) *nimble_rc = rc;
         return rc == 0 ? ESP_OK : ESP_FAIL;
     }
 
     // ── Voice upload (0x40 VoiceChunk, Notify 0xFFA1) ──
     // Integrity-first queue + worker task + MTU-aware slicing.
+#if !CONFIG_IDF_TARGET_ESP32C3
     // Frame overhead = 6 (common header) + session(4) + sequence(4) + flags(1) = 15.
     constexpr size_t   kVoiceOverhead = 15;
     constexpr size_t   kMaxFrameSingleMbuf = 220;  // keep a frame in a single mbuf, avoiding chain-alloc failures on high-rate notify
     constexpr size_t   kMaxPcmSingleMbuf = kMaxFrameSingleMbuf - kVoiceOverhead;  // 205
     constexpr size_t   kFallbackPcmBytes = 80;   // conservative slice when the MTU is abnormal
+#endif
 #if CONFIG_IDF_TARGET_ESP32C3
-    constexpr size_t   kVoiceQueueHardCap = 8 * 1024;
+    constexpr size_t   kVoiceQueueHardCap = agentlink::ble::kVoiceQueueBytes;
     constexpr size_t   kVoiceHeapReserve = 12 * 1024;
     constexpr uint32_t kVoiceHeapCaps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
 #else
@@ -273,6 +287,7 @@ namespace {
         portMUX_TYPE          mtx = portMUX_INITIALIZER_UNLOCKED;
         std::atomic<bool>     abort_req{false};
         std::atomic<esp_err_t> error{ESP_OK};
+        std::atomic<uint32_t> input_bytes{0};
 #else
         std::queue<std::vector<uint8_t>> q;
         std::mutex            mtx;
@@ -330,9 +345,53 @@ namespace {
     ImageState s_img;
     uint32_t   s_img_counter = 0;
 
-    // Assemble one 0x40 VoiceChunk frame and notify it on 0xFFA1. len <= kMaxPcmSingleMbuf.
-    bool VoiceSendChunk(uint32_t sequence, const uint8_t* data, size_t len) {
+#if CONFIG_IDF_TARGET_ESP32C3
+    struct os_mempool* s_voice_pools[2] = {};
+
+    int VoicePoolFree(size_t index) {
+        return s_voice_pools[index] ? s_voice_pools[index]->mp_num_free : -1;
+    }
+
+    bool InitializeVoicePools() {
+        struct os_mempool_info info;
+        struct os_mempool* pool = nullptr;
+        while ((pool = os_mempool_info_get_next(pool, &info))) {
+            if (strcmp(info.omi_name, "msys_1") == 0) s_voice_pools[0] = pool;
+            if (strcmp(info.omi_name, "msys_2") == 0) s_voice_pools[1] = pool;
+        }
+        if (!s_voice_pools[0] || !s_voice_pools[1]) return false;
+        ESP_LOGI(TAG, "C3 voice profile r3: pools=%u/%u reserve=%d queue=%u pcm_max=%u stall_ms=2000",
+                 (unsigned)s_voice_pools[0]->mp_num_blocks, (unsigned)s_voice_pools[1]->mp_num_blocks,
+                 agentlink::ble::kVoicePoolReserve, (unsigned)kVoiceQueueHardCap,
+                 (unsigned)agentlink::ble::kVoiceMaxPcmBytes);
+        return true;
+    }
+
+    esp_err_t NotifyVoice(const uint8_t* data, size_t len, int* nimble_rc) {
+        if (nimble_rc) *nimble_rc = 0;
+        if (!s_connected || !s_voice_notify_enabled.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
+        // Check both pools: the free count from one cannot cover the other.
+        if (!agentlink::ble::VoiceBuffersReady(VoicePoolFree(0), VoicePoolFree(1))) return ESP_ERR_NO_MEM;
+        struct os_mbuf* om = os_msys_get_pkthdr(agentlink::ble::kVoiceMaxFrameBytes, 0);
+        if (!om) return ESP_ERR_NO_MEM;
+        if (os_mbuf_append(om, data, len) != 0) {
+            os_mbuf_free_chain(om);
+            return ESP_ERR_NO_MEM;
+        }
+        const int rc = ble_gatts_notify_custom(s_conn_handle, s_h_voice, om);
+        if (nimble_rc) *nimble_rc = rc;
+        return rc == 0 ? ESP_OK : ESP_FAIL;
+    }
+#endif
+
+    // Assemble one 0x40 VoiceChunk frame and notify it on 0xFFA1.
+    bool VoiceSendChunk(uint32_t sequence, const uint8_t* data, size_t len,
+                        esp_err_t* send_error = nullptr, int* nimble_rc = nullptr) {
+#if CONFIG_IDF_TARGET_ESP32C3
+        uint8_t f[agentlink::ble::kVoiceMaxFrameBytes];
+#else
         uint8_t f[kMaxFrameSingleMbuf];
+#endif
         size_t i = 0;
         f[i++] = 0x01;                          // version
         f[i++] = 0x03;                          // message_type = Event
@@ -352,7 +411,13 @@ namespace {
         f[i++] = 0x00;                          // flags (0 = normal frame)
         memcpy(f + i, data, len);
         i += len;
-        return Notify(s_h_voice, f, i) == ESP_OK;
+#if CONFIG_IDF_TARGET_ESP32C3
+        const esp_err_t error = NotifyVoice(f, i, nimble_rc);
+#else
+        const esp_err_t error = Notify(s_h_voice, f, i, nimble_rc);
+#endif
+        if (send_error) *send_error = error;
+        return error == ESP_OK;
     }
 
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -366,53 +431,112 @@ namespace {
     }
 
     void VoiceTask(void*) {
-        uint8_t chunk[640];
+        uint8_t chunk[agentlink::ble::kVoiceMaxPcmBytes];
         for (;;) {
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             if (!s_voice.active.load(std::memory_order_acquire)) continue;
-            ESP_LOGI(TAG, "voice task started (session=%u)", (unsigned)s_voice.session_id);
+            ESP_LOGI(TAG, "voice task started (session=%u mtu=%u voice_notify=%d)",
+                     (unsigned)s_voice.session_id, (unsigned)ble_att_mtu(s_conn_handle),
+                     (int)s_voice_notify_enabled.load(std::memory_order_acquire));
+            bool first_notify_failure_logged = false;
+            size_t burst_bytes = 0;
+            uint32_t submitted_bytes = 0;
+            const int64_t started_at = esp_timer_get_time();
+            int64_t report_at = started_at;
+            uint32_t report_input = 0;
+            uint32_t report_submitted = 0;
+            uint32_t wait_ticks = 0;
+            size_t peak_queued = 0;
+            const auto report_flow = [&]() {
+                const size_t queued = s_voice.queued_bytes.load(std::memory_order_acquire);
+                if (queued > peak_queued) peak_queued = queued;
+                const int64_t now = esp_timer_get_time();
+                const uint32_t elapsed_ms = (now - report_at) / 1000;
+                if (elapsed_ms < 1000) return;
+                const uint32_t input = s_voice.input_bytes.load(std::memory_order_acquire);
+                ESP_LOGI(TAG, "voice flow: session=%u input_Bps=%u submitted_Bps=%u queued=%u peak=%u pools=%d/%d wait_ms=%u",
+                         (unsigned)s_voice.session_id,
+                         (unsigned)((input - report_input) * 1000 / elapsed_ms),
+                         (unsigned)((submitted_bytes - report_submitted) * 1000 / elapsed_ms),
+                         (unsigned)queued, (unsigned)peak_queued, VoicePoolFree(0), VoicePoolFree(1),
+                         (unsigned)(wait_ticks * portTICK_PERIOD_MS));
+                report_at = now;
+                report_input = input;
+                report_submitted = submitted_bytes;
+                wait_ticks = 0;
+            };
             while (s_connected && !s_voice.abort_req.load(std::memory_order_acquire)) {
+                report_flow();
+                const uint16_t mtu = ble_att_mtu(s_conn_handle);
+                if (mtu < 23) {
+                    s_voice.error.store(ESP_ERR_INVALID_SIZE, std::memory_order_release);
+                    break;
+                }
                 taskENTER_CRITICAL(&s_voice.mtx);
-                const size_t bytes = s_voice.q.Pop(chunk, sizeof(chunk));
-                s_voice.queued_bytes.store(s_voice.q.Size(), std::memory_order_release);
                 const bool end = s_voice.end_req.load(std::memory_order_acquire);
+                const size_t want = agentlink::ble::VoicePacketBytes(s_voice.q.Size(), mtu, end);
+                const size_t bytes = s_voice.q.Pop(chunk, want);
+                s_voice.queued_bytes.store(s_voice.q.Size(), std::memory_order_release);
                 taskEXIT_CRITICAL(&s_voice.mtx);
                 if (!bytes) {
                     if (end) break;
                     ulTaskNotifyTake(pdTRUE, 1);
                     continue;
                 }
-                const uint16_t mtu = ble_att_mtu(s_conn_handle);
-                size_t max_pcm = mtu > kVoiceOverhead + 5 ? mtu - 3 - kVoiceOverhead : kFallbackPcmBytes;
-                if (max_pcm > kMaxPcmSingleMbuf) max_pcm = kMaxPcmSingleMbuf;
-                max_pcm &= ~size_t(1);
-                if (!max_pcm) max_pcm = 2;
-                for (size_t off = 0; off < bytes;) {
-                    const size_t n = bytes - off < max_pcm ? bytes - off : max_pcm;
-                    const uint32_t seq = s_voice.sequence.fetch_add(1, std::memory_order_relaxed);
-                    bool sent = false;
-                    bool low_heap = false;
-                    for (unsigned retry = 0; retry < 20; ++retry) {
-                        if (!s_connected || s_voice.abort_req.load(std::memory_order_acquire)) break;
-                        low_heap = heap_caps_get_free_size(kVoiceHeapCaps) < kVoiceHeapReserve ||
-                                   heap_caps_get_largest_free_block(kVoiceHeapCaps) < 2048;
-                        if (!low_heap && VoiceSendChunk(seq, chunk + off, n)) {
+                const uint32_t seq = s_voice.sequence.fetch_add(1, std::memory_order_relaxed);
+                bool sent = false;
+                bool low_heap = false;
+                esp_err_t send_error = ESP_OK;
+                int nimble_rc = 0;
+                const int64_t retry_until = esp_timer_get_time() + 2000 * 1000;
+                do {
+                    if (!s_connected || s_voice.abort_req.load(std::memory_order_acquire)) break;
+                    low_heap = heap_caps_get_free_size(kVoiceHeapCaps) < kVoiceHeapReserve ||
+                               heap_caps_get_largest_free_block(kVoiceHeapCaps) < 2048;
+                    if (low_heap) send_error = ESP_ERR_NO_MEM;
+                    if (!low_heap) {
+                        if (VoiceSendChunk(seq, chunk, bytes, &send_error, &nimble_rc)) {
                             sent = true;
                             break;
                         }
-                        vTaskDelay(1);
-                    }
-                    if (!sent) {
-                        if (s_connected && !s_voice.abort_req.load(std::memory_order_acquire)) {
-                            s_voice.error.store(low_heap ? ESP_ERR_NO_MEM : ESP_ERR_TIMEOUT, std::memory_order_release);
+                        if (!first_notify_failure_logged) {
+                            first_notify_failure_logged = true;
+                            ESP_LOGI(TAG, "voice TX waiting: session=%u mtu=%u pcm=%u error=%s nimble_rc=%d queued=%u pools=%d/%d",
+                                     (unsigned)s_voice.session_id, (unsigned)mtu, (unsigned)bytes,
+                                     esp_err_to_name(send_error), nimble_rc,
+                                     (unsigned)s_voice.queued_bytes.load(std::memory_order_acquire),
+                                     VoicePoolFree(0), VoicePoolFree(1));
                         }
-                        s_voice.abort_req.store(true, std::memory_order_release);
-                        break;
+                        if (send_error == ESP_ERR_INVALID_STATE ||
+                            (send_error == ESP_FAIL && nimble_rc != BLE_HS_ENOMEM &&
+                             nimble_rc != BLE_HS_EAGAIN && nimble_rc != BLE_HS_EBUSY)) break;
                     }
-                    off += n;
+                    ++wait_ticks;
+                    report_flow();
+                    vTaskDelay(1);
+                } while (esp_timer_get_time() < retry_until);
+                if (!sent) {
+                    ESP_LOGW(TAG, "voice notify failed: session=%u seq=%u mtu=%u pcm=%u error=%s nimble_rc=%d low_heap=%d queued=%u DMA=%u DMA_largest=%u pools=%d/%d",
+                             (unsigned)s_voice.session_id, (unsigned)seq, (unsigned)mtu, (unsigned)bytes,
+                             esp_err_to_name(send_error), nimble_rc, (int)low_heap,
+                             (unsigned)s_voice.queued_bytes.load(std::memory_order_acquire),
+                             (unsigned)heap_caps_get_free_size(kVoiceHeapCaps),
+                             (unsigned)heap_caps_get_largest_free_block(kVoiceHeapCaps),
+                             VoicePoolFree(0), VoicePoolFree(1));
+                    if (s_connected && !s_voice.abort_req.load(std::memory_order_acquire)) {
+                        s_voice.error.store(low_heap ? ESP_ERR_NO_MEM :
+                                            send_error == ESP_ERR_INVALID_STATE ? send_error : ESP_ERR_TIMEOUT,
+                                            std::memory_order_release);
+                    }
+                    s_voice.abort_req.store(true, std::memory_order_release);
+                    break;
                 }
-                // One bounded burst per PCM frame, followed by a real scheduler tick.
-                vTaskDelay(1);
+                burst_bytes += bytes;
+                submitted_bytes += bytes;
+                if (burst_bytes >= 640) {
+                    burst_bytes = 0;
+                    vTaskDelay(1);
+                }
             }
             if (!s_connected) s_voice.error.store(ESP_ERR_INVALID_STATE, std::memory_order_release);
             taskENTER_CRITICAL(&s_voice.mtx);
@@ -424,12 +548,17 @@ namespace {
                      esp_err_to_name(s_voice.error.load()),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            ESP_LOGI(TAG, "voice totals: session=%u input=%u submitted=%u elapsed_ms=%u peak=%u",
+                     (unsigned)s_voice.session_id, (unsigned)s_voice.input_bytes.load(std::memory_order_acquire),
+                     (unsigned)submitted_bytes, (unsigned)((esp_timer_get_time() - started_at) / 1000),
+                     (unsigned)peak_queued);
             ESP_LOGI(TAG, "voice stack remaining=%u", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
         }
     }
 
     esp_err_t VoiceStart() {
-        if (!s_connected || s_voice.active.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
+        if (!s_connected || !s_voice_notify_enabled.load(std::memory_order_acquire) ||
+            s_voice.active.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
         LogVoiceMemory("before voice");
         if (heap_caps_get_free_size(kVoiceHeapCaps) < kVoiceHeapReserve ||
             heap_caps_get_largest_free_block(kVoiceHeapCaps) < 2048) {
@@ -455,29 +584,43 @@ namespace {
         s_voice.end_req.store(false);
         s_voice.abort_req.store(false);
         s_voice.error.store(ESP_OK);
+        s_voice.input_bytes.store(0);
         s_voice.session_id = ++s_voice_counter;
         s_voice.active.store(true, std::memory_order_release);
         taskEXIT_CRITICAL(&s_voice.mtx);
-        ESP_LOGI(TAG, "voice session %u started (queue=%uB heap=%u largest=%u)",
+        ESP_LOGI(TAG, "voice session %u started (queue=%uB heap=%u largest=%u mtu=%u voice_notify=%d pcm_max=%u mbufs=%d/%d)",
                  (unsigned)s_voice.session_id, (unsigned)kVoiceQueueHardCap,
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)ble_att_mtu(s_conn_handle),
+                 (int)s_voice_notify_enabled.load(std::memory_order_acquire),
+                 (unsigned)agentlink::ble::kVoiceMaxPcmBytes, os_msys_num_free(), os_msys_count());
         xTaskNotifyGive(s_voice.task);
         return ESP_OK;
     }
 
     esp_err_t VoiceEnqueue(const uint8_t* data, size_t len) {
         if (!data || !len || (len & 1u)) return ESP_ERR_INVALID_ARG;
+        bool queue_full = false;
+        size_t queued = 0;
         taskENTER_CRITICAL(&s_voice.mtx);
         esp_err_t error = s_voice.error.load(std::memory_order_acquire);
         if (error == ESP_OK && (!s_voice.active.load() || s_voice.end_req.load())) error = ESP_ERR_INVALID_STATE;
         if (error == ESP_OK && !s_voice.q.Push(data, len)) {
             error = ESP_ERR_NO_MEM;
+            queue_full = true;
             s_voice.error.store(error, std::memory_order_release);
             s_voice.abort_req.store(true, std::memory_order_release);
         }
-        s_voice.queued_bytes.store(s_voice.q.Size(), std::memory_order_release);
+        if (error == ESP_OK) s_voice.input_bytes.fetch_add(len, std::memory_order_relaxed);
+        queued = s_voice.q.Size();
+        s_voice.queued_bytes.store(queued, std::memory_order_release);
         taskEXIT_CRITICAL(&s_voice.mtx);
+        if (queue_full) {
+            ESP_LOGW(TAG, "voice queue full: session=%u queued=%u/%u incoming=%u mtu=%u",
+                     (unsigned)s_voice.session_id, (unsigned)queued, (unsigned)kVoiceQueueHardCap,
+                     (unsigned)len, (unsigned)ble_att_mtu(s_conn_handle));
+        }
         if (s_voice.task) xTaskNotifyGive(s_voice.task);
         return error;
     }
@@ -1056,21 +1199,32 @@ namespace {
         return ESP_OK;
     }
 
-    // ── Link speed: connection interval -> 2M PHY -> DLE, one step per completion event
-    // The App streams ~2MB OTA images and minute-long audio over this link, so the default
-    // parameters a phone picks are not good enough.
-    void RequestFastConnParams(uint16_t conn_handle) {
+    // Negotiate link parameters without overlapping the peer's initial setup.
+    int RequestFastConnParams(uint16_t conn_handle) {
         struct ble_gap_upd_params p;
         memset(&p, 0, sizeof(p));
+#if CONFIG_IDF_TARGET_ESP32C3
+        p.itvl_min = 12;   // 15ms
+        p.itvl_max = 12;   // 15ms
+#else
         p.itvl_min = 6;    // 7.5ms
         p.itvl_max = 12;   // 15ms
+#endif
         p.latency = 0;
         p.supervision_timeout = 400;  // 4s
         const int rc = ble_gap_update_params(conn_handle, &p);
         if (rc != 0) ESP_LOGW(TAG, "conn param update request failed: %d", rc);
-        else         ESP_LOGI(TAG, "requested fast conn params (7.5-15ms)");
+        else {
+#if CONFIG_IDF_TARGET_ESP32C3
+            ESP_LOGI(TAG, "requested conn params (15ms, timeout=4s)");
+#else
+            ESP_LOGI(TAG, "requested fast conn params (7.5-15ms)");
+#endif
+        }
+        return rc;
     }
 
+#if !CONFIG_IDF_TARGET_ESP32C3
     void RequestTwoMPhy(uint16_t conn_handle) {
         const int rc = ble_gap_set_prefered_le_phy(conn_handle,
             BLE_GAP_LE_PHY_2M_MASK,
@@ -1079,15 +1233,104 @@ namespace {
         if (rc != 0) ESP_LOGW(TAG, "2M PHY request failed: %d", rc);
         else         ESP_LOGI(TAG, "requested 2M PHY");
     }
+#endif
 
-    void RequestDataLen(uint16_t conn_handle) {
+    int RequestDataLen(uint16_t conn_handle) {
         const int rc = ble_gap_set_data_len(conn_handle, 251, 0x0848);
         if (rc != 0) ESP_LOGW(TAG, "DLE request failed: %d", rc);
         else         ESP_LOGI(TAG, "requested max data length (251 octets)");
+        return rc;
     }
 
+#if CONFIG_IDF_TARGET_ESP32C3
+    enum class LinkUpdateStep { Idle, ConnParams, WaitConnParams, DataLength };
+    struct ble_npl_callout s_link_update_timer;
+    bool s_link_update_timer_inited = false;
+    LinkUpdateStep s_link_update_step = LinkUpdateStep::Idle;
+    int64_t s_link_update_due = 0;
+    unsigned s_conn_update_attempts = 0;
+    unsigned s_dle_attempts = 0;
+    uint16_t s_link_tx_octets = 27;
+
+    void CancelLinkUpdate() {
+        s_link_update_step = LinkUpdateStep::Idle;
+        s_link_update_due = 0;
+        if (s_link_update_timer_inited) ble_npl_callout_stop(&s_link_update_timer);
+    }
+
+    void ScheduleLinkUpdate(LinkUpdateStep step, uint32_t delay_ms) {
+        s_link_update_step = step;
+        s_link_update_due = esp_timer_get_time() + int64_t(delay_ms) * 1000;
+        const int rc = ble_npl_callout_reset(&s_link_update_timer, ble_npl_time_ms_to_ticks32(delay_ms));
+        if (rc != 0) {
+            s_link_update_step = LinkUpdateStep::Idle;
+            ESP_LOGW(TAG, "link update timer failed: %d", rc);
+        }
+    }
+
+    bool LinkUpdateBusy(int status) {
+        return status == BLE_HS_EBUSY || status == BLE_HS_EALREADY ||
+               status == BLE_HS_HCI_ERR(BLE_ERR_DIFF_TRANS_COLL) ||
+               status == BLE_HS_HCI_ERR(BLE_ERR_LMP_COLLISION);
+    }
+
+    void ConnUpdateFailed(int status) {
+        if (LinkUpdateBusy(status) && s_conn_update_attempts < 3) {
+            ESP_LOGW(TAG, "conn params busy: status=%d attempt=%u/3; retry in 2s",
+                     status, s_conn_update_attempts);
+            ScheduleLinkUpdate(LinkUpdateStep::ConnParams, 2000);
+        } else {
+            ESP_LOGW(TAG, "keeping peer conn params: status=%d attempts=%u", status, s_conn_update_attempts);
+            // A collision can leave a peer procedure active; do not start another one.
+            if (LinkUpdateBusy(status)) CancelLinkUpdate();
+            else ScheduleLinkUpdate(LinkUpdateStep::DataLength, 1000);
+        }
+    }
+
+    void LinkUpdateTimer(struct ble_npl_event*) {
+        if (!s_connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE ||
+            s_link_update_step == LinkUpdateStep::Idle || !HostSynced()) return;
+        // A callout event already queued before disconnect can survive its timer stop.
+        const int64_t remaining = s_link_update_due - esp_timer_get_time();
+        if (remaining > 0) {
+            ble_npl_callout_reset(&s_link_update_timer,
+                                 ble_npl_time_ms_to_ticks32((uint32_t)((remaining + 999) / 1000)));
+            return;
+        }
+        switch (s_link_update_step) {
+        case LinkUpdateStep::ConnParams: {
+            ++s_conn_update_attempts;
+            const int rc = RequestFastConnParams(s_conn_handle);
+            if (rc == 0) ScheduleLinkUpdate(LinkUpdateStep::WaitConnParams, 5000);
+            else ConnUpdateFailed(rc);
+            break;
+        }
+        case LinkUpdateStep::WaitConnParams:
+            ESP_LOGW(TAG, "conn param completion not received; keeping peer link settings");
+            CancelLinkUpdate();
+            break;
+        case LinkUpdateStep::DataLength:
+            if (s_link_tx_octets >= 251) {
+                ESP_LOGI(TAG, "peer already negotiated 251-byte data length");
+                CancelLinkUpdate();
+            } else {
+                ++s_dle_attempts;
+                const int rc = RequestDataLen(s_conn_handle);
+                if (LinkUpdateBusy(rc) && s_dle_attempts < 3) {
+                    ScheduleLinkUpdate(LinkUpdateStep::DataLength, 2000);
+                } else {
+                    CancelLinkUpdate();
+                }
+            }
+            break;
+        case LinkUpdateStep::Idle:
+            break;
+        }
+    }
+#else
     bool s_phy_requested = false;   // one shot per connection, both cleared on disconnect
     bool s_dle_requested = false;
+#endif
 
     // GAP events: connect / disconnect / advertising complete.
     int GapEvent(struct ble_gap_event* event, void* /*arg*/) {
@@ -1096,10 +1339,19 @@ namespace {
             if (event->connect.status == 0) {
                 s_connected = true;
                 s_conn_handle = event->connect.conn_handle;
+#if CONFIG_IDF_TARGET_ESP32C3
+                s_voice_notify_enabled.store(false, std::memory_order_release);
+                s_conn_update_attempts = s_dle_attempts = 0;
+                s_link_tx_octets = 27;
+                ScheduleLinkUpdate(LinkUpdateStep::ConnParams, 5000);
+                ESP_LOGI(TAG, "C3 link profile r3: conn update in 5s, 15ms; PHY selected by peer");
+#endif
                 ESP_LOGI(TAG, "connected (handle=%d)", s_conn_handle);
+#if !CONFIG_IDF_TARGET_ESP32C3
                 // Kick off the link-speed chain. Only the first step goes out here - the rest are
                 // fired from their completion events (see RequestFastConnParams).
                 RequestFastConnParams(s_conn_handle);
+#endif
                 if (s_on_conn) s_on_conn(true);
             }
             else {
@@ -1110,8 +1362,14 @@ namespace {
         case BLE_GAP_EVENT_DISCONNECT:
             s_connected = false;
             s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+#if CONFIG_IDF_TARGET_ESP32C3
+            s_voice_notify_enabled.store(false, std::memory_order_release);
+            CancelLinkUpdate();
+#endif
             s_l2cap_connected = false; s_l2cap_chan = nullptr;  // L2CAP goes down with the ACL
+#if !CONFIG_IDF_TARGET_ESP32C3
             s_phy_requested = false; s_dle_requested = false;   // renegotiate on the next connection
+#endif
             s_l2cap_stalled.store(false, std::memory_order_release);
             s_l2cap_rearm_pending.store(false, std::memory_order_release);
             s_voice.end_req.store(true, std::memory_order_release);  // tell the voice worker to wrap up ASAP
@@ -1146,24 +1404,82 @@ namespace {
             // Peer subscribed to the event channel 0xFFC4 (CCCD write enables notify) -> notifications
             // are delivered from now on -> tell the core it is "notify-ready" (the core sends the I/O
             // manifest from here, see agent_link.cpp OnLinkReady).
+#if CONFIG_IDF_TARGET_ESP32C3
+            if (event->subscribe.attr_handle == s_h_voice) {
+                s_voice_notify_enabled.store(event->subscribe.cur_notify, std::memory_order_release);
+                ESP_LOGI(TAG, "voice notify subscription: enabled=%u reason=%u",
+                         (unsigned)event->subscribe.cur_notify, (unsigned)event->subscribe.reason);
+            }
+#endif
             if (event->subscribe.attr_handle == s_h_evt && event->subscribe.cur_notify && s_on_ready) {
                 ESP_LOGI(TAG, "peer subscribed 0xFFC4 (event channel) — notify-ready");
                 s_on_ready();
             }
             return 0;
         case BLE_GAP_EVENT_CONN_UPDATE:
+#if CONFIG_IDF_TARGET_ESP32C3
+            {
+                struct ble_gap_conn_desc desc;
+                const int rc = ble_gap_conn_find(event->conn_update.conn_handle, &desc);
+                ESP_LOGI(TAG, "conn update: status=%d interval=%u latency=%u timeout=%u desc_rc=%d",
+                         event->conn_update.status, rc == 0 ? (unsigned)desc.conn_itvl : 0,
+                         rc == 0 ? (unsigned)desc.conn_latency : 0,
+                         rc == 0 ? (unsigned)desc.supervision_timeout : 0, rc);
+                if (event->conn_update.conn_handle == s_conn_handle && s_connected) {
+                    if (s_link_update_step == LinkUpdateStep::WaitConnParams) {
+                        if (event->conn_update.status == 0) {
+                            if (rc == 0 && desc.conn_itvl > 12) {
+                                ESP_LOGW(TAG, "peer selected interval=%u (15ms requested); voice throughput depends on peer scheduling",
+                                         (unsigned)desc.conn_itvl);
+                            }
+                            ScheduleLinkUpdate(LinkUpdateStep::DataLength, 1000);
+                        } else {
+                            ConnUpdateFailed(event->conn_update.status);
+                        }
+                    } else if (s_link_update_step == LinkUpdateStep::ConnParams && rc == 0 &&
+                               event->conn_update.status == 0 && desc.conn_itvl == 12 && desc.conn_latency == 0 &&
+                               desc.supervision_timeout >= 200 && desc.supervision_timeout <= 600) {
+                        ScheduleLinkUpdate(LinkUpdateStep::DataLength, 1000);
+                    }
+                }
+            }
+#else
             // Connection interval settled -> next step: 2M PHY (see RequestFastConnParams).
             if (!s_phy_requested && s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
                 s_phy_requested = true;
                 RequestTwoMPhy(s_conn_handle);
             }
+#endif
             return 0;
         case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
+#if CONFIG_IDF_TARGET_ESP32C3
+            ESP_LOGI(TAG, "PHY update: status=%d tx=%u rx=%u", event->phy_updated.status,
+                     (unsigned)event->phy_updated.tx_phy, (unsigned)event->phy_updated.rx_phy);
+#else
             // PHY settled -> last step: data length extension.
             if (!s_dle_requested && s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
                 s_dle_requested = true;
                 RequestDataLen(s_conn_handle);
             }
+#endif
+            return 0;
+        case BLE_GAP_EVENT_MTU:
+#if CONFIG_IDF_TARGET_ESP32C3
+            if (event->mtu.channel_id == BLE_L2CAP_CID_ATT) {
+                ESP_LOGI(TAG, "ATT MTU: handle=%u value=%u", (unsigned)event->mtu.conn_handle,
+                         (unsigned)event->mtu.value);
+            }
+#endif
+            return 0;
+        case BLE_GAP_EVENT_DATA_LEN_CHG:
+#if CONFIG_IDF_TARGET_ESP32C3
+            // IDF 5.5.4 omits conn_handle on received DLE events; C3 has one connection.
+            if (s_connected) {
+                s_link_tx_octets = event->data_len_chg.max_tx_octets;
+            }
+            ESP_LOGI(TAG, "data length: tx=%u rx=%u", (unsigned)event->data_len_chg.max_tx_octets,
+                     (unsigned)event->data_len_chg.max_rx_octets);
+#endif
             return 0;
 
         case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -1210,7 +1526,12 @@ namespace {
         StartAdvertising();
     }
 
-    void OnReset(int reason) { ESP_LOGW(TAG, "nimble reset; reason=%d", reason); }
+    void OnReset(int reason) {
+#if CONFIG_IDF_TARGET_ESP32C3
+        CancelLinkUpdate();
+#endif
+        ESP_LOGW(TAG, "nimble reset; reason=%d", reason);
+    }
 
     void HostTask(void* /*param*/) {
         nimble_port_run();
@@ -1235,6 +1556,21 @@ namespace {
         r = nimble_port_init();
         if (r != ESP_OK) { ESP_LOGE(TAG, "nimble_port_init: %s", esp_err_to_name(r)); return r; }
         s_host_inited.store(true, std::memory_order_release);
+#if CONFIG_IDF_TARGET_ESP32C3
+        if (!InitializeVoicePools()) {
+            ESP_LOGE(TAG, "voice MSYS pools not found");
+            return ESP_ERR_INVALID_STATE;
+        }
+        if (!s_link_update_timer_inited) {
+            const int rc = ble_npl_callout_init(&s_link_update_timer, nimble_port_get_dflt_eventq(),
+                                              LinkUpdateTimer, nullptr);
+            if (rc != 0) {
+                ESP_LOGE(TAG, "link update timer init failed: %d", rc);
+                return ESP_ERR_NO_MEM;
+            }
+            s_link_update_timer_inited = true;
+        }
+#endif
 
         ble_hs_cfg.sync_cb = OnSync;
         ble_hs_cfg.reset_cb = OnReset;
@@ -1265,6 +1601,9 @@ namespace {
         (void)ble_gap_adv_stop();
         s_connected = false;
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+#if CONFIG_IDF_TARGET_ESP32C3
+        CancelLinkUpdate();
+#endif
     }
 
     // Control-plane send: route by frame message_type. Event (0x03) -> 0xFFC4; response (0x02) ->
