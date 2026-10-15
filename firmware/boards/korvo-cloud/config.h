@@ -114,3 +114,10 @@
 #define AUDIO_OUT_VOLUME        80
 // TTS jitter buffer, in PSRAM
 #define AUDIO_PLAY_BUF_BYTES    (256 * 1024)
+
+// External HC32L110 servo controller on the second I2C bus.
+#define SERVO_I2C_PORT          0
+#define SERVO_I2C_SDA           GPIO_NUM_19
+#define SERVO_I2C_SCL           GPIO_NUM_20
+#define SERVO_I2C_FREQ_HZ       100000
+#define SERVO_I2C_ADDR          0x10

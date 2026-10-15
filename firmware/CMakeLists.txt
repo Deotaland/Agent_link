@@ -90,6 +90,12 @@ if(EXISTS "${_sdkconfig}")
             list(APPEND _board_forced_options "CONFIG_LWIP_TCP_WND_DEFAULT=32768"
                                               "CONFIG_LWIP_TCP_RECVMBOX_SIZE=26")
         endif()
+        if(_selected_board STREQUAL "BOARD_TYPE_ESP32S3_KORVO_CLOUD")
+            list(APPEND _board_forced_options "CONFIG_ESP_CONSOLE_SECONDARY_NONE=y"
+                                              "# CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG is not set"
+                                              "# CONFIG_USJ_ENABLE_USB_SERIAL_JTAG is not set"
+                                              "# CONFIG_ESP_PHY_ENABLE_USB is not set")
+        endif()
     elseif(_selected_board STREQUAL "BOARD_TYPE_FOLOTOY_AI_PASSPORT")
         # C3 has no PSRAM. Defaults do not override values in an existing sdkconfig.
         list(APPEND _board_forced_options "CONFIG_RTC_CLK_SRC_INT_RC=y")

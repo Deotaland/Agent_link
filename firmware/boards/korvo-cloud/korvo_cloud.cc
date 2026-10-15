@@ -5,6 +5,7 @@
 #include "cst816_touch.h"
 #include "gc2145_camera.h"
 #include "korvo_cloud_audio.h"
+#include "korvo_cloud_servo8.h"
 #include "korvo_cloud_ui.h"
 #include "st7789_lcd.h"
 
@@ -12,6 +13,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "img_converters.h"
 
 #include <atomic>
@@ -39,6 +41,7 @@ public:
 
         InitTouch();                // shares the I2C bus esp_camera_init() just created
         audio_ok_ = (audio_.Init(MakeAudioConfig()) == ESP_OK);
+        InitServo();
         RegisterCaptureEndpoint();  // platform -> snapshot (device-I/O actuator "camera0")
 
         if (kc_ui::Start(&lcd_, touch_ok_ ? &touch_ : nullptr,
@@ -192,6 +195,63 @@ private:
         agent_link_register_io(&desc, &KorvoCloudBoard::OnCaptureCmd, this);
     }
 
+    void InitServo() {
+        const esp_err_t err = servo_.Init();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "servo I2C init failed: %s", esp_err_to_name(err));
+            return;
+        }
+        servo_queue_ = xQueueCreate(1, sizeof(uint8_t));
+        if (!servo_queue_ ||
+            xTaskCreate(&KorvoCloudBoard::ServoTaskEntry, "servo8", 3072, this, 5, nullptr) != pdPASS) {
+            ESP_LOGE(TAG, "servo task init failed");
+            if (servo_queue_) {
+                vQueueDelete(servo_queue_);
+                servo_queue_ = nullptr;
+            }
+            return;
+        }
+        static agent_link_io_desc_t desc = {};
+        desc.id           = "servo1";
+        desc.dir          = AGENT_IO_OUT;
+        desc.kind         = "servo.angle";
+        desc.value        = AGENT_VAL_I32;
+        desc.unit         = "deg";
+        desc.range_min    = 0;
+        desc.range_max    = 180;
+        desc.desc         = "Set the servo on SS1 to an angle from 0 to 180 degrees";
+        desc.display_name = "Servo SS1";
+        if (agent_link_register_io(&desc, &KorvoCloudBoard::OnServoCmd, this) != ESP_OK) {
+            ESP_LOGE(TAG, "servo endpoint registration failed");
+        }
+    }
+
+    static void OnServoCmd(const char* /*id*/, const uint8_t* args, size_t len, void* ctx) {
+        auto* self = static_cast<KorvoCloudBoard*>(ctx);
+        if (!self || !self->servo_queue_ || !args || len != 4) return;
+        const uint32_t angle = static_cast<uint32_t>(args[0]) |
+                               (static_cast<uint32_t>(args[1]) << 8) |
+                               (static_cast<uint32_t>(args[2]) << 16) |
+                               (static_cast<uint32_t>(args[3]) << 24);
+        if (angle > 180) {
+            ESP_LOGW(TAG, "servo1 angle out of range: %lu", static_cast<unsigned long>(angle));
+            return;
+        }
+        const uint8_t value = static_cast<uint8_t>(angle);
+        xQueueOverwrite(self->servo_queue_, &value);
+    }
+
+    static void ServoTaskEntry(void* arg) {
+        auto* self = static_cast<KorvoCloudBoard*>(arg);
+        uint8_t angle = 0;
+        while (true) {
+            if (xQueueReceive(self->servo_queue_, &angle, portMAX_DELAY) != pdTRUE) continue;
+            const esp_err_t err = self->servo_.SetSs1Angle(angle);
+            if (err == ESP_OK) ESP_LOGI(TAG, "servo1 -> %u degrees", angle);
+            else ESP_LOGE(TAG, "servo1 write failed: %s", esp_err_to_name(err));
+        }
+    }
+
     // Runs on an SDK thread, so it only raises a flag; the preview loop owns the frame buffers and
     // does the capture + encode + send.
     static void OnCaptureCmd(const char* /*id*/, const uint8_t* /*args*/, size_t /*len*/, void* ctx) {
@@ -263,11 +323,13 @@ private:
     Gc2145Camera    cam_;
     Cst816Touch     touch_;
     KorvoCloudAudio audio_;
+    KorvoCloudServo8 servo_;
     bool            lcd_ok_   = false;
     bool            cam_ok_   = false;
     bool            touch_ok_ = false;
     bool            audio_ok_ = false;
     TaskHandle_t    preview_task_ = nullptr;
+    QueueHandle_t   servo_queue_ = nullptr;
     std::atomic<bool> capture_req_{false};  // set by the platform command; consumed by the preview loop
 };
 
