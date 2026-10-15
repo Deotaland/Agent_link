@@ -1,8 +1,32 @@
 # Agent Stack realtime grant on WiFi
 
-By default the WiFi SDK accepts short-lived Agent Stack grants through its authenticated MQTT
-downlink. The board stays transport-neutral. In that mode the long-lived User API Key remains on
-the application backend. Direct HTTP testing is an explicit alternative configured below.
+Korvo Cloud can manage voice conversations from its touch screen when
+`CONFIG_AGENT_LINK_PLATFORM_USER_TOKEN` is set in the private `sdkconfig`. After WiFi setup and
+six-digit device claim, open **Apps → Voice → Settings**. The UI fetches `GET /api/agents`, shows agents that
+support `realtime_voice`, and binds the selected agent with
+`POST /api/devices/{device_id}/bind-agent`. It finds the device ID by querying `/api/devices` for
+its own device SN and requires an exact SN match. The next screen lists
+`GET /api/agents/{agent_id}/actions/realtime_voice/conversations` and creates a voice session with
+`POST` to the same path. The selected agent and conversation are saved on the device. Opening Voice
+with a saved selection immediately sends
+`POST /api/agents/{agent_id}/actions/realtime_voice/realtime-grant` with that conversation's
+`conversation_id` as `session_id`. The grant's `websocket_url` and `connect_token` go straight to
+the existing WSS worker. **New session** creates and selects another conversation, then connects
+to it. **Settings** changes the agent or conversation. On the conversation list, tap **Del** and
+then **OK?** within five seconds to delete a conversation with
+`DELETE /api/agents/{agent_id}/actions/realtime_voice/conversations/{conversation_id}`.
+Deleting the selected conversation also clears the device's saved selection. Ending the call closes WSS and sends
+`DELETE /api/agents/{agent_id}/actions/realtime_voice/realtime-grant/{session_id}`. All platform
+user requests carry `X-Token` and `Authorization: Bearer`; the credential and grant are never logged.
+The UI has no text messaging or message-history page. Korvo Cloud enables the SimSun 14 CJK font
+for Chinese agent and session names.
+
+This user token is embedded in the development firmware. Keep `sdkconfig`, binaries and full-flash
+images private. A distributable product needs a device-scoped credential for these user APIs.
+
+Without that token, the WiFi SDK accepts short-lived Agent Stack grants through its authenticated
+MQTT downlink. In that mode the long-lived User API Key remains on the application backend.
+Direct HTTP testing is another explicit alternative configured below.
 
 For device-side testing, `CONFIG_AGENT_LINK_REALTIME_DIRECT=y` selects direct HTTP grant requests.
 Configure `CONFIG_AGENT_LINK_REALTIME_BASE_URL`, `CONFIG_AGENT_LINK_REALTIME_SESSION_ID`, and
@@ -19,8 +43,7 @@ wait for an MQTT grant. The HTTP client closes before WSS starts; ending the cal
 `DELETE /realtime` so the fixed session can be used for the next test. HTTP status codes are logged,
 but credentials and response bodies are not printed.
 
-On Korvo Cloud, swipe to Apps and tap **Voice**. The device publishes this event on its MQTT `up`
-topic:
+In the legacy MQTT flow, requesting realtime publishes this event on its MQTT `up` topic:
 
 ```json
 {
@@ -67,13 +90,17 @@ the token.
 
 ## Voice conversation
 
-The implementation follows `test-mic.html`. `session.connect` includes
-`"endpointing":{"mode":"client"}`. The link becomes `READY` only after `session.ready`;
+The implementation follows `test-mic.html`. Platform conversations send
+`"endpointing":{"mode":"server"}`; legacy MQTT and direct sessions continue to use `client`.
+The link becomes `READY` only after `session.ready`;
 MQTT alone leaves it `CONNECTED`.
 
-On Korvo Cloud, open **Apps → Voice**, wait for the connection, then hold **Hold to talk** and
-release it to send the turn. **End call** or leaving the Voice screen sends `session.end`, closes
-WSS, stops capture, and clears queued speech. **Connect** requests a fresh grant after a failure.
+On Korvo Cloud, choose an agent and conversation in Settings once. Tapping Voice connects the
+selected conversation and opens the microphone continuously as soon as `session.ready` arrives.
+Server endpointing decides turn boundaries. Microphone upload continues while replies play; the
+firmware sends only `input_audio.append`, without `input_audio.activity` messages. **End call** or
+leaving the Voice screen sends `session.end`, closes WSS, stops capture, and clears queued speech.
+**Retry** requests a fresh grant after a failure.
 The grant request times out after 30 seconds. Late grants after hangup are rejected.
 
 The SDK maps `AGENT_STREAM_VOICE` (and a single `AGENT_STREAM_AUDIO`) to these ordered text frames:
@@ -85,8 +112,12 @@ The SDK maps `AGENT_STREAM_VOICE` (and a single `AGENT_STREAM_AUDIO`) to these o
 ```
 
 Microphone writes only enqueue data; TLS runs on the realtime worker. The bounded queue holds about
-two seconds of audio and reserves space for turn control. An upload failure aborts the call rather
-than sending a partial utterance. Only one microphone stream can be open at a time. Other media
+two seconds of audio and reserves space for turn control. In a platform conversation, a full queue
+drops the newest microphone frame so capture stays live; client PTT still aborts a truncated turn.
+The platform worker combines up to four queued 20 ms PCM chunks into one WebSocket message to
+reduce TLS write overhead, without waiting for more chunks. Five-second uplink logs report captured,
+sent, and dropped PCM, WebSocket message count, queue depth, send timing, and microphone stack margin.
+Only one microphone stream can be open at a time. Other media
 stream kinds remain unsupported on this WiFi backend.
 
 Replies can be binary messages or `response.audio.delta` with Base64 audio. PCM16LE replies are
@@ -95,16 +126,14 @@ and confirmed from `session.ready` when it includes audio settings. Compressed p
 their boundaries across TCP reads and WebSocket continuation frames. Espressif's software Opus
 decoder produces PCM16 mono at 16 kHz directly. PCM replies use continuous 24-to-16 kHz resampling.
 Both paths pace output to the advertised playback buffer.
-`response.audio.done` ends playback input; `transcript.partial` and `transcript.final` reach
-`ShowText`. The bundled Korvo Cloud font has Latin glyphs only. English text and common typographic
-punctuation are displayed using ASCII glyphs; unsupported text uses an English fallback. No Chinese
-font is bundled. Starting a new turn, interruption,
+`response.audio.done` ends playback input. Korvo Cloud's voice UI does not display transcripts.
+Starting a client PTT turn, interruption,
 hangup, and connection loss clear pending playback through the optional `on_audio_reset` callback.
-The current UI uses client push-to-talk; server VAD, camera streaming and acoustic echo cancellation
-are not included in this integration.
+Server endpointing permits full-duplex playback and capture; acoustic echo cancellation is not
+included in this integration.
 
 Ping/pong and a 45-second receive timeout detect a dead connection. A consumed connect token is
-never reused: reconnect through **Connect** so the backend issues a fresh one. The backend grant
+never reused: reconnect through **Retry** so the backend issues a fresh one. The backend grant
 handler described above is required; firmware cannot obtain a grant from the device credential.
 
 Korvo Cloud waits for end-of-audio on replies shorter than six seconds. Longer replies start

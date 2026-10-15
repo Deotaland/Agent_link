@@ -1,12 +1,16 @@
 #include "korvo_cloud_ui.h"
-#include "voice_text.h"
+#include "agent_link_platform.h"
 
 #include "config.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "lvgl.h"
 
@@ -79,6 +83,8 @@ lv_obj_t* s_scr_home  = nullptr;
 lv_obj_t* s_scr_apps  = nullptr;
 lv_obj_t* s_scr_shade = nullptr;
 lv_obj_t* s_scr_voice = nullptr;
+lv_obj_t* s_scr_agents = nullptr;
+lv_obj_t* s_scr_conversations = nullptr;
 
 // Which page to come back to when Camera or Shade is dismissed. Only ever a real page.
 std::atomic<Mode> s_last_page{Mode::kHome};
@@ -89,14 +95,104 @@ lv_obj_t* s_big      = nullptr;   // the activation code, or a status word
 lv_obj_t* s_hint     = nullptr;   // what the user should do about it
 lv_obj_t* s_voice_hint = nullptr;
 int64_t   s_last_voice_request_us = 0;
+int64_t   s_last_voice_attempt_us = 0;
+int64_t   s_last_mic_retry_us = 0;
+bool      s_voice_autoconnect_pending = false;
+unsigned  s_voice_auto_attempts = 0;
 lv_obj_t* s_call_status = nullptr;
 lv_obj_t* s_call_text = nullptr;
-lv_obj_t* s_ptt = nullptr;
-lv_obj_t* s_ptt_label = nullptr;
-lv_obj_t* s_connect = nullptr;
-bool s_ptt_held = false;
-char s_voice_text[512] = {};
-std::atomic<uint32_t> s_text_rev{0};
+lv_obj_t* s_retry = nullptr;
+lv_obj_t* s_agents_status = nullptr;
+lv_obj_t* s_conversations_status = nullptr;
+lv_obj_t* s_agent_rows[3] = {};
+lv_obj_t* s_conversation_rows[3] = {};
+lv_obj_t* s_delete_rows[3] = {};
+int s_selected_agent = 0;
+char s_selected_agent_name[80] = {};
+char s_selected_session[80] = {};
+char s_selected_conversation_name[96] = {};
+EXT_RAM_BSS_ATTR agent_link_platform_agent_t s_agents[20];
+EXT_RAM_BSS_ATTR agent_link_platform_conversation_t s_conversations[3];
+size_t s_agent_count = 0, s_conversation_count = 0, s_conversation_total = 0;
+int s_agent_total = 0, s_agent_page = 1;
+size_t s_agent_view = 0, s_conversation_offset = 0;
+
+enum class PlatformOp { kAgents, kBind, kConversations, kCreate, kDelete };
+struct PlatformCommand {
+    PlatformOp op;
+    int agent_id;
+    int page;
+    size_t offset;
+    char session_id[80];
+};
+struct PlatformResult {
+    PlatformCommand command;
+    esp_err_t error;
+    size_t count;
+    size_t total;
+    agent_link_platform_agent_t agents[20];
+    agent_link_platform_conversation_t conversations[3];
+    char created_id[80];
+};
+QueueHandle_t s_platform_commands = nullptr;
+SemaphoreHandle_t s_platform_mutex = nullptr;
+EXT_RAM_BSS_ATTR PlatformResult s_platform_result;
+std::atomic<uint32_t> s_platform_rev{0};
+std::atomic<bool> s_platform_busy{false};
+bool s_selection_loaded = false;
+int s_delete_confirm_row = -1;
+int64_t s_delete_confirm_until_us = 0;
+
+void LoadSelection() {
+    if (s_selection_loaded) return;
+    const esp_err_t init = nvs_flash_init();
+    if (init != ESP_OK) return;
+    nvs_handle_t handle;
+    const esp_err_t opened = nvs_open("kc_voice", NVS_READONLY, &handle);
+    if (opened == ESP_ERR_NVS_NOT_FOUND) { s_selection_loaded = true; return; }
+    if (opened != ESP_OK) return;
+    int32_t agent = 0;
+    size_t session_size = sizeof s_selected_session;
+    if (nvs_get_i32(handle, "agent", &agent) == ESP_OK && agent > 0) {
+        s_selected_agent = agent;
+        size_t agent_name_size = sizeof s_selected_agent_name;
+        size_t conversation_name_size = sizeof s_selected_conversation_name;
+        (void)nvs_get_str(handle, "agent_name", s_selected_agent_name, &agent_name_size);
+        if (nvs_get_str(handle, "session", s_selected_session, &session_size) == ESP_OK)
+            (void)nvs_get_str(handle, "session_name", s_selected_conversation_name,
+                              &conversation_name_size);
+        else s_selected_session[0] = '\0';
+    } else {
+        s_selected_session[0] = '\0';
+    }
+    nvs_close(handle);
+    s_selection_loaded = true;
+}
+
+void SaveSelection() {
+    nvs_handle_t handle;
+    if (nvs_open("kc_voice", NVS_READWRITE, &handle) != ESP_OK) return;
+    esp_err_t result = nvs_set_i32(handle, "agent", s_selected_agent);
+    if (result == ESP_OK) result = nvs_set_str(handle, "session", s_selected_session);
+    if (result == ESP_OK) result = nvs_set_str(handle, "agent_name", s_selected_agent_name);
+    if (result == ESP_OK) result = nvs_set_str(handle, "session_name", s_selected_conversation_name);
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    if (result != ESP_OK) ESP_LOGW(TAG, "voice selection could not be saved: %s", esp_err_to_name(result));
+}
+
+void ShowSelection() {
+    if (!s_call_text) return;
+    if (s_selected_agent <= 0 || !s_selected_session[0]) {
+        lv_label_set_text(s_call_text, "No session selected - open Settings");
+        return;
+    }
+    char caption[192];
+    snprintf(caption, sizeof caption, "%s / %s",
+             s_selected_agent_name[0] ? s_selected_agent_name : "Agent",
+             s_selected_conversation_name[0] ? s_selected_conversation_name : s_selected_session);
+    lv_label_set_text(s_call_text, caption);
+}
 
 lv_obj_t* s_sh_state = nullptr;   // shade rows
 lv_obj_t* s_sh_msg   = nullptr;
@@ -281,35 +377,375 @@ void OnCameraIcon(lv_event_t* /*e*/) {
     s_want.store(Mode::kCamera, std::memory_order_release);
 }
 
-void ConnectVoice(lv_event_t* /*e*/) {
-    if (agent_link_state() == AGENT_STATE_READY || s_last_voice_request_us) return;
-    const esp_err_t r = agent_link_request_realtime();
-    if (r == ESP_OK) s_last_voice_request_us = esp_timer_get_time();
-    else if (s_call_status) lv_label_set_text(s_call_status, "Connect to the platform first");
+bool QueuePlatform(PlatformOp op, int agent_id = 0, int page = 1, size_t offset = 0,
+                   const char* session_id = nullptr) {
+    if (!s_platform_commands || s_platform_busy.exchange(true)) return false;
+    PlatformCommand command{op, agent_id, page, offset, {}};
+    if (session_id) snprintf(command.session_id, sizeof command.session_id, "%s", session_id);
+    if (xQueueSend(s_platform_commands, &command, 0) == pdTRUE) return true;
+    s_platform_busy.store(false);
+    return false;
+}
+
+void PlatformWorker(void*) {
+    PlatformCommand command;
+    while (true) {
+        if (xQueueReceive(s_platform_commands, &command, portMAX_DELAY) != pdTRUE) continue;
+        PlatformResult result = {};
+        result.command = command;
+        result.error = ESP_ERR_INVALID_ARG;
+        switch (command.op) {
+        case PlatformOp::kAgents: {
+            int total = 0;
+            result.error = agent_link_platform_agents(command.page, result.agents,
+                    sizeof result.agents / sizeof result.agents[0], &result.count, &total);
+            result.total = total > 0 ? static_cast<size_t>(total) : 0;
+            break;
+        }
+        case PlatformOp::kBind:
+            result.error = agent_link_platform_bind_agent(command.agent_id);
+            break;
+        case PlatformOp::kConversations:
+            result.error = agent_link_platform_conversations(command.agent_id, command.offset,
+                    result.conversations, sizeof result.conversations / sizeof result.conversations[0],
+                    &result.count, &result.total);
+            break;
+        case PlatformOp::kCreate:
+            result.error = agent_link_platform_create_conversation(command.agent_id,
+                    result.created_id, sizeof result.created_id);
+            break;
+        case PlatformOp::kDelete:
+            result.error = agent_link_platform_delete_conversation(command.agent_id,
+                                                                   command.session_id);
+            break;
+        }
+        xSemaphoreTake(s_platform_mutex, portMAX_DELAY);
+        s_platform_result = result;
+        xSemaphoreGive(s_platform_mutex);
+        s_platform_busy.store(false);
+        s_platform_rev.fetch_add(1, std::memory_order_release);
+    }
+}
+
+lv_obj_t* MenuButton(lv_obj_t* screen, int x, int y, int w, int h,
+                     const char* caption, lv_event_cb_t cb, void* user_data = nullptr) {
+    lv_obj_t* button = lv_button_create(screen);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_set_size(button, w, h);
+    lv_obj_set_style_bg_color(button, lv_color_hex(kColCard), 0);
+#if LV_FONT_SIMSUN_14_CJK
+    lv_obj_t* label = Label(button, caption, kColText, &lv_font_simsun_14_cjk);
+#else
+    lv_obj_t* label = Label(button, caption, kColText, &lv_font_montserrat_14);
+#endif
+    lv_obj_set_width(label, w - 12);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_center(label);
+    if (cb) lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, user_data);
+    return label;
+}
+
+void ShowAgentRows() {
+    for (size_t i = 0; i < 3; ++i) {
+        char caption[96] = {};
+        const size_t index = s_agent_view + i;
+        if (index < s_agent_count) {
+            const auto& agent = s_agents[index];
+            snprintf(caption, sizeof caption, "#%d  %s%s", agent.id,
+                     agent.name[0] ? agent.name : "Agent",
+                     agent.voice_supported ? "" : " (no voice)");
+        } else snprintf(caption, sizeof caption, "-");
+        lv_label_set_text(s_agent_rows[i], caption);
+        lv_obj_t* button = lv_obj_get_parent(s_agent_rows[i]);
+        if (index < s_agent_count && s_agents[index].voice_supported) lv_obj_remove_state(button, LV_STATE_DISABLED);
+        else lv_obj_add_state(button, LV_STATE_DISABLED);
+    }
+    char status[64];
+    const size_t first = static_cast<size_t>(s_agent_page - 1) * 20 + s_agent_view + 1;
+    snprintf(status, sizeof status, "%u-%u / %d", s_agent_count ? (unsigned)first : 0,
+             s_agent_count ? (unsigned)(first + (s_agent_count - s_agent_view < 3 ? s_agent_count - s_agent_view : 3) - 1) : 0,
+             s_agent_total);
+    lv_label_set_text(s_agents_status, status);
+}
+
+void ShowConversationRows() {
+    for (size_t i = 0; i < 3; ++i) {
+        char caption[110] = {};
+        if (i < s_conversation_count) {
+            const auto& conversation = s_conversations[i];
+            const char* name = conversation.name[0] ? conversation.name : conversation.id;
+            snprintf(caption, sizeof caption, "%u. %s", (unsigned)(s_conversation_offset + i + 1), name);
+        } else snprintf(caption, sizeof caption, "-");
+        lv_label_set_text(s_conversation_rows[i], caption);
+        lv_obj_t* button = lv_obj_get_parent(s_conversation_rows[i]);
+        if (i < s_conversation_count) lv_obj_remove_state(button, LV_STATE_DISABLED);
+        else lv_obj_add_state(button, LV_STATE_DISABLED);
+        if (s_delete_rows[i]) {
+            lv_label_set_text(s_delete_rows[i], s_delete_confirm_row == static_cast<int>(i)
+                    ? "OK?" : "Del");
+            lv_obj_t* remove = lv_obj_get_parent(s_delete_rows[i]);
+            if (i < s_conversation_count) lv_obj_remove_state(remove, LV_STATE_DISABLED);
+            else lv_obj_add_state(remove, LV_STATE_DISABLED);
+        }
+    }
+    char status[72];
+    snprintf(status, sizeof status, "#%d  %u-%u / %u", s_selected_agent,
+             s_conversation_count ? (unsigned)(s_conversation_offset + 1) : 0,
+             (unsigned)(s_conversation_offset + s_conversation_count),
+             (unsigned)s_conversation_total);
+    lv_label_set_text(s_conversations_status, status);
+}
+
+void ResetDeleteConfirmation() {
+    s_delete_confirm_row = -1;
+    s_delete_confirm_until_us = 0;
+    for (lv_obj_t* label : s_delete_rows) if (label) lv_label_set_text(label, "Del");
+}
+
+void OnAgentRow(lv_event_t* e) {
+    const size_t row = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+    const size_t index = s_agent_view + row;
+    if (index >= s_agent_count || !s_agents[index].voice_supported || s_platform_busy) return;
+    s_selected_agent = s_agents[index].id;
+    snprintf(s_selected_agent_name, sizeof s_selected_agent_name, "%s", s_agents[index].name);
+    s_selected_session[0] = '\0';
+    s_selected_conversation_name[0] = '\0';
+    ShowSelection();
+    lv_label_set_text(s_agents_status, "Binding device...");
+    QueuePlatform(PlatformOp::kBind, s_selected_agent);
+}
+
+void OnAgentPrev(lv_event_t*) {
+    if (s_platform_busy) return;
+    if (s_agent_view >= 3) { s_agent_view -= 3; ShowAgentRows(); }
+    else if (s_agent_page > 1) {
+        s_agent_page--;
+        s_agent_view = 0;
+        lv_label_set_text(s_agents_status, "Loading...");
+        QueuePlatform(PlatformOp::kAgents, 0, s_agent_page);
+    }
+}
+
+void OnAgentNext(lv_event_t*) {
+    if (s_platform_busy) return;
+    if (s_agent_view + 3 < s_agent_count) { s_agent_view += 3; ShowAgentRows(); }
+    else if (s_agent_page * 20 < s_agent_total) {
+        s_agent_page++;
+        s_agent_view = 0;
+        lv_label_set_text(s_agents_status, "Loading...");
+        QueuePlatform(PlatformOp::kAgents, 0, s_agent_page);
+    }
+}
+
+void OnAgentRefresh(lv_event_t*) {
+    if (!s_platform_busy) {
+        lv_label_set_text(s_agents_status, "Loading...");
+        QueuePlatform(PlatformOp::kAgents, 0, s_agent_page);
+    }
+}
+
+void OnConversationRow(lv_event_t* e) {
+    const size_t row = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+    if (row >= s_conversation_count || s_platform_busy) return;
+    ResetDeleteConfirmation();
+    snprintf(s_selected_session, sizeof s_selected_session, "%s", s_conversations[row].id);
+    snprintf(s_selected_conversation_name, sizeof s_selected_conversation_name, "%s",
+             s_conversations[row].name);
+    SaveSelection();
+    ShowSelection();
+    s_want.store(Mode::kVoice);
+}
+
+void OnConversationDelete(lv_event_t* e) {
+    const size_t row = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+    if (row >= s_conversation_count || s_platform_busy) return;
+    const int64_t now = esp_timer_get_time();
+    if (s_delete_confirm_row != static_cast<int>(row) || now > s_delete_confirm_until_us) {
+        ResetDeleteConfirmation();
+        s_delete_confirm_row = static_cast<int>(row);
+        s_delete_confirm_until_us = now + 5000000;
+        lv_label_set_text(s_delete_rows[row], "OK?");
+        lv_label_set_text(s_conversations_status, "Tap OK? again to delete this session");
+        return;
+    }
+    char id[sizeof s_conversations[row].id];
+    snprintf(id, sizeof id, "%s", s_conversations[row].id);
+    ResetDeleteConfirmation();
+    lv_label_set_text(s_conversations_status, "Deleting session...");
+    QueuePlatform(PlatformOp::kDelete, s_selected_agent, 1, 0, id);
+}
+
+void OnConversationPrev(lv_event_t*) {
+    if (s_platform_busy || s_conversation_offset == 0) return;
+    ResetDeleteConfirmation();
+    s_conversation_offset = s_conversation_offset >= 3 ? s_conversation_offset - 3 : 0;
+    lv_label_set_text(s_conversations_status, "Loading...");
+    QueuePlatform(PlatformOp::kConversations, s_selected_agent, 1, s_conversation_offset);
+}
+
+void OnConversationNext(lv_event_t*) {
+    if (s_platform_busy || s_conversation_offset + 3 >= s_conversation_total) return;
+    ResetDeleteConfirmation();
+    s_conversation_offset += 3;
+    lv_label_set_text(s_conversations_status, "Loading...");
+    QueuePlatform(PlatformOp::kConversations, s_selected_agent, 1, s_conversation_offset);
+}
+
+void OnConversationNew(lv_event_t*) {
+    if (s_platform_busy || s_selected_agent <= 0) return;
+    ResetDeleteConfirmation();
+    lv_label_set_text(s_conversations_status, "Creating voice session...");
+    QueuePlatform(PlatformOp::kCreate, s_selected_agent);
+}
+
+void OnAgentsBack(lv_event_t*) { if (!s_platform_busy) s_want.store(Mode::kVoice); }
+void OnConversationsBack(lv_event_t*) {
+    if (!s_platform_busy) { ResetDeleteConfirmation(); s_want.store(Mode::kAgents); }
+}
+
+void ApplyPlatformResult() {
+    xSemaphoreTake(s_platform_mutex, portMAX_DELAY);
+    const PlatformResult& result = s_platform_result;
+    const PlatformOp op = result.command.op;
+    const esp_err_t error = result.error;
+    if (error == ESP_OK) {
+        if (op == PlatformOp::kAgents) {
+            s_agent_count = result.count;
+            s_agent_total = static_cast<int>(result.total);
+            memcpy(s_agents, result.agents, sizeof s_agents);
+            if (s_agent_view >= s_agent_count) s_agent_view = 0;
+            ShowAgentRows();
+        } else if (op == PlatformOp::kBind) {
+            SaveSelection();
+            s_conversation_offset = 0;
+            if (s_want.load() == Mode::kAgents) s_want.store(Mode::kConversations);
+            lv_label_set_text(s_conversations_status, "Loading sessions...");
+            QueuePlatform(PlatformOp::kConversations, s_selected_agent);
+        } else if (op == PlatformOp::kConversations) {
+            s_conversation_count = result.count;
+            s_conversation_total = result.total;
+            memcpy(s_conversations, result.conversations, sizeof s_conversations);
+            ResetDeleteConfirmation();
+            ShowConversationRows();
+        } else if (op == PlatformOp::kCreate) {
+            s_conversation_offset = 0;
+            if (result.created_id[0]) {
+                ESP_LOGI(TAG, "voice session created and selected");
+                snprintf(s_selected_session, sizeof s_selected_session, "%s", result.created_id);
+                s_selected_conversation_name[0] = '\0';
+                SaveSelection();
+                ShowSelection();
+                s_voice_autoconnect_pending = true;
+                s_voice_auto_attempts = 0;
+                s_want.store(Mode::kVoice);
+            } else {
+                ESP_LOGW(TAG, "voice session create returned no session ID");
+                lv_label_set_text(s_conversations_status, "Loading new session...");
+                QueuePlatform(PlatformOp::kConversations, s_selected_agent);
+            }
+        } else if (op == PlatformOp::kDelete) {
+            ESP_LOGI(TAG, "voice session deleted");
+            if (strcmp(s_selected_session, result.command.session_id) == 0) {
+                s_selected_session[0] = '\0';
+                s_selected_conversation_name[0] = '\0';
+                SaveSelection();
+                ShowSelection();
+            }
+            s_conversation_offset = 0;
+            lv_label_set_text(s_conversations_status, "Session deleted - refreshing...");
+            QueuePlatform(PlatformOp::kConversations, s_selected_agent);
+        }
+    } else {
+        char message[96];
+        if (op == PlatformOp::kBind && error == ESP_ERR_NOT_FOUND) {
+            snprintf(message, sizeof message, "Claim this device with its code first");
+        } else {
+            snprintf(message, sizeof message, "%s: %s",
+                     op == PlatformOp::kBind ? "Bind failed" :
+                     op == PlatformOp::kCreate ? "Create failed" :
+                     op == PlatformOp::kDelete ? "Delete failed" : "Load failed",
+                     esp_err_to_name(error));
+        }
+        lv_label_set_text(op == PlatformOp::kAgents || op == PlatformOp::kBind
+                ? s_agents_status : op == PlatformOp::kCreate && s_mode.load() == Mode::kVoice
+                ? s_call_status : s_conversations_status, message);
+        if (op == PlatformOp::kCreate && s_mode.load() == Mode::kVoice)
+            lv_obj_remove_state(s_retry, LV_STATE_DISABLED);
+    }
+    xSemaphoreGive(s_platform_mutex);
+}
+
+void TryConnectVoice() {
+    if (!s_voice_autoconnect_pending || s_mode.load() != Mode::kVoice || s_platform_busy) return;
+    if (!s_selected_agent || !s_selected_session[0]) {
+        s_voice_autoconnect_pending = false;
+        lv_label_set_text(s_call_status, "Select a session in Settings");
+        return;
+    }
+    if (!agent_link_platform_available()) {
+        s_voice_autoconnect_pending = false;
+        lv_label_set_text(s_call_status, "Platform access not configured");
+        return;
+    }
+    if (agent_link_state() == AGENT_STATE_READY) {
+        s_voice_autoconnect_pending = false;
+        if (s_audio) s_audio->StartContinuous();
+        return;
+    }
+    if (agent_link_state() != AGENT_STATE_CONNECTED || s_last_voice_request_us) return;
+    const int64_t now = esp_timer_get_time();
+    if (now - s_last_voice_attempt_us < 1000000) return;
+    s_last_voice_attempt_us = now;
+    const esp_err_t r = agent_link_request_realtime_session(s_selected_agent, s_selected_session);
+    if (r == ESP_OK) {
+        s_last_voice_request_us = now;
+        s_voice_autoconnect_pending = false;
+        lv_label_set_text(s_call_status, "Connecting voice...");
+    } else if (r != ESP_ERR_INVALID_STATE || ++s_voice_auto_attempts >= 10) {
+        s_voice_autoconnect_pending = false;
+        lv_label_set_text(s_call_status, "Voice unavailable - tap Retry");
+    }
     ESP_LOGI(TAG, "voice request: %s", esp_err_to_name(r));
 }
 
-void StopTalking() {
-    s_ptt_held = false;
-    if (s_audio) s_audio->StopCommand();
-    if (s_ptt_label) lv_label_set_text(s_ptt_label, "Hold to talk");
+void ConnectVoice(lv_event_t* /*e*/) {
+    if (agent_link_state() == AGENT_STATE_READY || s_last_voice_request_us) return;
+    s_voice_auto_attempts = 0;
+    s_voice_autoconnect_pending = true;
+    TryConnectVoice();
 }
 
 void EndVoice(lv_event_t* /*e*/) {
-    StopTalking();
     s_want.store(Mode::kApps);
 }
 
-void OnPtt(lv_event_t* e) {
-    const lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_PRESSED) {
-        if (!s_audio || agent_link_state() != AGENT_STATE_READY) return;
-        s_ptt_held = true;
-        s_audio->StartCommand();
-        lv_label_set_text(s_ptt_label, "Listening... release to send");
-    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        if (s_ptt_held) StopTalking();
+void OnVoiceSettings(lv_event_t*) {
+    if (s_platform_busy) return;
+    ResetDeleteConfirmation();
+    if (s_selected_agent > 0) {
+        s_conversation_offset = 0;
+        s_want.store(Mode::kConversations);
+        lv_label_set_text(s_conversations_status, "Loading sessions...");
+        QueuePlatform(PlatformOp::kConversations, s_selected_agent);
+    } else {
+        s_agent_page = 1;
+        s_agent_view = 0;
+        s_want.store(Mode::kAgents);
+        lv_label_set_text(s_agents_status, "Loading agents...");
+        QueuePlatform(PlatformOp::kAgents, 0, s_agent_page);
     }
+}
+
+void OnVoiceNew(lv_event_t*) {
+    if (s_platform_busy) return;
+    if (s_selected_agent <= 0) { OnVoiceSettings(nullptr); return; }
+    s_voice_autoconnect_pending = false;
+    if (s_audio) s_audio->StopContinuous();
+    (void)agent_link_end_realtime();
+    s_last_voice_request_us = 0;
+    lv_label_set_text(s_call_status, "Creating voice session...");
+    lv_obj_add_state(s_retry, LV_STATE_DISABLED);
+    QueuePlatform(PlatformOp::kCreate, s_selected_agent);
 }
 
 void OnVoiceIcon(lv_event_t* /*e*/) {
@@ -318,8 +754,9 @@ void OnVoiceIcon(lv_event_t* /*e*/) {
         lv_label_set_text(s_voice_hint, "no audio");
         return;
     }
+    LoadSelection();
+    ShowSelection();
     s_want.store(Mode::kVoice);
-    ConnectVoice(nullptr);
 }
 
 lv_obj_t* VoiceButton(int32_t x, int32_t y, int32_t width, const char* caption) {
@@ -340,25 +777,76 @@ void BuildVoice() {
     lv_obj_remove_flag(s_scr_voice, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* title = Label(s_scr_voice, "Voice", kColVoice, &lv_font_montserrat_14);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-    s_call_status = Label(s_scr_voice, "Connecting voice", kColMuted, &lv_font_montserrat_14);
+    s_call_status = Label(s_scr_voice, "Connecting...", kColMuted, &lv_font_montserrat_14);
     lv_obj_set_size(s_call_status, kUiW - 2 * kPad, 36);
     lv_obj_align(s_call_status, LV_ALIGN_TOP_MID, 0, 38);
     lv_obj_set_style_text_align(s_call_status, LV_TEXT_ALIGN_CENTER, 0);
     s_call_text = Label(s_scr_voice, "", kColText, &lv_font_montserrat_14);
-    lv_obj_set_size(s_call_text, kUiW - 2 * kPad, 56);
-    lv_obj_align(s_call_text, LV_ALIGN_TOP_MID, 0, 76);
+#if LV_FONT_SIMSUN_14_CJK
+    lv_obj_set_style_text_font(s_call_text, &lv_font_simsun_14_cjk, 0);
+#endif
+    lv_obj_set_size(s_call_text, kUiW - 2 * kPad, 32);
+    lv_obj_align(s_call_text, LV_ALIGN_TOP_MID, 0, 78);
     lv_label_set_long_mode(s_call_text, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(s_call_text, LV_TEXT_ALIGN_LEFT, 0);
-    s_ptt = VoiceButton(kPad, 136, kUiW - 2 * kPad, "Hold to talk");
-    lv_obj_set_height(s_ptt, 44);
-    s_ptt_label = lv_obj_get_child(s_ptt, 0);
-    lv_obj_set_style_bg_color(s_ptt, lv_color_hex(kColVoice), 0);
-    lv_obj_add_event_cb(s_ptt, OnPtt, LV_EVENT_ALL, nullptr);
-    s_connect = VoiceButton(kPad, 188, 112, "Connect");
-    lv_obj_add_event_cb(s_connect, ConnectVoice, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* end = VoiceButton(kUiW - kPad - 112, 188, 112, "End call");
+    lv_obj_t* create = VoiceButton(kPad, 116, 112, "New session");
+    lv_obj_set_style_bg_color(create, lv_color_hex(kColVoice), 0);
+    lv_obj_add_event_cb(create, OnVoiceNew, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* settings = VoiceButton(kUiW - kPad - 112, 116, 112, "Settings");
+    lv_obj_add_event_cb(settings, OnVoiceSettings, LV_EVENT_CLICKED, nullptr);
+    s_retry = VoiceButton(kPad, 164, 112, "Retry");
+    lv_obj_add_event_cb(s_retry, ConnectVoice, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* end = VoiceButton(kUiW - kPad - 112, 164, 112, "End call");
     lv_obj_add_event_cb(end, EndVoice, LV_EVENT_CLICKED, nullptr);
     BuildPill(s_scr_voice);
+}
+
+void BuildAgents() {
+    s_scr_agents = lv_obj_create(nullptr);
+    lv_obj_remove_style_all(s_scr_agents);
+    lv_obj_set_style_bg_color(s_scr_agents, lv_color_hex(kColBg), 0);
+    lv_obj_set_style_bg_opa(s_scr_agents, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_scr_agents, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* title = Label(s_scr_agents, "Choose agent", kColVoice, &lv_font_montserrat_20);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 7);
+    s_agents_status = Label(s_scr_agents, "Open the platform first", kColMuted, &lv_font_montserrat_14);
+    lv_obj_align(s_agents_status, LV_ALIGN_TOP_MID, 0, 35);
+    for (uintptr_t i = 0; i < 3; ++i) {
+        s_agent_rows[i] = MenuButton(s_scr_agents, kPad, 60 + static_cast<int>(i) * 35,
+                kUiW - 2 * kPad, 31, "-", OnAgentRow, reinterpret_cast<void*>(i));
+        lv_obj_add_state(lv_obj_get_parent(s_agent_rows[i]), LV_STATE_DISABLED);
+    }
+    MenuButton(s_scr_agents, kPad, 170, 54, 28, "Back", OnAgentsBack);
+    MenuButton(s_scr_agents, kPad + 58, 170, 54, 28, "Prev", OnAgentPrev);
+    MenuButton(s_scr_agents, kPad + 116, 170, 54, 28, "Next", OnAgentNext);
+    MenuButton(s_scr_agents, kPad + 174, 170, 54, 28, "Reload", OnAgentRefresh);
+    BuildPill(s_scr_agents);
+}
+
+void BuildConversations() {
+    s_scr_conversations = lv_obj_create(nullptr);
+    lv_obj_remove_style_all(s_scr_conversations);
+    lv_obj_set_style_bg_color(s_scr_conversations, lv_color_hex(kColBg), 0);
+    lv_obj_set_style_bg_opa(s_scr_conversations, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_scr_conversations, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* title = Label(s_scr_conversations, "Voice sessions", kColVoice, &lv_font_montserrat_20);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 7);
+    s_conversations_status = Label(s_scr_conversations, "Choose an agent", kColMuted, &lv_font_montserrat_14);
+    lv_obj_align(s_conversations_status, LV_ALIGN_TOP_MID, 0, 35);
+    for (uintptr_t i = 0; i < 3; ++i) {
+        s_conversation_rows[i] = MenuButton(s_scr_conversations, kPad, 60 + static_cast<int>(i) * 35,
+                kUiW - 2 * kPad - 54, 31, "-", OnConversationRow, reinterpret_cast<void*>(i));
+        s_delete_rows[i] = MenuButton(s_scr_conversations, kUiW - kPad - 50,
+                60 + static_cast<int>(i) * 35, 50, 31, "Del", OnConversationDelete,
+                reinterpret_cast<void*>(i));
+        lv_obj_add_state(lv_obj_get_parent(s_conversation_rows[i]), LV_STATE_DISABLED);
+        lv_obj_add_state(lv_obj_get_parent(s_delete_rows[i]), LV_STATE_DISABLED);
+    }
+    MenuButton(s_scr_conversations, kPad, 170, 54, 28, "Agents", OnConversationsBack);
+    MenuButton(s_scr_conversations, kPad + 58, 170, 54, 28, "Prev", OnConversationPrev);
+    MenuButton(s_scr_conversations, kPad + 116, 170, 54, 28, "Next", OnConversationNext);
+    MenuButton(s_scr_conversations, kPad + 174, 170, 54, 28, "New", OnConversationNew);
+    BuildPill(s_scr_conversations);
 }
 
 // Apps
@@ -517,20 +1005,27 @@ void RefreshStatus() {
     st = s_status;
     taskEXIT_CRITICAL(&s_status_lock);
 
-    if (s_ptt && s_connect) {
+    if (s_retry) {
         const bool ready = st.phase == AGENT_LINK_PHASE_READY;
         if (ready) {
             s_last_voice_request_us = 0;
-            lv_obj_remove_state(s_ptt, LV_STATE_DISABLED);
-            lv_obj_add_state(s_connect, LV_STATE_DISABLED);
+            if (s_mode.load() == Mode::kVoice && s_audio) s_audio->StartContinuous();
+            lv_obj_add_state(s_retry, LV_STATE_DISABLED);
         } else {
-            StopTalking();
-            if (s_audio) s_audio->StopAsr();
-            lv_obj_add_state(s_ptt, LV_STATE_DISABLED);
-            lv_obj_remove_state(s_connect, LV_STATE_DISABLED);
+            if (strstr(st.hint, "Tap Connect to retry")) s_last_voice_request_us = 0;
+            if (s_audio) { s_audio->StopContinuous(); s_audio->StopAsr(); }
+            if (s_last_voice_request_us || s_voice_autoconnect_pending)
+                lv_obj_add_state(s_retry, LV_STATE_DISABLED);
+            else
+                lv_obj_remove_state(s_retry, LV_STATE_DISABLED);
         }
-        lv_label_set_text(s_call_status, st.hint[0] ? st.hint : st.title);
-        lv_label_set_text(s_voice_hint, ready ? "ready" : "open");
+        if (s_selected_agent <= 0 || !s_selected_session[0])
+            lv_label_set_text(s_call_status, "Select a session in Settings");
+        else if (s_mode.load() == Mode::kVoice && s_voice_autoconnect_pending)
+            lv_label_set_text(s_call_status, "Waiting for platform...");
+        else
+            lv_label_set_text(s_call_status, st.hint[0] ? st.hint : st.title);
+        lv_label_set_text(s_voice_hint, ready ? "live" : "tap");
     }
 
     if (s_title && s_big && s_hint) {
@@ -564,7 +1059,8 @@ void ApplyMode(Mode want) {
     const Mode from = s_mode.load(std::memory_order_acquire);
     if (want == from) return;
     if (from == Mode::kVoice) {
-        StopTalking();
+        s_voice_autoconnect_pending = false;
+        if (s_audio) s_audio->StopContinuous();
         if (s_audio) { s_audio->StopAsr(); s_audio->StopPlayback(); }
         s_last_voice_request_us = 0;
         (void)agent_link_end_realtime();
@@ -584,6 +1080,8 @@ void ApplyMode(Mode want) {
     lv_obj_t* scr = want == Mode::kShade ? s_scr_shade
                   : want == Mode::kApps  ? s_scr_apps
                   : want == Mode::kVoice ? s_scr_voice
+                  : want == Mode::kAgents ? s_scr_agents
+                  : want == Mode::kConversations ? s_scr_conversations
                                          : s_scr_home;
     if (scr) lv_screen_load(scr);
     s_mode.store(want, std::memory_order_release);
@@ -597,13 +1095,22 @@ void ApplyMode(Mode want) {
         // Whatever ended the preview must not also land on the screen behind it.
         s_swallow_touch.store(true, std::memory_order_release);
     }
+    if (want == Mode::kVoice) {
+        s_voice_auto_attempts = 0;
+        s_voice_autoconnect_pending = true;
+        if (s_audio) s_audio->StopAsr();
+        ShowSelection();
+    }
     RefreshStatus();
+    if (want == Mode::kVoice) TryConnectVoice();
     RefreshLink();
     RefreshDots();
     lv_obj_invalidate(lv_screen_active());
     ESP_LOGI(TAG, "screen -> %s", want == Mode::kShade ? "shade"
                                 : want == Mode::kApps  ? "apps"
-                                : want == Mode::kVoice ? "voice" : "home");
+                                : want == Mode::kVoice ? "voice"
+                                : want == Mode::kAgents ? "agents"
+                                : want == Mode::kConversations ? "sessions" : "home");
 }
 
 // Edge gestures, read straight from the touch stream because Camera is not an LVGL screen.
@@ -702,6 +1209,7 @@ void PollGestures() {
 void RenderTask(void*) {
     uint32_t seen_link  = 0;
     uint32_t seen_status = 0;
+    uint32_t seen_platform = 0;
     while (true) {
         if (s_touch) {
             (void)s_touch->Poll();
@@ -723,22 +1231,26 @@ void RenderTask(void*) {
         const uint32_t status_rev = s_status_rev.load(std::memory_order_acquire);
         if (status_rev != seen_status) { seen_status = status_rev; RefreshStatus(); }
 
+        const uint32_t platform_rev = s_platform_rev.load(std::memory_order_acquire);
+        if (platform_rev != seen_platform) { seen_platform = platform_rev; ApplyPlatformResult(); }
+        if (s_delete_confirm_row >= 0 && esp_timer_get_time() > s_delete_confirm_until_us) {
+            ResetDeleteConfirmation();
+            if (s_mode.load() == Mode::kConversations) ShowConversationRows();
+        }
+
+        if (s_voice_autoconnect_pending) TryConnectVoice();
+        if (s_mode.load() == Mode::kVoice && agent_link_state() == AGENT_STATE_READY &&
+            s_audio && !s_audio->CommandActive() &&
+            esp_timer_get_time() - s_last_mic_retry_us >= 1000000) {
+            s_last_mic_retry_us = esp_timer_get_time();
+            s_audio->StartContinuous();
+        }
+
         if (s_last_voice_request_us && esp_timer_get_time() - s_last_voice_request_us > 30000000) {
             s_last_voice_request_us = 0;
             (void)agent_link_end_realtime();
-            lv_label_set_text(s_call_status, "Voice timed out. Tap Connect to retry");
+            lv_label_set_text(s_call_status, "Voice timed out - tap Retry");
         }
-        static uint32_t seen_text = 0;
-        const uint32_t text_rev = s_text_rev.load(std::memory_order_acquire);
-        if (text_rev != seen_text) {
-            char text[sizeof s_voice_text];
-            taskENTER_CRITICAL(&s_status_lock);
-            memcpy(text, s_voice_text, sizeof text);
-            taskEXIT_CRITICAL(&s_status_lock);
-            lv_label_set_text(s_call_text, text);
-            seen_text = text_rev;
-        }
-
         uint32_t next = lv_timer_handler();  // renders + flushes only if something changed
         if (next == LV_NO_TIMER_READY || next > 30) next = 30;
         const TickType_t delay = pdMS_TO_TICKS(next);
@@ -756,6 +1268,11 @@ esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio) {
 
     s_lcd_mux = xSemaphoreCreateMutex();
     if (!s_lcd_mux) return ESP_ERR_NO_MEM;
+    s_platform_mutex = xSemaphoreCreateMutex();
+    s_platform_commands = xQueueCreateWithCaps(4, sizeof(PlatformCommand),
+                                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_platform_commands) s_platform_commands = xQueueCreate(4, sizeof(PlatformCommand));
+    if (!s_platform_mutex || !s_platform_commands) return ESP_ERR_NO_MEM;
 
     s_buf = static_cast<uint8_t*>(heap_caps_malloc(kBufBytes, MALLOC_CAP_SPIRAM));
     if (!s_buf) s_buf = static_cast<uint8_t*>(heap_caps_malloc(kBufBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -783,6 +1300,8 @@ esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio) {
     BuildHome();
     BuildApps();
     BuildVoice();
+    BuildAgents();
+    BuildConversations();
     BuildShade();
     lv_screen_load(s_scr_home);
     RefreshStatus();
@@ -792,6 +1311,10 @@ esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio) {
     // Internal stack: LVGL's draw path is deep.
     if (xTaskCreate(RenderTask, "kc_ui", 8192, nullptr, 4, nullptr) != pdPASS) {
         ESP_LOGE(TAG, "render task create failed");
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTaskCreate(PlatformWorker, "kc_platform", 12288, nullptr, 4, nullptr) != pdPASS) {
+        ESP_LOGE(TAG, "platform worker create failed");
         return ESP_ERR_NO_MEM;
     }
 
@@ -829,13 +1352,7 @@ void SetLinkState(bool connected) {
 }
 
 void SetVoiceText(const char* utf8) {
-    if (!utf8) return;
-    char readable[sizeof s_voice_text] = {};
-    CopyVoiceText(readable, sizeof readable, utf8);
-    taskENTER_CRITICAL(&s_status_lock);
-    memcpy(s_voice_text, readable, sizeof readable);
-    taskEXIT_CRITICAL(&s_status_lock);
-    s_text_rev.fetch_add(1, std::memory_order_release);
+    (void)utf8;
 }
 
 }  // namespace kc_ui

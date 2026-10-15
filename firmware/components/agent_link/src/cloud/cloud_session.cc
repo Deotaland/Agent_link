@@ -446,7 +446,9 @@ esp_err_t cloud_session_start(const cloud_session_config_t* cfg) {
     cloud_clock_start();   // every MQTT message carries a timestamp
 
     if (!s_agent_json) {
-        s_agent_json = static_cast<char*>(calloc(1, kAgentJsonCap));
+        s_agent_json = static_cast<char*>(heap_caps_calloc(1, kAgentJsonCap,
+                                                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!s_agent_json) s_agent_json = static_cast<char*>(calloc(1, kAgentJsonCap));
         if (!s_agent_json) return ESP_ERR_NO_MEM;
     }
     if (!s_token) {

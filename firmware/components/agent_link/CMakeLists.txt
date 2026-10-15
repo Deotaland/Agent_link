@@ -20,6 +20,7 @@ else()
         "src/cloud/cloud_session.cc"
         "src/cloud/cloud_mqtt.cc"
         "src/cloud/cloud_realtime.cc"
+        "src/cloud/cloud_platform.cc"
         "src/cloud/cloud_json.cc"
         "src/cloud/cloud_clock.cc"
     )

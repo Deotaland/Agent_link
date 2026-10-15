@@ -31,7 +31,9 @@ enum class Mode {
     kHome,     // page 0: link status
     kApps,     // page 1: camera and voice request icons
     kCamera,   // live preview; the preview task owns the panel here
-    kVoice,    // realtime push-to-talk
+    kVoice,    // continuous realtime voice for the selected session
+    kAgents,
+    kConversations,
     kShade,    // pull-down detail panel
 };
 

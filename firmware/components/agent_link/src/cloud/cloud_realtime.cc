@@ -1,6 +1,7 @@
 #include "cloud_realtime.h"
 #include "realtime_audio.h"
 #include "audio_downlink.h"
+#include "cloud_platform.h"
 
 #include <atomic>
 #include <cctype>
@@ -32,6 +33,10 @@ constexpr const char* TAG = "agent_link.realtime";
 constexpr int kConnectTimeoutMs = 10000;
 constexpr size_t kMicBytes = 640;
 constexpr size_t kTxDepth = 102;
+constexpr size_t kUplinkBatchPackets = 4;
+constexpr size_t kUplinkBatchBytes = kMicBytes * kUplinkBatchPackets;
+constexpr char kAudioPrefix[] = "{\"type\":\"input_audio.append\",\"audio\":\"";
+constexpr size_t kAudioJsonBytes = sizeof(kAudioPrefix) - 1 + (kUplinkBatchBytes + 2) / 3 * 4 + 3;
 constexpr size_t kMessageBytes = 128 * 1024;
 constexpr int64_t kReadyTimeoutUs = 10000000;
 
@@ -41,6 +46,9 @@ struct Grant {
     uint32_t epoch;
     bool direct;
     bool opus;
+    bool platform;
+    int agent_id;
+    char session_id[80];
 };
 
 enum class TxKind { kStart, kPcm, kEnd };
@@ -51,6 +59,11 @@ struct Tx {
     uint8_t data[kMicBytes];
 };
 
+struct TxScratch {
+    uint8_t pcm[kUplinkBatchBytes];
+    char json[kAudioJsonBytes];
+};
+
 struct WssAddress {
     char host[128];
     char path[384];
@@ -58,10 +71,12 @@ struct WssAddress {
 };
 
 QueueHandle_t              s_grants = nullptr;
+bool                       s_grants_caps = false;
 std::atomic<TaskHandle_t>  s_task{nullptr};
 std::atomic<bool>          s_run{false};
 std::atomic<bool>          s_ready{false};
 std::atomic<bool>          s_mute{false};
+std::atomic<bool>          s_continuous{false};
 std::atomic<uint32_t>      s_epoch{0};
 std::atomic<uint32_t>      s_reset{0};
 std::mutex                s_mutex;
@@ -69,6 +84,78 @@ QueueHandle_t             s_tx = nullptr;
 bool                      s_tx_caps = false;
 agent_stream_t            s_input = AGENT_STREAM_KIND_COUNT;
 cloud_realtime_callbacks_t s_cb = {};
+
+// Diagnostics for the continuous uplink. Only counters and timings are retained.
+std::atomic<uint32_t> s_tx_sent_frames{0};
+std::atomic<uint32_t> s_tx_sent_bytes{0};
+std::atomic<uint32_t> s_tx_sent_messages{0};
+std::atomic<uint32_t> s_tx_send_slow{0};
+std::atomic<uint32_t> s_rx_frames{0};
+std::atomic<uint32_t> s_rx_responses{0};
+std::atomic<uint32_t> s_rx_audio_done{0};
+std::atomic<uint32_t> s_tx_send_max_ms{0};
+std::atomic<uint32_t> s_worker_phase{0};
+std::atomic<uint32_t> s_worker_phase_since_ms{0};
+uint32_t s_diag_last_ms = 0;
+uint32_t s_diag_mic_frames = 0;
+uint32_t s_diag_mic_bytes = 0;
+uint32_t s_diag_dropped_frames = 0;
+uint32_t s_diag_prev_sent_frames = 0;
+uint32_t s_diag_prev_sent_bytes = 0;
+uint32_t s_diag_prev_sent_messages = 0;
+uint32_t s_diag_prev_send_slow = 0;
+uint32_t s_diag_prev_rx_frames = 0;
+uint32_t s_diag_prev_rx_responses = 0;
+uint32_t s_diag_prev_rx_audio_done = 0;
+
+void SetWorkerPhase(uint32_t phase) {
+    s_worker_phase_since_ms.store(static_cast<uint32_t>(esp_timer_get_time() / 1000));
+    s_worker_phase.store(phase);
+}
+
+// Called with s_mutex held from the microphone task.
+void ReportUplink() {
+    if (!s_continuous || !s_diag_last_ms) return;
+    const uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    if (now - s_diag_last_ms < 5000) return;
+    const uint32_t sent_frames = s_tx_sent_frames.load();
+    const uint32_t sent_bytes = s_tx_sent_bytes.load();
+    const uint32_t sent_messages = s_tx_sent_messages.load();
+    const uint32_t slow = s_tx_send_slow.load();
+    const uint32_t rx = s_rx_frames.load();
+    const uint32_t responses = s_rx_responses.load();
+    const uint32_t audio_done = s_rx_audio_done.load();
+    const uint32_t phase = s_worker_phase.load();
+    const uint32_t phase_age = now - s_worker_phase_since_ms.load();
+    constexpr const char* phases[] = {"loop", "send", "poll", "read", "handle"};
+    const char* phase_name = phase < sizeof phases / sizeof phases[0] ? phases[phase] : "unknown";
+    ESP_LOGI(TAG, "uplink %ums: mic=%u frames/%uB dropped=%u sent=%u frames/%uB "
+             "ws=%u queue=%u/%u rx=%u replies=%u done=%u",
+             static_cast<unsigned>(now - s_diag_last_ms),
+             static_cast<unsigned>(s_diag_mic_frames), static_cast<unsigned>(s_diag_mic_bytes),
+             static_cast<unsigned>(s_diag_dropped_frames),
+             static_cast<unsigned>(sent_frames - s_diag_prev_sent_frames),
+             static_cast<unsigned>(sent_bytes - s_diag_prev_sent_bytes),
+             static_cast<unsigned>(sent_messages - s_diag_prev_sent_messages),
+             static_cast<unsigned>(uxQueueMessagesWaiting(s_tx)), static_cast<unsigned>(kTxDepth),
+             static_cast<unsigned>(rx - s_diag_prev_rx_frames),
+             static_cast<unsigned>(responses - s_diag_prev_rx_responses),
+             static_cast<unsigned>(audio_done - s_diag_prev_rx_audio_done));
+    ESP_LOGI(TAG, "uplink timing: send_max=%ums slow=%u worker=%s/%ums mic_stack_min=%uB",
+             static_cast<unsigned>(s_tx_send_max_ms.exchange(0)),
+             static_cast<unsigned>(slow - s_diag_prev_send_slow),
+             phase_name, static_cast<unsigned>(phase_age),
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    s_diag_last_ms = now;
+    s_diag_mic_frames = s_diag_mic_bytes = s_diag_dropped_frames = 0;
+    s_diag_prev_sent_frames = sent_frames;
+    s_diag_prev_sent_bytes = sent_bytes;
+    s_diag_prev_sent_messages = sent_messages;
+    s_diag_prev_send_slow = slow;
+    s_diag_prev_rx_frames = rx;
+    s_diag_prev_rx_responses = responses;
+    s_diag_prev_rx_audio_done = audio_done;
+}
 
 bool ParseWss(const char* url, WssAddress* out) {
     if (!url || strncmp(url, "wss://", 6) != 0 || strchr(url, '#')) return false;
@@ -298,7 +385,8 @@ void ResetInput() {
 
 class Call {
 public:
-    Call(uint32_t epoch, bool opus) : epoch_(epoch), opus_(opus) {}
+    Call(uint32_t epoch, bool opus, bool continuous)
+        : epoch_(epoch), continuous_(continuous), opus_(opus) {}
     ~Call() {
 #if CONFIG_AGENT_LINK_REALTIME_OPUS
         if (decoder_) esp_opus_dec_close(decoder_);
@@ -418,8 +506,10 @@ public:
             if (cJSON_HasObjectItem(json, "audio")) keep = ReadAudioFormat(json, &opus_);
             if (!keep || !OpenDecoder()) { cJSON_Delete(json); return false; }
             s_mute.store(false);
-            if (!s_ready.exchange(true) && s_cb.state) s_cb.state(true, "Hold to talk, release to send");
-            ESP_LOGI(TAG, "voice session ready (PCM16 16 kHz up, %s 24 kHz down, client PTT)", opus_ ? "Opus" : "PCM16");
+            if (!s_ready.exchange(true) && s_cb.state)
+                s_cb.state(true, continuous_ ? "Microphone on" : "Hold to talk, release to send");
+            ESP_LOGI(TAG, "voice session ready (PCM16 16 kHz up, %s 24 kHz down, %s)",
+                     opus_ ? "Opus" : "PCM16", continuous_ ? "server endpointing" : "client PTT");
         } else if (strcmp(event, "response.audio.delta") == 0) {
             const cJSON* audio = cJSON_GetObjectItemCaseSensitive(json, "audio");
             if (cJSON_IsString(audio) && !s_mute && s_ready) {
@@ -437,6 +527,7 @@ public:
                 free(decoded);
             }
         } else if (strcmp(event, "response.audio.done") == 0) {
+            s_rx_audio_done.fetch_add(1);
             ESP_LOGI(TAG, "reply audio: %s, %u packets, %u bytes, %u ms PCM, max gap %u ms",
                      opus_ ? "Opus" : "PCM16", packets_, static_cast<unsigned>(encoded_bytes_),
                      static_cast<unsigned>(samples_ / 16), static_cast<unsigned>(max_gap_ / 1000));
@@ -445,8 +536,10 @@ public:
                      static_cast<unsigned>(max_pacing_ / 1000));
             ResetDecoder();
             if (s_cb.audio_end) s_cb.audio_end();
-            if (s_cb.state && s_ready) s_cb.state(true, "Hold to talk, release to send");
+            if (s_cb.state && s_ready)
+                s_cb.state(true, continuous_ ? "Microphone on" : "Hold to talk, release to send");
         } else if (strcmp(event, "response.started") == 0) {
+            s_rx_responses.fetch_add(1);
             ResetDecoder();
             samples_ = encoded_bytes_ = packets_ = 0;
             last_audio_ = max_gap_ = 0;
@@ -467,21 +560,49 @@ public:
         return keep;
     }
 
-    bool FlushTx(esp_transport_handle_t ws) {
+    bool FlushTx(esp_transport_handle_t ws, TxScratch* scratch) {
         if (reset_ != s_reset) ResetAudio();
         Tx packet;
-        char json[sizeof("{\"type\":\"input_audio.append\",\"audio\":\"\"}") + (kMicBytes + 2) / 3 * 4];
-        for (unsigned i = 0; i < 8 && Current(epoch_) && xQueueReceive(s_tx, &packet, 0) == pdTRUE; ++i) {
+        const unsigned sends_per_pass = continuous_ ? 1 : 8;
+        for (unsigned i = 0; i < sends_per_pass && Current(epoch_) &&
+                             xQueueReceive(s_tx, &packet, 0) == pdTRUE; ++i) {
             if (packet.kind == TxKind::kPcm) {
-                constexpr char prefix[] = "{\"type\":\"input_audio.append\",\"audio\":\"";
-                memcpy(json, prefix, sizeof prefix - 1);
+                size_t pcm_bytes = packet.bytes;
+                unsigned pcm_packets = 1;
+                memcpy(scratch->pcm, packet.data, pcm_bytes);
+                if (continuous_) {
+                    Tx next;
+                    while (pcm_packets < kUplinkBatchPackets && Current(epoch_) &&
+                           xQueuePeek(s_tx, &next, 0) == pdTRUE && next.kind == TxKind::kPcm) {
+                        if (xQueueReceive(s_tx, &next, 0) != pdTRUE) break;
+                        memcpy(scratch->pcm + pcm_bytes, next.data, next.bytes);
+                        pcm_bytes += next.bytes;
+                        ++pcm_packets;
+                    }
+                }
+                memcpy(scratch->json, kAudioPrefix, sizeof kAudioPrefix - 1);
                 size_t encoded = 0;
-                if (mbedtls_base64_encode(reinterpret_cast<uint8_t*>(json + sizeof prefix - 1),
-                        sizeof json - sizeof prefix - 1, &encoded, packet.data, packet.bytes) != 0) return false;
-                const size_t n = sizeof prefix - 1 + encoded;
-                json[n] = '"';
-                json[n + 1] = '}';
-                if (!Send(ws, json, n + 2)) return false;
+                if (mbedtls_base64_encode(reinterpret_cast<uint8_t*>(scratch->json + sizeof kAudioPrefix - 1),
+                        sizeof scratch->json - sizeof kAudioPrefix + 1, &encoded,
+                        scratch->pcm, pcm_bytes) != 0) return false;
+                const size_t n = sizeof kAudioPrefix - 1 + encoded;
+                scratch->json[n] = '"';
+                scratch->json[n + 1] = '}';
+                SetWorkerPhase(1);
+                const int64_t started = esp_timer_get_time();
+                const bool sent = Send(ws, scratch->json, n + 2);
+                const uint32_t elapsed_ms = static_cast<uint32_t>((esp_timer_get_time() - started) / 1000);
+                const uint32_t old_max = s_tx_send_max_ms.load();
+                if (elapsed_ms > old_max) s_tx_send_max_ms.store(elapsed_ms);
+                if (elapsed_ms >= 100) s_tx_send_slow.fetch_add(1);
+                SetWorkerPhase(0);
+                if (!sent) {
+                    ESP_LOGW(TAG, "audio WSS send failed after %u ms", static_cast<unsigned>(elapsed_ms));
+                    return false;
+                }
+                s_tx_sent_frames.fetch_add(pcm_packets);
+                s_tx_sent_bytes.fetch_add(static_cast<uint32_t>(pcm_bytes));
+                s_tx_sent_messages.fetch_add(1);
             } else {
                 if (!Send(ws, packet.kind == TxKind::kStart
                         ? "{\"type\":\"input_audio.activity\",\"kind\":\"start\"}"
@@ -497,6 +618,7 @@ public:
 
 private:
     uint32_t epoch_;
+    bool continuous_ = false;
     uint32_t reset_ = s_reset.load();
     int64_t play_due_ = 0;
     bool opus_ = false;
@@ -549,6 +671,16 @@ void ConnectOnce(const Grant& grant) {
         esp_transport_destroy(tls);
         return;
     }
+    auto* scratch = static_cast<TxScratch*>(heap_caps_malloc(sizeof(TxScratch),
+                                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!scratch) scratch = static_cast<TxScratch*>(malloc(sizeof(TxScratch)));
+    if (!scratch) {
+        ESP_LOGE(TAG, "could not allocate voice uplink buffer");
+        free(message);
+        esp_transport_destroy(ws);
+        esp_transport_destroy(tls);
+        return;
+    }
     if (s_cb.state) s_cb.state(false, "Connecting voice");
     if (esp_transport_connect(ws, addr.host, addr.port, kConnectTimeoutMs) != 0) {
         ESP_LOGW(TAG, "WSS connection failed (upgrade HTTP %d)",
@@ -561,19 +693,23 @@ void ConnectOnce(const Grant& grant) {
             if (*p == '"' || *p == '\\') hello[n++] = '\\';
             hello[n++] = *p;
         }
-        n += static_cast<size_t>(snprintf(hello + n, sizeof hello - n, "\",\"endpointing\":{\"mode\":\"client\"}}"));
-        if (!Current(grant.epoch) || !Send(ws, hello, n)) {
+        n += static_cast<size_t>(snprintf(hello + n, sizeof hello - n,
+                "\",\"endpointing\":{\"mode\":\"%s\"}}", grant.platform ? "server" : "client"));
+        if (!Current(grant.epoch)) {
+            ESP_LOGI(TAG, "voice connection cancelled before session.connect");
+        } else if (!Send(ws, hello, n)) {
             ESP_LOGW(TAG, "session.connect could not be sent");
         } else {
             ESP_LOGI(TAG, "session.connect sent over WSS");
-            Call call(grant.epoch, grant.opus);
+            Call call(grant.epoch, grant.opus, grant.platform);
             agentlink::realtime::Message assembler(message, kMessageBytes);
             uint8_t chunk[2048];
             int frame_read = 0;
             const int64_t connected_at = esp_timer_get_time();
             int64_t last_rx = connected_at, last_ping = connected_at;
+            SetWorkerPhase(0);
             while (Current(grant.epoch)) {
-                if (!call.FlushTx(ws)) break;
+                if (!call.FlushTx(ws, scratch)) break;
                 const int64_t now = esp_timer_get_time();
                 if ((!s_ready && now - connected_at > kReadyTimeoutUs) || now - last_rx > 45000000) {
                     ESP_LOGW(TAG, "voice session timed out");
@@ -585,11 +721,15 @@ void ConnectOnce(const Grant& grant) {
                     last_ping = now;
                 }
                 if (!frame_read) {
+                    SetWorkerPhase(2);
                     const int polled = esp_transport_poll_read(ws, 10);
+                    SetWorkerPhase(0);
                     if (polled < 0) break;
                     if (!polled) { vTaskDelay(1); continue; }
                 }
+                SetWorkerPhase(3);
                 const int got = esp_transport_read(ws, reinterpret_cast<char*>(chunk), sizeof chunk, 1000);
+                SetWorkerPhase(0);
                 if (got < 0 || !Current(grant.epoch)) break;
                 const auto opcode = esp_transport_ws_get_read_opcode(ws);
                 const int frame_size = esp_transport_ws_get_read_payload_len(ws);
@@ -612,9 +752,14 @@ void ConnectOnce(const Grant& grant) {
                         break;
                     }
                     if (result == agentlink::realtime::Message::kComplete) {
+                        s_rx_frames.fetch_add(1);
+                        SetWorkerPhase(4);
+                        bool handled = true;
                         if (assembler.Opcode() == WS_TRANSPORT_OPCODES_BINARY) {
-                            if (!call.Audio(message, assembler.Size())) break;
-                        } else if (!call.Text(message, assembler.Size())) break;
+                            handled = call.Audio(message, assembler.Size());
+                        } else handled = call.Text(message, assembler.Size());
+                        SetWorkerPhase(0);
+                        if (!handled) break;
                     }
                 }
                 if (end) frame_read = 0;
@@ -624,6 +769,7 @@ void ConnectOnce(const Grant& grant) {
         Send(ws, "{\"type\":\"session.end\"}");
         esp_transport_close(ws);
     }
+    free(scratch);
     free(message);
     esp_transport_destroy(ws);
     esp_transport_destroy(tls);
@@ -634,11 +780,25 @@ void Worker(void*) {
     while (s_run.load(std::memory_order_acquire)) {
         if (xQueueReceive(s_grants, &grant, pdMS_TO_TICKS(500)) != pdTRUE) continue;
         const char* hint = "Voice ended. Tap Connect to retry";
-        bool granted = !grant.direct;
+        bool granted = !grant.direct && !grant.platform;
 #if CONFIG_AGENT_LINK_REALTIME_DIRECT
         if (grant.direct && Current(grant.epoch)) granted = FetchDirectGrant(&grant, &hint);
 #endif
+        if (grant.platform && Current(grant.epoch)) {
+            int status = 0;
+            granted = cloud_platform_grant(grant.agent_id, grant.session_id, false,
+                                           grant.url, sizeof grant.url, grant.token, sizeof grant.token,
+                                           &grant.opus, &status) == ESP_OK;
+            if (!granted && status == 409 && Current(grant.epoch)) {
+                granted = cloud_platform_grant(grant.agent_id, grant.session_id, true,
+                                               grant.url, sizeof grant.url, grant.token, sizeof grant.token,
+                                               &grant.opus, &status) == ESP_OK;
+            }
+            if (!granted) hint = status == 409 ? "Voice session busy. End the previous call"
+                                 : "Voice access failed. Tap Connect to retry";
+        }
         if (granted && Current(grant.epoch)) ConnectOnce(grant);
+        if (grant.platform && granted) cloud_platform_end_grant(grant.agent_id, grant.session_id);
 #if CONFIG_AGENT_LINK_REALTIME_DIRECT
         if (grant.direct && granted) EndDirectSession();
 #endif
@@ -646,6 +806,7 @@ void Worker(void*) {
         ResetInput();
         if (s_cb.audio_reset) s_cb.audio_reset();
         if (s_cb.state) s_cb.state(false, hint);
+        if (s_cb.finished) s_cb.finished();
         memset(&grant, 0, sizeof grant);
     }
     s_task.store(nullptr, std::memory_order_release);
@@ -658,6 +819,7 @@ namespace {
 esp_err_t QueueGrant(Grant* grant) {
     grant->epoch = s_epoch.fetch_add(1) + 1;
     s_ready.store(false);
+    s_continuous.store(grant->platform);
     if (xQueueOverwrite(s_grants, grant) != pdPASS) return ESP_FAIL;
     if (!s_task.load(std::memory_order_acquire)) {
         TaskHandle_t task = nullptr;
@@ -679,12 +841,24 @@ esp_err_t QueueGrant(Grant* grant) {
 esp_err_t cloud_realtime_start(void) {
     std::lock_guard<std::mutex> lock(s_mutex);
     if (s_grants) return ESP_OK;
-    s_grants = xQueueCreate(1, sizeof(Grant));
+    s_grants = xQueueCreateWithCaps(1, sizeof(Grant), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_grants_caps = s_grants != nullptr;
+    if (!s_grants) s_grants = xQueueCreate(1, sizeof(Grant));
     if (!s_grants) return ESP_ERR_NO_MEM;
     s_tx = xQueueCreateWithCaps(kTxDepth, sizeof(Tx), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     s_tx_caps = s_tx != nullptr;
     if (!s_tx) s_tx = xQueueCreate(kTxDepth, sizeof(Tx));
-    if (!s_tx) { vQueueDelete(s_grants); s_grants = nullptr; return ESP_ERR_NO_MEM; }
+    if (!s_tx) {
+        if (s_grants_caps) vQueueDeleteWithCaps(s_grants);
+        else vQueueDelete(s_grants);
+        s_grants = nullptr;
+        s_grants_caps = false;
+        return ESP_ERR_NO_MEM;
+    }
+    ESP_LOGI(TAG, "voice queues: tx=%s grant=%s, internal free=%u largest=%u",
+             s_tx_caps ? "PSRAM" : "internal", s_grants_caps ? "PSRAM" : "internal",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     s_run.store(true, std::memory_order_release);
     return ESP_OK;
 }
@@ -699,13 +873,16 @@ void cloud_realtime_stop(void) {
     }
     while (s_task.load(std::memory_order_acquire)) vTaskDelay(pdMS_TO_TICKS(50));
     std::lock_guard<std::mutex> lock(s_mutex);
-    vQueueDelete(s_grants);
+    if (s_grants_caps) vQueueDeleteWithCaps(s_grants);
+    else vQueueDelete(s_grants);
     s_grants = nullptr;
+    s_grants_caps = false;
     // WithCaps buffers must be released with the matching API.
     if (s_tx_caps) vQueueDeleteWithCaps(s_tx);
     else vQueueDelete(s_tx);
     s_tx = nullptr;
     s_input = AGENT_STREAM_KIND_COUNT;
+    s_continuous.store(false);
 }
 
 esp_err_t cloud_realtime_offer(const char* websocket_url, const char* connect_token) {
@@ -745,6 +922,22 @@ esp_err_t cloud_realtime_request_direct(void) {
 #endif
 }
 
+esp_err_t cloud_realtime_request_platform(int agent_id, const char* session_id) {
+    if (!cloud_platform_enabled() || agent_id <= 0 || !session_id || !*session_id ||
+        strlen(session_id) >= sizeof Grant::session_id) return ESP_ERR_INVALID_ARG;
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(session_id); *p; ++p) {
+        if (!std::isalnum(*p) && *p != '_' && *p != '-') return ESP_ERR_INVALID_ARG;
+    }
+    std::lock_guard<std::mutex> lock(s_mutex);
+    if (!s_grants || !s_run) return ESP_ERR_INVALID_STATE;
+    Grant grant = {};
+    grant.direct = false;
+    grant.platform = true;
+    grant.agent_id = agent_id;
+    snprintf(grant.session_id, sizeof grant.session_id, "%s", session_id);
+    return QueueGrant(&grant);
+}
+
 void cloud_realtime_set_callbacks(const cloud_realtime_callbacks_t* callbacks) {
     s_cb = callbacks ? *callbacks : cloud_realtime_callbacks_t{};
 }
@@ -765,6 +958,23 @@ esp_err_t cloud_realtime_stream_start(agent_stream_t type) {
     if (type != AGENT_STREAM_VOICE && type != AGENT_STREAM_AUDIO) return ESP_ERR_NOT_SUPPORTED;
     std::lock_guard<std::mutex> lock(s_mutex);
     if (!s_run || !s_ready || s_input != AGENT_STREAM_KIND_COUNT) return ESP_ERR_INVALID_STATE;
+    if (s_continuous) {
+        s_tx_sent_frames.store(0);
+        s_tx_sent_bytes.store(0);
+        s_tx_sent_messages.store(0);
+        s_tx_send_slow.store(0);
+        s_tx_send_max_ms.store(0);
+        s_rx_frames.store(0);
+        s_rx_responses.store(0);
+        s_rx_audio_done.store(0);
+        s_diag_last_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+        s_diag_mic_frames = s_diag_mic_bytes = s_diag_dropped_frames = 0;
+        s_diag_prev_sent_frames = s_diag_prev_sent_bytes = s_diag_prev_sent_messages = 0;
+        s_diag_prev_send_slow = 0;
+        s_diag_prev_rx_frames = s_diag_prev_rx_responses = s_diag_prev_rx_audio_done = 0;
+        s_input = type;
+        return ESP_OK;
+    }
     if (uxQueueSpacesAvailable(s_tx) < 3) return ESP_ERR_NO_MEM;
     const uint32_t turn = s_reset.fetch_add(1) + 1;
     const Tx start = {TxKind::kStart, 0, turn, {}};
@@ -779,15 +989,32 @@ esp_err_t cloud_realtime_stream_write(agent_stream_t type, const uint8_t* data, 
     std::lock_guard<std::mutex> lock(s_mutex);
     if (!s_run || !s_ready || s_input != type) return ESP_ERR_INVALID_STATE;
     const size_t packets = (bytes + kMicBytes - 1) / kMicBytes;
-    if (packets + 2 > uxQueueSpacesAvailable(s_tx)) return ESP_ERR_NO_MEM;
+    if (s_continuous) {
+        s_diag_mic_frames += static_cast<uint32_t>(packets);
+        s_diag_mic_bytes += static_cast<uint32_t>(bytes);
+    }
+    if (packets + 2 > uxQueueSpacesAvailable(s_tx)) {
+        if (s_continuous) {
+            s_diag_dropped_frames += static_cast<uint32_t>(packets);
+            ReportUplink();
+        }
+        return ESP_ERR_NO_MEM;
+    }
     Tx packet = {TxKind::kPcm, 0, 0, {}};
     while (bytes) {
         packet.bytes = bytes > kMicBytes ? kMicBytes : bytes;
         memcpy(packet.data, data, packet.bytes);
-        if (xQueueSend(s_tx, &packet, 0) != pdTRUE) return ESP_ERR_NO_MEM;
+        if (xQueueSend(s_tx, &packet, 0) != pdTRUE) {
+            if (s_continuous) {
+                ++s_diag_dropped_frames;
+                ReportUplink();
+            }
+            return ESP_ERR_NO_MEM;
+        }
         data += packet.bytes;
         bytes -= packet.bytes;
     }
+    if (s_continuous) ReportUplink();
     return ESP_OK;
 }
 
@@ -795,6 +1022,10 @@ esp_err_t cloud_realtime_stream_end(agent_stream_t type, bool complete) {
     if (!complete) { cloud_realtime_cancel(); return ESP_OK; }
     std::lock_guard<std::mutex> lock(s_mutex);
     if (!s_run || !s_ready || s_input != type) return ESP_ERR_INVALID_STATE;
+    if (s_continuous) {
+        s_input = AGENT_STREAM_KIND_COUNT;
+        return ESP_OK;
+    }
     const Tx end = {TxKind::kEnd, 0, s_reset.load(), {}};
     if (xQueueSend(s_tx, &end, 0) != pdTRUE) return ESP_ERR_NO_MEM;
     s_input = AGENT_STREAM_KIND_COUNT;

@@ -54,7 +54,7 @@ esp_err_t KorvoCloudAudio::Init(const Config& cfg) {
     }
 
     xTaskCreate(&KorvoCloudAudio::PlayTaskEntry, "spk_play", 4096, this, 5, nullptr);
-    xTaskCreate(&KorvoCloudAudio::MicTaskEntry,  "mic_up",   4096, this, 5, nullptr);
+    xTaskCreate(&KorvoCloudAudio::MicTaskEntry,  "mic_up",   6144, this, 5, nullptr);
     ESP_LOGI(TAG, "audio ready (%d Hz, play buffer %uKB)", cfg_.sample_rate,
              static_cast<unsigned>(cfg_.play_buf_bytes / 1024));
     return ESP_OK;
@@ -83,10 +83,12 @@ void KorvoCloudAudio::PlayTaskEntry(void* arg) { static_cast<KorvoCloudAudio*>(a
 void KorvoCloudAudio::PlayLoop() {
     int16_t buf[kPlayChunkSamples];
     const size_t capacity = xStreamBufferSpacesAvailable(play_buf_);
-    const size_t threshold = kc_audio::PrebufferBytes(capacity);
-    kc_audio::PlaybackGate gate(threshold);
+    const size_t start_bytes = kc_audio::PrebufferBytes(capacity, 500);
+    const size_t resume_bytes = kc_audio::PrebufferBytes(capacity, 1000);
+    kc_audio::PlaybackGate gate(start_bytes, resume_bytes);
     size_t played = 0;
-    ESP_LOGI(TAG, "speaker prebuffer: reply end or %u ms", static_cast<unsigned>(threshold / 32));
+    ESP_LOGI(TAG, "speaker prebuffer: start=%u ms resume=%u ms (reply end bypasses both)",
+             static_cast<unsigned>(start_bytes / 32), static_cast<unsigned>(resume_bytes / 32));
     while (true) {
         const uint32_t generation = play_generation_.load();
         if (generation != play_cleared_.load()) {
@@ -100,6 +102,7 @@ void KorvoCloudAudio::PlayLoop() {
         }
         const size_t available = xStreamBufferBytesAvailable(play_buf_);
         const bool finished = play_finished_.load();
+        const bool was_playing = gate.Playing();
         if (!gate.Ready(available, finished, esp_timer_get_time() / 1000)) {
             if (finished && !available && played) {
                 ESP_LOGI(TAG, "speaker drained: %u ms, underruns=%u, dropped=%u bytes",
@@ -110,6 +113,10 @@ void KorvoCloudAudio::PlayLoop() {
             }
             vTaskDelay(1);  // Always block; sub-tick millisecond delays become zero.
             continue;
+        }
+        if (!was_playing) {
+            ESP_LOGI(TAG, "speaker %s at %u ms queued%s", played ? "resumed" : "started",
+                     static_cast<unsigned>(available / 32), finished ? " (reply ended)" : "");
         }
         const size_t n = xStreamBufferReceive(play_buf_, buf, sizeof(buf), 0);
         if (generation != play_generation_.load()) continue;
@@ -136,6 +143,8 @@ void KorvoCloudAudio::StartCommand() {
     want_cmd_.store(true, std::memory_order_release);
 }
 void KorvoCloudAudio::StopCommand()  { want_cmd_.store(false, std::memory_order_release); }
+void KorvoCloudAudio::StartContinuous() { want_continuous_.store(true, std::memory_order_release); }
+void KorvoCloudAudio::StopContinuous() { want_continuous_.store(false, std::memory_order_release); }
 
 void KorvoCloudAudio::MicTaskEntry(void* arg) { static_cast<KorvoCloudAudio*>(arg)->MicLoop(); }
 
@@ -146,7 +155,8 @@ void KorvoCloudAudio::MicLoop() {
 
     while (true) {
         const bool want_asr = want_asr_.load(std::memory_order_acquire);
-        const bool want_cmd = want_cmd_.load(std::memory_order_acquire);
+        const bool continuous = want_continuous_.load(std::memory_order_acquire);
+        const bool want_cmd = want_cmd_.load(std::memory_order_acquire) || continuous;
         bool asr_on = asr_on_.load(std::memory_order_acquire);
         bool cmd_on = cmd_on_.load(std::memory_order_acquire);
 
@@ -161,7 +171,7 @@ void KorvoCloudAudio::MicLoop() {
             agent_link_stream_close(voice_stream_, true);
             cmd_on = false;
             cmd_on_.store(false, std::memory_order_release);
-            ESP_LOGI(TAG, "voice command sent");
+            ESP_LOGI(TAG, "voice capture stopped");
         }
         if (!asr_on && want_asr) {
             if (agent_link_state() != AGENT_STATE_READY) {
@@ -180,13 +190,15 @@ void KorvoCloudAudio::MicLoop() {
             if (agent_link_state() != AGENT_STATE_READY) {
                 ESP_LOGW(TAG, "voice command requested but the link is not ready");
                 want_cmd_.store(false, std::memory_order_release);
+                want_continuous_.store(false, std::memory_order_release);
             } else if (agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &voice_stream_) != ESP_OK) {
                 ESP_LOGW(TAG, "voice stream failed to open");
                 want_cmd_.store(false, std::memory_order_release);
+                want_continuous_.store(false, std::memory_order_release);
             } else {
                 cmd_on = true;
                 cmd_on_.store(true, std::memory_order_release);
-                ESP_LOGI(TAG, "voice stream started");
+                ESP_LOGI(TAG, "voice stream started (%s)", continuous ? "continuous" : "command");
             }
         }
 
@@ -196,6 +208,7 @@ void KorvoCloudAudio::MicLoop() {
                 ESP_LOGE(TAG, "mic start failed");
                 want_asr_.store(false, std::memory_order_release);
                 want_cmd_.store(false, std::memory_order_release);
+                want_continuous_.store(false, std::memory_order_release);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
@@ -230,16 +243,21 @@ void KorvoCloudAudio::MicLoop() {
         if (cmd_on) {
             if (agent_link_state() != AGENT_STATE_READY) {
                 ESP_LOGW(TAG, "link dropped mid-command, closing the voice session");
-                agent_link_stream_close(voice_stream_, false);
+                agent_link_stream_close(voice_stream_, continuous);
                 cmd_on_.store(false, std::memory_order_release);
                 want_cmd_.store(false, std::memory_order_release);
+                want_continuous_.store(false, std::memory_order_release);
             } else {
                 const esp_err_t r = agent_link_stream_write(voice_stream_, buf, bytes);
-                if (r != ESP_OK) {
+                if (r == ESP_ERR_NO_MEM && continuous) {
+                    static unsigned dropped = 0;
+                    if (++dropped % 50 == 1) ESP_LOGW(TAG, "continuous mic upload congested; dropping frames");
+                } else if (r != ESP_OK) {
                     ESP_LOGW(TAG, "voice upload failed (%s), ending capture", esp_err_to_name(r));
-                    agent_link_stream_close(voice_stream_, false);
+                    agent_link_stream_close(voice_stream_, continuous);
                     cmd_on_.store(false, std::memory_order_release);
                     want_cmd_.store(false, std::memory_order_release);
+                    want_continuous_.store(false, std::memory_order_release);
                 }
             }
         }

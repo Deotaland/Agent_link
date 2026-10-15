@@ -23,6 +23,7 @@
 #include "agent_link.h"          // agent_wifi_config_t, agent_platform_t, agent_link_status_t
 #include "cloud_json.h"
 #include "cloud_mqtt.h"
+#include "cloud_platform.h"
 #include "cloud_realtime.h"
 #include "cloud_session.h"
 #include "wifi_provision.h"
@@ -83,6 +84,7 @@ std::recursive_mutex s_core_mtx;
 bool                       s_cloud_started = false;
 std::atomic<agent_state_t> s_link{AGENT_STATE_DISCONNECTED};
 std::atomic<bool> s_realtime_wanted{false};
+std::atomic<bool> s_platform_voice{false};
 char s_voice_hint[112] = {};
 void (*s_pcm)(const uint8_t*, size_t) = nullptr;
 void (*s_audio_end)(void) = nullptr;
@@ -412,7 +414,8 @@ void Compose(const agent_cloud_status_t& c, agent_link_status_t* out) {
 
     case AGENT_CLOUD_NO_AGENT:
         say(AGENT_LINK_PHASE_BLOCKED, "No agent",
-            "Bound, but no agent is attached. Pick one for this device in the console.");
+            cloud_platform_enabled() ? "Open Voice and select an agent on this device."
+                                     : "Bound, but no agent is attached. Pick one in the console.");
         break;
 
     case AGENT_CLOUD_FAULT:
@@ -466,6 +469,7 @@ void OnCloudState(const agent_cloud_status_t* st, void* /*ctx*/) {
     taskEXIT_CRITICAL(&s_status_lock);
     if (st->state != AGENT_CLOUD_ONLINE) {
         s_realtime_wanted.store(false);
+        s_platform_voice.store(false);
         cloud_realtime_cancel();
     }
     UpdateLink();
@@ -489,6 +493,10 @@ void OnRealtimeEnd() {
 void OnRealtimeReset() {
     std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
     if (s_audio_reset) s_audio_reset();
+}
+void OnRealtimeFinished() {
+    s_realtime_wanted.store(false);
+    s_platform_voice.store(false);
 }
 void OnRealtimeText(const char* text) {
     std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
@@ -519,6 +527,7 @@ void OnDownlink(const char* data, size_t len, void* /*ctx*/) {
 
 esp_err_t OnRealtimeGrant(const char* websocket_url, const char* connect_token) {
     if (cloud_realtime_direct_enabled()) return ESP_ERR_NOT_SUPPORTED;
+    if (s_platform_voice) return ESP_ERR_INVALID_STATE;
     if (!s_realtime_wanted || s_link == AGENT_STATE_DISCONNECTED) return ESP_ERR_INVALID_STATE;
     return cloud_realtime_offer(websocket_url, connect_token);
 }
@@ -536,6 +545,7 @@ void StartCloudSession() {
     }
     cloud_session_config_t cc = {};
     cc.base_url   = s_platform->base_url;
+    cloud_platform_set_base_url(cc.base_url);
     cc.product_id = s_platform->product_id;
     cc.chip_type  = s_platform->chip_type;
     cc.net_ready   = &NetReady;
@@ -547,6 +557,7 @@ void StartCloudSession() {
 
     const cloud_realtime_callbacks_t realtime = {
         &OnRealtimeState, &OnRealtimePcm, &OnRealtimeText, &OnRealtimeEnd, &OnRealtimeReset,
+        &OnRealtimeFinished,
     };
     cloud_realtime_set_callbacks(&realtime);
     if (cloud_realtime_start() != ESP_OK) {
@@ -584,6 +595,7 @@ esp_err_t wifi_start(void* /*impl*/) {
 
 void wifi_stop(void* /*impl*/) {
     s_realtime_wanted.store(false);
+    s_platform_voice.store(false);
     cloud_session_stop();
     cloud_realtime_stop();
     s_cloud_started = false;
@@ -686,8 +698,24 @@ extern "C" esp_err_t agent_transport_wifi_request_realtime(void) {
     return r;
 }
 
+extern "C" esp_err_t agent_transport_wifi_request_realtime_session(int agent_id, const char* session_id) {
+    if (!cloud_platform_enabled() || !cloud_mqtt_started() ||
+        s_link.load(std::memory_order_acquire) != AGENT_STATE_CONNECTED) return ESP_ERR_INVALID_STATE;
+    if (s_realtime_wanted.exchange(true)) return ESP_ERR_INVALID_STATE;
+    s_platform_voice.store(true);
+    OnRealtimeState(false, "Requesting voice access");
+    const esp_err_t r = cloud_realtime_request_platform(agent_id, session_id);
+    if (r != ESP_OK) {
+        s_realtime_wanted.store(false);
+        s_platform_voice.store(false);
+        OnRealtimeState(false, "Voice request failed. Tap Connect to retry");
+    }
+    return r;
+}
+
 extern "C" esp_err_t agent_transport_wifi_end_realtime(void) {
     s_realtime_wanted.store(false);
+    s_platform_voice.store(false);
     cloud_realtime_cancel();
     OnRealtimeReset();
     OnRealtimeState(false, "Connected to the platform");
@@ -723,6 +751,9 @@ agent_transport_t s_wifi = {
 }  // namespace
 
 extern "C" agent_transport_t* agent_transport_wifi(void) { return &s_wifi; }
+extern "C" esp_err_t agent_transport_wifi_request_realtime_session(int, const char*) {
+    return ESP_ERR_NOT_SUPPORTED;
+}
 
 extern "C" void agent_transport_wifi_set_config(const agent_wifi_config_t*) {}
 extern "C" void agent_transport_wifi_set_name(const char*) {}

@@ -61,6 +61,20 @@ endmenu
 
 menu "Agent Link realtime voice"
 
+config AGENT_LINK_KORVO_CLOUD_CJK
+    bool
+    default y if BOARD_TYPE_ESP32S3_KORVO_CLOUD
+    select LV_FONT_SIMSUN_14_CJK
+
+config AGENT_LINK_PLATFORM_USER_TOKEN
+    string "Platform user token for on-device agent and voice session selection"
+    depends on AGENT_LINK_TRANSPORT_WIFI
+    default ""
+    help
+        Development credential for the platform's user APIs. Put it only in the
+        private sdkconfig, never in defaults or source. Firmware containing it
+        must remain private. Leave empty to use the existing MQTT grant flow.
+
 config AGENT_LINK_REALTIME_DIRECT
     bool "Request voice grants directly from Agent Stack"
     depends on AGENT_LINK_TRANSPORT_WIFI

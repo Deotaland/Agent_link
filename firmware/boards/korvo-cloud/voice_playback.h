@@ -5,21 +5,24 @@
 
 namespace kc_audio {
 
-// Keep enough room below the transport's 75% pacing watermark to start playback.
-constexpr size_t PrebufferBytes(size_t capacity) {
-    const size_t limit = capacity * 3 / 4;
-    const size_t safe = limit > 2048 ? limit - 2048 : capacity / 2;
-    return safe < 192000 ? safe : 192000;  // Six seconds of PCM16 mono at 16 kHz.
+// PCM16 mono at 16 kHz is 32 bytes per millisecond. Use a longer cushion only
+// after a network gap, while keeping both thresholds reachable in the fallback buffer.
+constexpr size_t PrebufferBytes(size_t capacity, size_t target_ms) {
+    const size_t target = target_ms * 32;
+    return target < capacity / 2 ? target : capacity / 2;
 }
 
 class PlaybackGate {
 public:
-    explicit PlaybackGate(size_t prebuffer_bytes) : threshold_(prebuffer_bytes) {}
-    void Reset() { playing_ = false; empty_since_ = -1; underruns_ = 0; }
+    PlaybackGate(size_t start_bytes, size_t resume_bytes)
+        : start_bytes_(start_bytes), resume_bytes_(resume_bytes) {}
+    void Reset() { playing_ = false; started_ = false; empty_since_ = -1; underruns_ = 0; }
     bool Ready(size_t available, bool finished, int64_t now_ms) {
         if (!playing_) {
-            if (available < threshold_ && !(finished && available)) return false;
+            const size_t threshold = started_ ? resume_bytes_ : start_bytes_;
+            if (available < threshold && !(finished && available)) return false;
             playing_ = true;
+            started_ = true;
         }
         if (available) { empty_since_ = -1; return true; }
         if (finished) { playing_ = false; empty_since_ = -1; return false; }
@@ -32,10 +35,13 @@ public:
         return false;
     }
     unsigned Underruns() const { return underruns_; }
+    bool Playing() const { return playing_; }
 
 private:
-    size_t threshold_;
+    size_t start_bytes_;
+    size_t resume_bytes_;
     bool playing_ = false;
+    bool started_ = false;
     int64_t empty_since_ = -1;
     unsigned underruns_ = 0;
 };

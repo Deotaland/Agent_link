@@ -18,6 +18,7 @@
 //     reading reports (event 0x19), actuator downlink (command 0x33), manifest fetch (command 0x34).
 // Not yet carried by any backend: AGENT_STREAM_FILE (BLE L2CAP) and AGENT_STREAM_VIDEO (WiFi).
 #include "agent_link.h"
+#include "agent_link_platform.h"
 #include "agent_link_ota.h"
 #include "audio_downlink.h"
 #include "agent_link_transport.h"
@@ -977,6 +978,13 @@ esp_err_t agent_link_request_realtime(void) {
     if (!s_tx) return ESP_ERR_INVALID_STATE;
     if (s_cfg.transport != AGENT_TRANSPORT_WIFI) return ESP_ERR_NOT_SUPPORTED;
     return agent_transport_wifi_request_realtime();
+}
+
+extern "C" esp_err_t agent_transport_wifi_request_realtime_session(int agent_id, const char* session_id);
+esp_err_t agent_link_request_realtime_session(int agent_id, const char* session_id) {
+    if (!s_tx) return ESP_ERR_INVALID_STATE;
+    if (s_cfg.transport != AGENT_TRANSPORT_WIFI) return ESP_ERR_NOT_SUPPORTED;
+    return agent_transport_wifi_request_realtime_session(agent_id, session_id);
 }
 
 esp_err_t agent_link_end_realtime(void) {

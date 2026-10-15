@@ -5,6 +5,7 @@
 //                        from the transport's own task, which must never block on I2S.
 //   device -> platform : StartAsr()/StopAsr()         - bulk mic audio on AGENT_STREAM_AUDIO
 //                        StartCommand()/StopCommand() - one utterance on AGENT_STREAM_VOICE
+//                        StartContinuous()/StopContinuous() - open mic for a realtime call
 //
 // One mic, one reader task, and the two uplinks are not exclusive - a frame is read once and
 // fanned out to whichever are running.
@@ -59,6 +60,8 @@ public:
     // frame, so this needs nothing but a live link.
     void StartCommand();
     void StopCommand();
+    void StartContinuous();
+    void StopContinuous();
     bool CommandActive() const { return cmd_on_.load(std::memory_order_acquire); }
 
 private:
@@ -86,6 +89,7 @@ private:
     // Desired state, set by any task; reconciled by the mic task.
     std::atomic<bool> want_asr_{false};
     std::atomic<bool> want_cmd_{false};
+    std::atomic<bool> want_continuous_{false};
     // Actual state, owned by the mic task, published for the UI.
     std::atomic<bool> asr_on_{false};
     std::atomic<bool> cmd_on_{false};
