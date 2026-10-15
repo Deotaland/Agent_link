@@ -169,8 +169,7 @@ esp_err_t PostJson(const char* path, const char* body, cJSON** root_out, cJSON**
     SetErr(err, code, ok, cJSON_IsString(jmsg) ? jmsg->valuestring : "");
 
     if (!ok || code != CLOUD_API_OK) {
-        ESP_LOGW(TAG, "POST %s -> code=%d %s", path, code,
-                 cJSON_IsString(jmsg) ? jmsg->valuestring : "");
+        ESP_LOGW(TAG, "POST %s -> code=%d", path, code);
         cJSON_Delete(root);
         return ESP_ERR_INVALID_RESPONSE;
     }
@@ -229,7 +228,7 @@ esp_err_t cloud_api_init(const char* base_url) {
             ESP_LOGW(TAG, "no PSRAM — response buffer is %uB", static_cast<unsigned>(kRxFallback));
         }
     }
-    ESP_LOGI(TAG, "platform = %s", s_base);
+    ESP_LOGI(TAG, "platform HTTP client ready");
     return ESP_OK;
 }
 
@@ -265,7 +264,7 @@ esp_err_t cloud_api_claim_code(int product_id, const char* sn, const char* mac,
         return ESP_ERR_INVALID_RESPONSE;
     }
     out->expires_in = U32(data, "expires_in", 600);
-    ESP_LOGI(TAG, "activation code %s, valid %us", out->code, static_cast<unsigned>(out->expires_in));
+    ESP_LOGI(TAG, "activation code issued, valid %us", static_cast<unsigned>(out->expires_in));
     cJSON_Delete(root);
     return ESP_OK;
 }

@@ -208,10 +208,10 @@ void OnGotIp(const esp_netif_ip_info_t& ip) {
         std::lock_guard<std::mutex> lk(s_cred_mtx);
         SaveCreds(s_ssid, s_pass);
         al_wifi_prov_set_status(AL_PROV_CONNECTED, ip_str, nullptr);
-        ESP_LOGI(TAG, "provisioning succeeded: joined '%s', ip=%s (credentials saved)", s_ssid, ip_str);
+        ESP_LOGI(TAG, "provisioning succeeded; credentials saved");
         if (s_teardown_timer) esp_timer_start_once(s_teardown_timer, static_cast<uint64_t>(kProvTeardownMs) * 1000);
     } else {
-        ESP_LOGI(TAG, "WiFi connected: ip=%s", ip_str);
+        ESP_LOGI(TAG, "WiFi connected");
     }
     s_phase = Phase::kStaConnected;
 }
@@ -233,7 +233,7 @@ void OnStaDisconnected(uint8_t reason) {
     // Normal station path
     s_phase = Phase::kStaConnecting;
     if (!s_ever_got_ip && ++s_retry >= kBootFailLimit) {
-        ESP_LOGW(TAG, "cannot join '%s' after %d tries — starting provisioning portal", s_ssid, s_retry);
+        ESP_LOGW(TAG, "cannot join WiFi after %d tries; starting provisioning portal", s_retry);
         StartProvisioning();
         return;
     }
@@ -275,6 +275,9 @@ void IpEvent(void*, esp_event_base_t base, int32_t id, void* data) {
 // One-time WiFi stack bring-up: netif + event loop + default STA/AP interfaces + driver + handlers.
 esp_err_t WifiInitOnce() {
     if (s_wifi_inited) return ESP_OK;
+
+    esp_log_level_set("wifi", ESP_LOG_WARN);
+    esp_log_level_set("esp_netif_handlers", ESP_LOG_WARN);
 
     esp_err_t r = EnsureNvs();
     if (r != ESP_OK) { ESP_LOGE(TAG, "nvs init: %s", esp_err_to_name(r)); return r; }
@@ -321,7 +324,7 @@ void StartSta(const char* ssid, const char* pass) {
     ApplyStaConfig(ssid, pass);
     if (!s_started) { esp_wifi_start(); s_started = true; }   // STA_START -> connect
     else            { esp_wifi_connect(); }
-    ESP_LOGI(TAG, "joining WiFi '%s'…", ssid);
+    ESP_LOGI(TAG, "joining WiFi");
 }
 
 // The user submitted credentials on the portal
@@ -582,7 +585,7 @@ esp_err_t wifi_start(void* /*impl*/) {
     if (s_cfg && s_cfg->ssid && s_cfg->ssid[0]) {
         StartSta(s_cfg->ssid, s_cfg->password ? s_cfg->password : "");
     } else if (LoadCreds(ssid, sizeof ssid, pass, sizeof pass)) {
-        ESP_LOGI(TAG, "using stored WiFi credentials for '%s'", ssid);
+        ESP_LOGI(TAG, "using stored WiFi credentials");
         StartSta(ssid, pass);
     } else {
         ESP_LOGI(TAG, "no WiFi credentials — starting captive-portal provisioning");

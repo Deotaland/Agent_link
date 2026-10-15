@@ -249,10 +249,8 @@ void KorvoCloudAudio::MicLoop() {
                 want_continuous_.store(false, std::memory_order_release);
             } else {
                 const esp_err_t r = agent_link_stream_write(voice_stream_, buf, bytes);
-                if (r == ESP_ERR_NO_MEM && continuous) {
-                    static unsigned dropped = 0;
-                    if (++dropped % 50 == 1) ESP_LOGW(TAG, "continuous mic upload congested; dropping frames");
-                } else if (r != ESP_OK) {
+                // A full continuous queue drops this frame; the worker reports totals every five seconds.
+                if (r != ESP_OK && !(r == ESP_ERR_NO_MEM && continuous)) {
                     ESP_LOGW(TAG, "voice upload failed (%s), ending capture", esp_err_to_name(r));
                     agent_link_stream_close(voice_stream_, continuous);
                     cmd_on_.store(false, std::memory_order_release);

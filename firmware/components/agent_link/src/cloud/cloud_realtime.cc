@@ -87,26 +87,17 @@ cloud_realtime_callbacks_t s_cb = {};
 
 // Diagnostics for the continuous uplink. Only counters and timings are retained.
 std::atomic<uint32_t> s_tx_sent_frames{0};
-std::atomic<uint32_t> s_tx_sent_bytes{0};
 std::atomic<uint32_t> s_tx_sent_messages{0};
-std::atomic<uint32_t> s_tx_send_slow{0};
 std::atomic<uint32_t> s_rx_frames{0};
-std::atomic<uint32_t> s_rx_responses{0};
-std::atomic<uint32_t> s_rx_audio_done{0};
 std::atomic<uint32_t> s_tx_send_max_ms{0};
 std::atomic<uint32_t> s_worker_phase{0};
 std::atomic<uint32_t> s_worker_phase_since_ms{0};
 uint32_t s_diag_last_ms = 0;
 uint32_t s_diag_mic_frames = 0;
-uint32_t s_diag_mic_bytes = 0;
 uint32_t s_diag_dropped_frames = 0;
 uint32_t s_diag_prev_sent_frames = 0;
-uint32_t s_diag_prev_sent_bytes = 0;
 uint32_t s_diag_prev_sent_messages = 0;
-uint32_t s_diag_prev_send_slow = 0;
 uint32_t s_diag_prev_rx_frames = 0;
-uint32_t s_diag_prev_rx_responses = 0;
-uint32_t s_diag_prev_rx_audio_done = 0;
 
 void SetWorkerPhase(uint32_t phase) {
     s_worker_phase_since_ms.store(static_cast<uint32_t>(esp_timer_get_time() / 1000));
@@ -119,42 +110,28 @@ void ReportUplink() {
     const uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
     if (now - s_diag_last_ms < 5000) return;
     const uint32_t sent_frames = s_tx_sent_frames.load();
-    const uint32_t sent_bytes = s_tx_sent_bytes.load();
     const uint32_t sent_messages = s_tx_sent_messages.load();
-    const uint32_t slow = s_tx_send_slow.load();
     const uint32_t rx = s_rx_frames.load();
-    const uint32_t responses = s_rx_responses.load();
-    const uint32_t audio_done = s_rx_audio_done.load();
     const uint32_t phase = s_worker_phase.load();
     const uint32_t phase_age = now - s_worker_phase_since_ms.load();
     constexpr const char* phases[] = {"loop", "send", "poll", "read", "handle"};
     const char* phase_name = phase < sizeof phases / sizeof phases[0] ? phases[phase] : "unknown";
-    ESP_LOGI(TAG, "uplink %ums: mic=%u frames/%uB dropped=%u sent=%u frames/%uB "
-             "ws=%u queue=%u/%u rx=%u replies=%u done=%u",
-             static_cast<unsigned>(now - s_diag_last_ms),
-             static_cast<unsigned>(s_diag_mic_frames), static_cast<unsigned>(s_diag_mic_bytes),
-             static_cast<unsigned>(s_diag_dropped_frames),
+    ESP_LOGI(TAG,
+             "uplink %ums: mic=%u tx=%u drop=%u ws=%u queue=%u/%u rx=%u max_send=%ums worker=%s/%ums stack=%uB",
+             static_cast<unsigned>(now - s_diag_last_ms), static_cast<unsigned>(s_diag_mic_frames),
              static_cast<unsigned>(sent_frames - s_diag_prev_sent_frames),
-             static_cast<unsigned>(sent_bytes - s_diag_prev_sent_bytes),
+             static_cast<unsigned>(s_diag_dropped_frames),
              static_cast<unsigned>(sent_messages - s_diag_prev_sent_messages),
              static_cast<unsigned>(uxQueueMessagesWaiting(s_tx)), static_cast<unsigned>(kTxDepth),
              static_cast<unsigned>(rx - s_diag_prev_rx_frames),
-             static_cast<unsigned>(responses - s_diag_prev_rx_responses),
-             static_cast<unsigned>(audio_done - s_diag_prev_rx_audio_done));
-    ESP_LOGI(TAG, "uplink timing: send_max=%ums slow=%u worker=%s/%ums mic_stack_min=%uB",
-             static_cast<unsigned>(s_tx_send_max_ms.exchange(0)),
-             static_cast<unsigned>(slow - s_diag_prev_send_slow),
-             phase_name, static_cast<unsigned>(phase_age),
+             static_cast<unsigned>(s_tx_send_max_ms.exchange(0)), phase_name,
+             static_cast<unsigned>(phase_age),
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     s_diag_last_ms = now;
-    s_diag_mic_frames = s_diag_mic_bytes = s_diag_dropped_frames = 0;
+    s_diag_mic_frames = s_diag_dropped_frames = 0;
     s_diag_prev_sent_frames = sent_frames;
-    s_diag_prev_sent_bytes = sent_bytes;
     s_diag_prev_sent_messages = sent_messages;
-    s_diag_prev_send_slow = slow;
     s_diag_prev_rx_frames = rx;
-    s_diag_prev_rx_responses = responses;
-    s_diag_prev_rx_audio_done = audio_done;
 }
 
 bool ParseWss(const char* url, WssAddress* out) {
@@ -527,7 +504,6 @@ public:
                 free(decoded);
             }
         } else if (strcmp(event, "response.audio.done") == 0) {
-            s_rx_audio_done.fetch_add(1);
             ESP_LOGI(TAG, "reply audio: %s, %u packets, %u bytes, %u ms PCM, max gap %u ms",
                      opus_ ? "Opus" : "PCM16", packets_, static_cast<unsigned>(encoded_bytes_),
                      static_cast<unsigned>(samples_ / 16), static_cast<unsigned>(max_gap_ / 1000));
@@ -539,7 +515,6 @@ public:
             if (s_cb.state && s_ready)
                 s_cb.state(true, continuous_ ? "Microphone on" : "Hold to talk, release to send");
         } else if (strcmp(event, "response.started") == 0) {
-            s_rx_responses.fetch_add(1);
             ResetDecoder();
             samples_ = encoded_bytes_ = packets_ = 0;
             last_audio_ = max_gap_ = 0;
@@ -594,14 +569,12 @@ public:
                 const uint32_t elapsed_ms = static_cast<uint32_t>((esp_timer_get_time() - started) / 1000);
                 const uint32_t old_max = s_tx_send_max_ms.load();
                 if (elapsed_ms > old_max) s_tx_send_max_ms.store(elapsed_ms);
-                if (elapsed_ms >= 100) s_tx_send_slow.fetch_add(1);
                 SetWorkerPhase(0);
                 if (!sent) {
                     ESP_LOGW(TAG, "audio WSS send failed after %u ms", static_cast<unsigned>(elapsed_ms));
                     return false;
                 }
                 s_tx_sent_frames.fetch_add(pcm_packets);
-                s_tx_sent_bytes.fetch_add(static_cast<uint32_t>(pcm_bytes));
                 s_tx_sent_messages.fetch_add(1);
             } else {
                 if (!Send(ws, packet.kind == TxKind::kStart
@@ -960,18 +933,12 @@ esp_err_t cloud_realtime_stream_start(agent_stream_t type) {
     if (!s_run || !s_ready || s_input != AGENT_STREAM_KIND_COUNT) return ESP_ERR_INVALID_STATE;
     if (s_continuous) {
         s_tx_sent_frames.store(0);
-        s_tx_sent_bytes.store(0);
         s_tx_sent_messages.store(0);
-        s_tx_send_slow.store(0);
         s_tx_send_max_ms.store(0);
         s_rx_frames.store(0);
-        s_rx_responses.store(0);
-        s_rx_audio_done.store(0);
         s_diag_last_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-        s_diag_mic_frames = s_diag_mic_bytes = s_diag_dropped_frames = 0;
-        s_diag_prev_sent_frames = s_diag_prev_sent_bytes = s_diag_prev_sent_messages = 0;
-        s_diag_prev_send_slow = 0;
-        s_diag_prev_rx_frames = s_diag_prev_rx_responses = s_diag_prev_rx_audio_done = 0;
+        s_diag_mic_frames = s_diag_dropped_frames = 0;
+        s_diag_prev_sent_frames = s_diag_prev_sent_messages = s_diag_prev_rx_frames = 0;
         s_input = type;
         return ESP_OK;
     }
@@ -989,10 +956,7 @@ esp_err_t cloud_realtime_stream_write(agent_stream_t type, const uint8_t* data, 
     std::lock_guard<std::mutex> lock(s_mutex);
     if (!s_run || !s_ready || s_input != type) return ESP_ERR_INVALID_STATE;
     const size_t packets = (bytes + kMicBytes - 1) / kMicBytes;
-    if (s_continuous) {
-        s_diag_mic_frames += static_cast<uint32_t>(packets);
-        s_diag_mic_bytes += static_cast<uint32_t>(bytes);
-    }
+    if (s_continuous) s_diag_mic_frames += static_cast<uint32_t>(packets);
     if (packets + 2 > uxQueueSpacesAvailable(s_tx)) {
         if (s_continuous) {
             s_diag_dropped_frames += static_cast<uint32_t>(packets);

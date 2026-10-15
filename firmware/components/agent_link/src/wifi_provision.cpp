@@ -267,7 +267,7 @@ esp_err_t ProvisionPost(httpd_req_t* req) {
         strncpy(s_status.ssid, ssid, sizeof(s_status.ssid) - 1);
         s_status.ssid[sizeof(s_status.ssid) - 1] = '\0';
     }
-    ESP_LOGI(TAG, "portal: credentials submitted for '%s'", ssid);
+    ESP_LOGI(TAG, "portal: WiFi credentials submitted");
     if (s_on_creds) s_on_creds(ssid, pass);           // transport kicks off the station connect
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
@@ -415,8 +415,7 @@ extern "C" esp_err_t al_wifi_prov_start(const char* ap_ssid, al_prov_creds_cb_t 
     // One-shot scan now (before anyone connects) so the page can list nearby networks from cache.
     if (!s_scan_task) xTaskCreate(ScanTask, "al_prov_scan", 4096, nullptr, 4, &s_scan_task);
 
-    ESP_LOGI(TAG, "captive portal up: join WiFi '%s' (open), then a page opens at http://%s",
-             ap_ssid ? ap_ssid : "?", s_ap_ip_str);
+    ESP_LOGI(TAG, "captive portal ready; setup page at http://%s", s_ap_ip_str);
     return ESP_OK;
 }
 

@@ -200,7 +200,7 @@ bool ClaimLoop() {
         NoteAccepted();
         uint32_t left = claim.expires_in;
         PublishCode(claim.code, left);
-        ESP_LOGI(TAG, "show code %s — waiting for a user to claim it", claim.code);
+        ESP_LOGI(TAG, "waiting for device claim");
 
         while (s_run && left > kCodeRenewLeadS) {
             vTaskDelay(pdMS_TO_TICKS(kBindPollMs));
@@ -276,13 +276,11 @@ TokenResult FetchToken() {
     if (after) {
         if (after < kTokenMinLifeS) after = kTokenMinLifeS;
         s_token_renew = now + static_cast<int64_t>(after) * 1000000;
-        ESP_LOGI(TAG, "MQTT token for %s://%s: valid %us, renewing it in %us", s_token->protocol,
-                 s_token->host, static_cast<unsigned>(s_token->expires_in),
+        ESP_LOGI(TAG, "MQTT token valid %us, renewing in %us", static_cast<unsigned>(s_token->expires_in),
                  static_cast<unsigned>(after));
     } else {
         s_token_renew = 0;
-        ESP_LOGW(TAG, "MQTT token for %s://%s has no lifetime — renewing it only when refused",
-                 s_token->protocol, s_token->host);
+        ESP_LOGW(TAG, "MQTT token has no lifetime; renewing only when refused");
     }
     return TokenResult::kOk;
 }
@@ -405,7 +403,7 @@ void OnlineLoop() {
         NoteAccepted();
 
         if (s_agent_json && s_agent_json[0]) {
-            ESP_LOGI(TAG, "agent config: %uB (held unparsed until the platform settles its shape)",
+            ESP_LOGI(TAG, "agent configuration received (%uB)",
                      static_cast<unsigned>(strlen(s_agent_json)));
         }
 
@@ -418,7 +416,7 @@ void OnlineLoop() {
 }
 
 void SessionTask(void*) {
-    ESP_LOGI(TAG, "cloud session up: sn=%s product_id=%d", dev_identity_sn(), s_cfg.product_id);
+    ESP_LOGI(TAG, "cloud session started (product_id=%d)", s_cfg.product_id);
     while (s_run) {
         if (!cloud_cred_is_bound() && !ClaimLoop()) break;
         OnlineLoop();

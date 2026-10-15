@@ -50,8 +50,8 @@ extern "C" void app_main(void) {
     out.on_audio_reset = on_audio_reset;
     out.on_voice_reply = on_voice_reply;
     out.on_show_text = on_show_text;
-    out.on_haptic    = on_haptic;
-    out.on_led       = on_led;
+    out.on_haptic    = (board.Capabilities() & AGENT_CAP_HAPTIC) ? on_haptic : nullptr;
+    out.on_led       = (board.Capabilities() & AGENT_CAP_LED) ? on_led : nullptr;
     out.on_listen    = on_listen;   // App-initiated listen (0x3C/0x3D); no-op on boards without a mic
     out.on_command   = on_command;  // board-claimed control commands; consulted before the SDK's 1001
 

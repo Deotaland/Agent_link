@@ -46,7 +46,6 @@ cloud_mqtt_callbacks_t s_cb = {};
 // subscribed again on every connect.
 char s_topics[2][sizeof(cloud_mqtt_token_t::topic_down)] = {};
 char s_topic_up[sizeof(cloud_mqtt_token_t::topic_up)]    = {};
-char s_url[160] = {};   // for logs
 
 bool IsDownlinkTopic(const char* topic, int len) {
     for (const auto& t : s_topics) {
@@ -89,22 +88,9 @@ void LogSuback(esp_mqtt_event_handle_t ev) {
         if (!t[0]) continue;
         if (i >= ev->data_len) break;
         const uint8_t rc = static_cast<uint8_t>(ev->data[i++]);
-        if (rc >= 0x80) ESP_LOGW(TAG, "subscribe %s: refused by the broker", t);
-        else            ESP_LOGI(TAG, "subscribed %s (QoS %u)", t, rc);
+        if (rc >= 0x80) ESP_LOGW(TAG, "subscription %d refused by the broker", i);
+        else            ESP_LOGI(TAG, "subscription %d ready (QoS %u)", i, rc);
     }
-}
-
-// Every downlink message is logged as it arrives, before it runs.
-void LogDownlink(esp_mqtt_event_handle_t ev) {
-    // A message longer than esp-mqtt's buffer arrives as several events; only the first has the topic.
-    if (ev->current_data_offset != 0) {
-        ESP_LOGD(TAG, "  ... %dB more at offset %d of %d",
-                 ev->data_len, ev->current_data_offset, ev->total_data_len);
-        return;
-    }
-    // The body may contain a one-use realtime token, so never print it.
-    ESP_LOGI(TAG, "downlink %.*s (%dB, QoS %d%s)", ev->topic_len, ev->topic,
-             ev->total_data_len, ev->qos, ev->retain ? ", retained" : "");
 }
 
 // A connection attempt failed below MQTT: in DNS, TCP or TLS, which esp-tls names, or in the
@@ -119,9 +105,9 @@ void LogConnectFailure(esp_mqtt_event_handle_t ev) {
         if (t) snprintf(ws, sizeof ws, " upgrade=%d", esp_transport_ws_get_upgrade_request_status(t));
     }
     // The heap figures tell a TLS allocation failure from a network one.
-    ESP_LOGW(TAG, "connect to %s failed: tls=%s (-0x%04x, cert 0x%x) errno=%d%s — "
+    ESP_LOGW(TAG, "MQTT connect failed: tls=%s (-0x%04x, cert 0x%x) errno=%d%s — "
                   "internal heap free=%uB largest=%uB",
-             s_url, esp_err_to_name(e->esp_tls_last_esp_err),
+             esp_err_to_name(e->esp_tls_last_esp_err),
              static_cast<unsigned>(-e->esp_tls_stack_err),
              static_cast<unsigned>(e->esp_tls_cert_verify_flags), e->esp_transport_sock_errno, ws,
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
@@ -135,7 +121,7 @@ void OnEvent(void* /*arg*/, esp_event_base_t /*base*/, int32_t id, void* data) {
     case MQTT_EVENT_CONNECTED:
         s_connected = true;
         // The TLS handshake has just run on this task, which is as deep as its stack gets.
-        ESP_LOGI(TAG, "connected to %s (task stack headroom %uB)", s_url,
+        ESP_LOGI(TAG, "connected (task stack headroom %uB)",
                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
         Subscribe(ev->client);
         break;
@@ -152,7 +138,6 @@ void OnEvent(void* /*arg*/, esp_event_base_t /*base*/, int32_t id, void* data) {
         break;
 
     case MQTT_EVENT_DATA:
-        LogDownlink(ev);
         // Only the first piece of a message carries its topic. A message esp-mqtt had to split is
         // larger than any command should be, so it is dropped rather than reassembled.
         if (ev->current_data_offset != 0 || !IsDownlinkTopic(ev->topic, ev->topic_len)) break;
@@ -214,8 +199,6 @@ esp_err_t cloud_mqtt_start(const cloud_mqtt_token_t* tok, const cloud_mqtt_callb
     snprintf(s_topics[0], sizeof s_topics[0], "%s", tok->topic_down);
     snprintf(s_topics[1], sizeof s_topics[1], "%s", tok->topic_ota_down);
     snprintf(s_topic_up, sizeof s_topic_up, "%s", tok->topic_up);
-    snprintf(s_url, sizeof s_url, "%s://%s:%u%s", tok->protocol, tok->host,
-             static_cast<unsigned>(tok->port), s_ws ? tok->path : "");
     s_cb = cb ? *cb : cloud_mqtt_callbacks_t{};
 
     // esp-mqtt copies every string it is given.
@@ -232,7 +215,7 @@ esp_err_t cloud_mqtt_start(const cloud_mqtt_token_t* tok, const cloud_mqtt_callb
         s_client = nullptr;
         return r;
     }
-    ESP_LOGI(TAG, "connecting to %s as %s", s_url, tok->client_id);
+    ESP_LOGI(TAG, "connecting to MQTT broker");
     return ESP_OK;
 }
 

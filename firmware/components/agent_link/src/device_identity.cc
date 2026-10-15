@@ -131,13 +131,12 @@ esp_err_t dev_identity_load(bool allow_mint) {
         if (have_legacy) {
             if (memcmp(canon, legacy, 16) != 0) {
                 // Keep the canonical one; it is the identity the App already knows.
-                ESP_LOGW(TAG, "two identities on this unit: keeping %s, dropping the WiFi-only %s. "
-                              "The platform's record under the second one is now orphaned — "
-                              "unbind it in the console.", s_sn, legacy_raw);
+                ESP_LOGW(TAG, "two device identities found; kept the current one. "
+                              "Unbind the old WiFi record in the console if needed.");
             }
             EraseLegacy();
         }
-        ESP_LOGI(TAG, "device identity %s", s_sn);
+        ESP_LOGI(TAG, "device identity loaded");
         return ESP_OK;
     }
 
@@ -145,12 +144,12 @@ esp_err_t dev_identity_load(bool allow_mint) {
         // Only the legacy identity exists: adopt it, so the platform keeps its existing record.
         r = WriteCanonical(legacy);
         if (r != ESP_OK) {
-            ESP_LOGE(TAG, "could not adopt %s as the device identity: %s", legacy_raw, esp_err_to_name(r));
+            ESP_LOGE(TAG, "could not adopt the WiFi device identity: %s", esp_err_to_name(r));
             return r;
         }
         Take(legacy);
         EraseLegacy();
-        ESP_LOGI(TAG, "device identity %s (adopted from the WiFi channel)", s_sn);
+        ESP_LOGI(TAG, "device identity adopted from the WiFi channel");
         return ESP_OK;
     }
 
@@ -168,7 +167,7 @@ esp_err_t dev_identity_load(bool allow_mint) {
         return r;
     }
     Take(fresh);
-    ESP_LOGI(TAG, "first boot: minted device identity %s", s_sn);
+    ESP_LOGI(TAG, "first boot: device identity created");
     return ESP_OK;
 }
 

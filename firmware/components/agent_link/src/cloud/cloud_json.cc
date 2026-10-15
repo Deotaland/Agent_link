@@ -46,7 +46,6 @@ constexpr int kErrRejected       = 1003;
 constexpr int kErrInvalid        = 1004;
 
 constexpr size_t kManifestMax = 16 * 1024;   // 32 endpoints, the registry's limit, come to a few KB
-constexpr int    kLogMax      = 200;         // characters of each response that are logged
 
 cloud_json_hooks_t s_hooks = {};
 
@@ -520,25 +519,21 @@ cJSON* NewResponse(const Request& rq, int code, const char* message, cJSON** par
     return r;
 }
 
-// Publish a response and log the outcome. Takes the response.
-void Send(const Request& rq, cJSON* response) {
+// Publish a response without logging its body or request identifiers.
+void Send(cJSON* response) {
     char* text = cJSON_PrintUnformatted(response);
     cJSON_Delete(response);
     if (!text) {
-        ESP_LOGE(TAG, "%s: no memory for the response", rq.action.c_str());
+        ESP_LOGE(TAG, "no memory for the response");
         return;
     }
     const int       n = static_cast<int>(strlen(text));
     const esp_err_t r = s_hooks.publish ? s_hooks.publish(text, static_cast<size_t>(n)) : ESP_ERR_INVALID_STATE;
-    if (r == ESP_OK) {
-        ESP_LOGI(TAG, "%s -> up %.*s%s", rq.action.c_str(), n < kLogMax ? n : kLogMax, text, n > kLogMax ? " ..." : "");
-    } else {
-        ESP_LOGW(TAG, "%s: response not sent (%s)", rq.action.c_str(), esp_err_to_name(r));
-    }
+    if (r != ESP_OK) ESP_LOGW(TAG, "response not sent (%s)", esp_err_to_name(r));
     cJSON_free(text);
 }
 
-void Fail(const Request& rq, int code, const char* message) { Send(rq, NewResponse(rq, code, message)); }
+void Fail(const Request& rq, int code, const char* message) { Send(NewResponse(rq, code, message)); }
 
 // Run a command through the core and respond with its answer.
 void Answer(const Request& rq, uint8_t cmd, const std::vector<uint8_t>& payload, Decode decode) {
@@ -550,7 +545,7 @@ void Answer(const Request& rq, uint8_t cmd, const std::vector<uint8_t>& payload,
     cJSON* params   = nullptr;
     cJSON* response = NewResponse(rq, code, nullptr, &params);
     if (code == 0 && decode) decode(s_pending.extra, params);
-    Send(rq, response);
+    Send(response);
 }
 
 // params {"cmd": BLE command id 0-255, "raw": BLE payload in base64}: the way to reach a command a
@@ -573,7 +568,7 @@ void RunRaw(const Request& rq, const cJSON* params) {
 void Dispatch(const Request& rq, const cJSON* params) {
     const char* action = rq.action.c_str();
     if (strcmp(action, "ping") == 0) {
-        Send(rq, NewResponse(rq, 0, nullptr));
+        Send(NewResponse(rq, 0, nullptr));
         return;
     }
     if (strcmp(action, "realtime_grant") == 0) {
@@ -586,7 +581,7 @@ void Dispatch(const Request& rq, const cJSON* params) {
         const esp_err_t r = s_hooks.realtime_grant
                                 ? s_hooks.realtime_grant(url->valuestring, token->valuestring)
                                 : ESP_ERR_NOT_SUPPORTED;
-        if (r == ESP_OK) Send(rq, NewResponse(rq, 0, nullptr));
+        if (r == ESP_OK) Send(NewResponse(rq, 0, nullptr));
         else Fail(rq, r == ESP_ERR_INVALID_ARG ? kErrInvalid : kErrRejected,
                   r == ESP_ERR_INVALID_ARG ? "invalid realtime grant" : "realtime grant not queued");
         return;
@@ -651,7 +646,7 @@ void cloud_json_handle_command(const char* json, size_t len) {
     if (strcmp(kind, "response") == 0 || strcmp(kind, "event") == 0) {
         // Nothing the device sent asks for a response, and no platform event has a handler yet.
         // Neither is answered, by definition.
-        ESP_LOGW(TAG, "%s %s ignored: only requests are handled", kind, rq.msg_id.c_str());
+        ESP_LOGD(TAG, "non-request envelope ignored");
         cJSON_Delete(in);
         return;
     }

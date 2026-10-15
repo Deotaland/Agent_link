@@ -82,7 +82,7 @@ esp_err_t HttpEvent(esp_http_client_event_t* event) {
     return ESP_OK;
 }
 
-esp_err_t Exchange(esp_http_client_method_t method, const char* path, const char* body,
+esp_err_t Exchange(const char* operation, esp_http_client_method_t method, const char* path, const char* body,
                    size_t capacity, cJSON** root_out, int* status_out) {
     if (root_out) *root_out = nullptr;
     if (status_out) *status_out = 0;
@@ -135,7 +135,7 @@ esp_err_t Exchange(esp_http_client_method_t method, const char* path, const char
             } else *root_out = root;
         }
     } else if (result == ESP_OK && method != HTTP_METHOD_DELETE) result = ESP_ERR_INVALID_RESPONSE;
-    if (result != ESP_OK) ESP_LOGW(TAG, "%s HTTP %d: %s", path, status, esp_err_to_name(result));
+    if (result != ESP_OK) ESP_LOGW(TAG, "%s: HTTP %d, %s", operation, status, esp_err_to_name(result));
     memset(buffer, 0, response.size);
     free(buffer);
     return result;
@@ -167,7 +167,7 @@ extern "C" esp_err_t agent_link_platform_agents(int page, agent_link_platform_ag
     char path[96];
     snprintf(path, sizeof path, "/api/agents?page=%d&page_size=20", page);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange(HTTP_METHOD_GET, path, nullptr, kListBytes, &root, nullptr);
+    esp_err_t result = Exchange("list agents", HTTP_METHOD_GET, path, nullptr, kListBytes, &root, nullptr);
     if (result != ESP_OK) return result;
     const cJSON* data = Data(root);
     const cJSON* items = Items(data);
@@ -207,7 +207,7 @@ extern "C" esp_err_t agent_link_platform_bind_agent(int agent_id) {
     char path[160];
     snprintf(path, sizeof path, "/api/devices?keyword=%s&page=1&page_size=20", sn);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange(HTTP_METHOD_GET, path, nullptr, kSmallBytes, &root, nullptr);
+    esp_err_t result = Exchange("find device", HTTP_METHOD_GET, path, nullptr, kSmallBytes, &root, nullptr);
     if (result != ESP_OK) return result;
     int device_id = 0;
     int bound_agent_id = 0;
@@ -234,7 +234,7 @@ extern "C" esp_err_t agent_link_platform_bind_agent(int agent_id) {
     char body[64];
     snprintf(body, sizeof body, "{\"agent_id\":%d}", agent_id);
     root = nullptr;
-    result = Exchange(HTTP_METHOD_POST, path, body, kSmallBytes, &root, nullptr);
+    result = Exchange("bind agent", HTTP_METHOD_POST, path, body, kSmallBytes, &root, nullptr);
     cJSON_Delete(root);
     return result;
 }
@@ -247,7 +247,7 @@ extern "C" esp_err_t agent_link_platform_conversations(int agent_id, size_t offs
     char path[160];
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/conversations", agent_id);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange(HTTP_METHOD_GET, path, nullptr, kListBytes, &root, nullptr);
+    esp_err_t result = Exchange("list conversations", HTTP_METHOD_GET, path, nullptr, kListBytes, &root, nullptr);
     if (result != ESP_OK) return result;
     const cJSON* items = Items(Data(root));
     if (!cJSON_IsArray(items)) result = ESP_ERR_INVALID_RESPONSE;
@@ -274,7 +274,7 @@ extern "C" esp_err_t agent_link_platform_create_conversation(int agent_id, char*
     char path[160];
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/conversations", agent_id);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange(HTTP_METHOD_POST, path, nullptr, kSmallBytes, &root, nullptr);
+    esp_err_t result = Exchange("create conversation", HTTP_METHOD_POST, path, nullptr, kSmallBytes, &root, nullptr);
     if (result != ESP_OK) return result;
     const cJSON* data = Data(root);
     const char* session = String(data, "conversation_id");
@@ -292,7 +292,7 @@ extern "C" esp_err_t agent_link_platform_delete_conversation(int agent_id,
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/conversations/%s",
              agent_id, conversation_id);
     cJSON* root = nullptr;
-    const esp_err_t result = Exchange(HTTP_METHOD_DELETE, path, nullptr, kSmallBytes, &root, nullptr);
+    const esp_err_t result = Exchange("delete conversation", HTTP_METHOD_DELETE, path, nullptr, kSmallBytes, &root, nullptr);
     cJSON_Delete(root);
     return result;
 }
@@ -307,7 +307,8 @@ esp_err_t cloud_platform_grant(int agent_id, const char* session_id, bool refres
     char body[128];
     snprintf(body, sizeof body, "{\"session_id\":\"%s\"}", session_id);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange(HTTP_METHOD_POST, path, body, kSmallBytes, &root, http_status);
+    esp_err_t result = Exchange(refresh ? "refresh voice grant" : "request voice grant",
+                                HTTP_METHOD_POST, path, body, kSmallBytes, &root, http_status);
     if (result != ESP_OK) return result;
     const cJSON* data = Data(root);
     const cJSON* grant = Field(data, "grant");
@@ -352,6 +353,6 @@ void cloud_platform_end_grant(int agent_id, const char* session_id) {
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/realtime-grant/%s",
              agent_id, session_id);
     cJSON* root = nullptr;
-    (void)Exchange(HTTP_METHOD_DELETE, path, nullptr, kSmallBytes, &root, nullptr);
+    (void)Exchange("end voice grant", HTTP_METHOD_DELETE, path, nullptr, kSmallBytes, &root, nullptr);
     cJSON_Delete(root);
 }

@@ -373,7 +373,7 @@ void BuildHome() {
 }
 
 void OnCameraIcon(lv_event_t* /*e*/) {
-    ESP_LOGI(TAG, "camera icon tapped");
+    ESP_LOGD(TAG, "camera icon tapped");
     s_want.store(Mode::kCamera, std::memory_order_release);
 }
 
@@ -704,8 +704,8 @@ void TryConnectVoice() {
     } else if (r != ESP_ERR_INVALID_STATE || ++s_voice_auto_attempts >= 10) {
         s_voice_autoconnect_pending = false;
         lv_label_set_text(s_call_status, "Voice unavailable - tap Retry");
+        ESP_LOGW(TAG, "voice request failed: %s", esp_err_to_name(r));
     }
-    ESP_LOGI(TAG, "voice request: %s", esp_err_to_name(r));
 }
 
 void ConnectVoice(lv_event_t* /*e*/) {
@@ -1073,7 +1073,7 @@ void ApplyMode(Mode want) {
         Lock();
         if (s_lcd) (void)s_lcd->FillSolid(rgb565::kBlack);
         Unlock();
-        ESP_LOGI(TAG, "camera open - swipe up from the bottom to go back");
+        ESP_LOGD(TAG, "camera open");
         return;
     }
 
@@ -1131,13 +1131,13 @@ void OnSwipeUpFromBottom() {
     const Mode m = s_mode.load(std::memory_order_acquire);
     if (PageIndexOf(m) >= 0) return;
     const Mode back = s_last_page.load(std::memory_order_acquire);
-    ESP_LOGI(TAG, "swipe up from the bottom -> %s", back == Mode::kApps ? "apps" : "home");
+    ESP_LOGD(TAG, "swipe up from the bottom -> %s", back == Mode::kApps ? "apps" : "home");
     s_want.store(back, std::memory_order_release);
 }
 
 void OnSwipeDownFromTop() {
     if (s_mode.load(std::memory_order_acquire) == Mode::kShade) return;
-    ESP_LOGI(TAG, "swipe down from the top -> shade");
+    ESP_LOGD(TAG, "swipe down from the top -> shade");
     s_want.store(Mode::kShade, std::memory_order_release);
 }
 
@@ -1148,7 +1148,7 @@ void OnSwipeHorizontal(int dx) {
 
     const int next = dx < 0 ? (idx + 1) % kPageCount
                             : (idx + kPageCount - 1) % kPageCount;
-    ESP_LOGI(TAG, "swipe %s -> page %d", dx < 0 ? "left" : "right", next);
+    ESP_LOGD(TAG, "swipe %s -> page %d", dx < 0 ? "left" : "right", next);
     s_want.store(kPages[next], std::memory_order_release);
 }
 

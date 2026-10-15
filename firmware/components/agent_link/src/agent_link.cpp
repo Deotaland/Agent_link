@@ -284,8 +284,7 @@ std::string BuildManifestJson() {
 // Send the manifest, fragmented into 0x18 IoManifest events over the control plane (send_ctrl).
 //   Each chunk payload = [chunk_idx(1)] [last(1: 0/1)] [json fragment...]; the App concatenates
 //   chunks in order until last=1, then parses the whole JSON.
-// Triggered: after the BLE peer subscribes to 0xFFC4 (OnLinkReady) / when WiFi reaches READY
-//   (SetLinkState) / on the App's 0x34 fetch command.
+// Triggered after the BLE peer subscribes to 0xFFC4, or by a 0x34 fetch command.
 void SendManifest(bool force) {
     if (s_io_count == 0) return;                    // no endpoints: no manifest
     if (!force && s_manifest_sent) return;          // already sent in this connection
@@ -468,9 +467,7 @@ void SetLinkState(agent_state_t state) {
     const bool is_up  = (state   != AGENT_STATE_DISCONNECTED);
     s_state = state;
 
-    // Cleared on connect too, not just disconnect: the manifest is re-sent after the peer
-    // subscribes (BLE) or the data plane comes up (WiFi), and any stream slot left over from a
-    // previous peer names a session this one has never heard of.
+    // Cleared on connect too, not just disconnect: a new peer must not reuse old stream slots.
     ResetLinkState();
 
     if (is_up && !was_up) {
@@ -478,11 +475,8 @@ void SetLinkState(agent_state_t state) {
         // (initial sync for the peer).
         s_bat_pct = -1; s_bat_chg = -1; s_bat_low_armed = true;
     }
-    // The manifest needs a control plane (READY). On BLE it is sent from OnLinkReady instead, once
-    // the peer has subscribed to 0xFFC4; before that the notify would be dropped.
-    if (state == AGENT_STATE_READY && s_cfg.transport == AGENT_TRANSPORT_WIFI) {
-        SendManifest(/*force=*/false);
-    }
+    // WiFi publishes command replies through MQTT, but does not publish unsolicited BLE events.
+    // The manifest is available through the 0x34 request bridge.
     if (was_up != is_up) {
         // Link up confirms a freshly OTA'd image (the link is the only upgrade path, so it is the
         // self-test that matters); link down aborts an upgrade that was mid-flight.
@@ -1086,8 +1080,8 @@ esp_err_t agent_link_register_io(const agent_link_io_desc_t* desc,
     ESP_LOGI(TAG, "register_io[%d]: id='%s' kind='%s' dir=%s",
              s_io_count, desc->id, desc->kind, desc->dir == AGENT_IO_OUT ? "out" : "in");
     s_io_count++;
-    // The manifest is serialized and sent during the connection handshake (BLE: after the 0xFFC4
-    // subscribe; WiFi: after connect), see SendManifest. Downlink actuator commands (0x33) are
+    // BLE sends the manifest after the 0xFFC4 subscription. WiFi fetches it on command 0x34.
+    // Downlink actuator commands (0x33) are
     // matched by id to s_io[].cb, see OnCtrlFrame.
     return ESP_OK;
 }
