@@ -22,6 +22,7 @@
 #include "driver/gpio.h"
 #include "driver/i2c_types.h"
 #include "es_codec.h"
+#include "voice_playback.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
@@ -81,6 +82,8 @@ private:
     std::atomic<uint32_t> play_cleared_{0};
     std::atomic<bool> play_finished_{false};
     std::atomic<size_t> play_dropped_{0};
+    std::atomic<unsigned> play_ends_{0};
+    kc_audio::SpeakerEchoGuard echo_guard_;
 
     // Open while the corresponding uplink is running; both may be open at once.
     agent_stream_handle_t audio_stream_ = nullptr;

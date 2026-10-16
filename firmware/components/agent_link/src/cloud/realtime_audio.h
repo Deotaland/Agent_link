@@ -5,6 +5,38 @@
 
 namespace agentlink::realtime {
 
+// Keep PCM frame boundaries independent of the sizes passed to stream_write().
+template <size_t FrameBytes>
+class PcmFrames {
+public:
+    void Reset() { size_ = 0; }
+    template <typename Emit>
+    bool Append(const uint8_t* data, size_t bytes, Emit emit) {
+        while (bytes) {
+            const size_t take = bytes < FrameBytes - size_ ? bytes : FrameBytes - size_;
+            for (size_t i = 0; i < take; ++i) data_[size_ + i] = data[i];
+            size_ += take;
+            data += take;
+            bytes -= take;
+            if (size_ == FrameBytes) {
+                size_ = 0;
+                if (!emit(data_)) return false;
+            }
+        }
+        return true;
+    }
+    template <typename Emit>
+    bool Flush(Emit emit) {
+        if (!size_) return true;
+        for (size_t i = size_; i < FrameBytes; ++i) data_[i] = 0;
+        size_ = 0;
+        return emit(data_);
+    }
+private:
+    uint8_t data_[FrameBytes];
+    size_t size_ = 0;
+};
+
 // The WebSocket writer masks the payload in place, even when its API takes const char*.
 template <typename Writer>
 bool SendControl(const char* text, Writer write) {

@@ -27,6 +27,7 @@
 #include "cloud_realtime.h"
 #include "cloud_session.h"
 #include "wifi_provision.h"
+#include "wifi_join.h"
 
 #include <atomic>
 #include <cstring>
@@ -53,12 +54,12 @@ constexpr const char* kNvsNs   = "al_wifi";
 constexpr const char* kNvsSsid = "ssid";
 constexpr const char* kNvsPass = "pass";
 
-// Reconnect / provisioning-fallback thresholds.
-constexpr int      kProvFailLimit   = 3;      // provisioning: give up an attempt after 3 disconnects
-constexpr int      kBootFailLimit   = 8;      // stored creds: after 8 failed joins without ever getting IP ,then open the portal
-constexpr uint32_t kReconnectBaseMs = 2000;   // base station reconnect backoff
-constexpr uint32_t kReconnectMaxMs  = 30000;  // backoff cap
-constexpr uint32_t kProvTeardownMs  = 4000;   // linger on the portal after success so the page can show it, then drop the AP
+constexpr unsigned kProvFailLimit = 3;
+constexpr int64_t kProvTeardownMs = 4000;
+
+ESP_EVENT_DEFINE_BASE(kWifiControl);
+enum { kWifiTick, kWifiCredentials };
+struct WifiCredentials { char ssid[33]; char pass[65]; };
 
 enum class Phase { kIdle, kProvisioning, kStaConnecting, kStaConnected };
 
@@ -96,19 +97,27 @@ void (*s_text)(const char*) = nullptr;
 agent_cloud_status_t s_last_cloud = {};
 portMUX_TYPE         s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 
-bool  s_wifi_inited = false;
-bool  s_started     = false;
-Phase s_phase       = Phase::kIdle;
-bool  s_want_connect = false;    // gate STA_START/reconnect auto-connect (off while waiting for portal input)
-bool  s_ever_got_ip  = false;    // once true, keep retrying forever instead of falling back to the portal
-int   s_retry        = 0;        // consecutive failed joins in the current phase
+bool s_wifi_inited = false;
+bool s_started = false;
+std::atomic<Phase> s_phase{Phase::kIdle};
+bool s_want_connect = false;
+bool s_ignore_leave = false;
+std::mutex s_wifi_mtx;
+agentlink::wifi::JoinWindow s_join;
+int64_t s_portal_close_at = 0;
+unsigned s_prov_failures = 0;
+
+enum class JoinFailure { kNone, kNotFound, kAuth, kDisconnected, kNoIp, kTimeout, kDriver };
+std::atomic<JoinFailure> s_join_failure{JoinFailure::kNone};
+std::atomic<unsigned> s_join_left{0};
+std::atomic<unsigned> s_join_attempt{0};
+std::atomic<bool> s_waiting_ip{false};
 
 char       s_ssid[33] = {0};     // credentials currently being tried
 char       s_pass[65] = {0};
 std::mutex s_cred_mtx;
 
-esp_timer_handle_t s_reconnect_timer = nullptr;
-esp_timer_handle_t s_teardown_timer  = nullptr;
+esp_timer_handle_t s_tick_timer = nullptr;
 
 void StartProvisioning();
 void ReportStatus();
@@ -143,15 +152,47 @@ void SaveCreds(const char* ssid, const char* pass) {
 }
 
 //  Helpers
-// Returns a short machine code (not prose) so the portal page can localize it — see connecting.html.
-const char* ReasonStr(uint8_t reason) {
+JoinFailure JoinReason(uint8_t reason) {
     switch (reason) {
-    case WIFI_REASON_NO_AP_FOUND:              return "notfound";
+    case WIFI_REASON_NO_AP_FOUND:
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+    case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+    case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD: return JoinFailure::kNotFound;
     case WIFI_REASON_AUTH_FAIL:
     case WIFI_REASON_HANDSHAKE_TIMEOUT:
-    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:   return "badpass";
-    default:                                   return "fail";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return JoinFailure::kAuth;
+    default: return JoinFailure::kDisconnected;
     }
+}
+
+const char* PortalReason(JoinFailure reason) {
+    switch (reason) {
+    case JoinFailure::kNotFound: return "notfound";
+    case JoinFailure::kAuth: return "badpass";
+    case JoinFailure::kNoIp: return "noip";
+    case JoinFailure::kTimeout: return "timeout";
+    default: return "fail";
+    }
+}
+
+const char* JoinMessage(JoinFailure reason) {
+    switch (reason) {
+    case JoinFailure::kNotFound: return "Network not found";
+    case JoinFailure::kAuth: return "Authentication failed";
+    case JoinFailure::kDisconnected: return "Connection lost";
+    case JoinFailure::kNoIp: return "No IP address received";
+    case JoinFailure::kTimeout: return "Connection timed out";
+    case JoinFailure::kDriver: return "WiFi request failed";
+    default: return "Connecting";
+    }
+}
+
+int64_t NowMs() { return esp_timer_get_time() / 1000; }
+
+void UpdateJoinProgress() {
+    s_join_left = s_join.RemainingSeconds(NowMs());
+    s_join_attempt = s_join.Attempts();
+    s_waiting_ip = s_join.WaitingIp();
 }
 
 void BuildApSsid() {
@@ -160,12 +201,13 @@ void BuildApSsid() {
     snprintf(s_ap_ssid, sizeof s_ap_ssid, "%s-%02X%02X", s_name, mac[4], mac[5]);
 }
 
-void ApplyStaConfig(const char* ssid, const char* pass) {
+esp_err_t ApplyStaConfig(const char* ssid, const char* pass) {
     wifi_config_t wc = {};
     strncpy(reinterpret_cast<char*>(wc.sta.ssid), ssid, sizeof(wc.sta.ssid) - 1);
     if (pass) strncpy(reinterpret_cast<char*>(wc.sta.password), pass, sizeof(wc.sta.password) - 1);
+    wc.sta.threshold.authmode = wc.sta.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     wc.sta.pmf_cfg.capable = true;   // allow WPA3/PMF APs
-    esp_wifi_set_config(WIFI_IF_STA, &wc);
+    return esp_wifi_set_config(WIFI_IF_STA, &wc);
 }
 
 void ApplyApConfig() {
@@ -179,29 +221,26 @@ void ApplyApConfig() {
     esp_wifi_set_config(WIFI_IF_AP, &wc);
 }
 
-void ScheduleReconnect(uint32_t ms) {
-    if (!s_reconnect_timer) return;
-    esp_timer_stop(s_reconnect_timer);                 // harmless if not running
-    esp_timer_start_once(s_reconnect_timer, static_cast<uint64_t>(ms) * 1000);
+void ConnectStation() {
+    const esp_err_t r = esp_wifi_connect();
+    if (r != ESP_OK) {
+        s_join_failure = JoinFailure::kDriver;
+        s_join.Failed(NowMs());
+        ESP_LOGW(TAG, "WiFi connect request: %s", esp_err_to_name(r));
+    }
 }
 
-void ReconnectCb(void*) {
-    if (s_want_connect) esp_wifi_connect();
-}
-
-// Fired ~kProvTeardownMs after a successful provisioning join: close the portal and drop the AP.
-void TeardownProvCb(void*) {
-    al_wifi_prov_stop();
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    ESP_LOGI(TAG, "provisioning portal closed; SoftAP down");
-}
+void DisconnectStation() { s_ignore_leave = esp_wifi_disconnect() == ESP_OK; }
 
 // Station reached the network
 void OnGotIp(const esp_netif_ip_info_t& ip) {
     char ip_str[16];
     esp_ip4addr_ntoa(&ip.ip, ip_str, sizeof ip_str);
-    s_ever_got_ip = true;
-    s_retry = 0;
+    if (!s_want_connect || !s_join.Active()) return;
+    s_join.Stop();
+    s_prov_failures = 0;
+    s_join_failure = JoinFailure::kNone;
+    UpdateJoinProgress();
 
     if (s_phase == Phase::kProvisioning) {
         // First successful join from the portal: persist the credentials now
@@ -209,7 +248,7 @@ void OnGotIp(const esp_netif_ip_info_t& ip) {
         SaveCreds(s_ssid, s_pass);
         al_wifi_prov_set_status(AL_PROV_CONNECTED, ip_str, nullptr);
         ESP_LOGI(TAG, "provisioning succeeded; credentials saved");
-        if (s_teardown_timer) esp_timer_start_once(s_teardown_timer, static_cast<uint64_t>(kProvTeardownMs) * 1000);
+        s_portal_close_at = NowMs() + kProvTeardownMs;
     } else {
         ESP_LOGI(TAG, "WiFi connected");
     }
@@ -217,59 +256,117 @@ void OnGotIp(const esp_netif_ip_info_t& ip) {
 }
 
 void OnStaDisconnected(uint8_t reason) {
-    if (s_phase == Phase::kProvisioning) {
-        // A join attempt during provisioning failed,retry a couple times, then tell the page.
-        if (++s_retry >= kProvFailLimit) {
-            s_want_connect = false;                    // stop hammering; wait for a fresh submit from the page
-            al_wifi_prov_set_status(AL_PROV_FAILED, nullptr, ReasonStr(reason));
-            ESP_LOGW(TAG, "provisioning join failed (reason=%d) after %d tries — awaiting retry", reason, s_retry);
-        } else {
-            ESP_LOGD(TAG, "provisioning join retry %d (reason=%d)", s_retry, reason);
-            ScheduleReconnect(1500);
-        }
-        return;
+    if (!s_want_connect) return;
+    if (reason == WIFI_REASON_ASSOC_LEAVE && s_ignore_leave) { s_ignore_leave = false; return; }
+    s_portal_close_at = 0;
+    if (!s_join.Active()) {
+        s_join.Begin(NowMs());
+        s_phase = al_wifi_prov_active() ? Phase::kProvisioning : Phase::kStaConnecting;
+        ESP_LOGI(TAG, "WiFi disconnected; reconnecting for up to 20s");
     }
-
-    // Normal station path
-    s_phase = Phase::kStaConnecting;
-    if (!s_ever_got_ip && ++s_retry >= kBootFailLimit) {
-        ESP_LOGW(TAG, "cannot join WiFi after %d tries; starting provisioning portal", s_retry);
-        StartProvisioning();
-        return;
+    s_join_failure = JoinReason(reason);
+    s_join.Failed(NowMs());
+    if (s_phase == Phase::kProvisioning && ++s_prov_failures >= kProvFailLimit) {
+        s_want_connect = false;
+        s_join.Stop();
+        al_wifi_prov_set_status(AL_PROV_FAILED, nullptr, PortalReason(s_join_failure));
     }
-    uint32_t backoff = kReconnectBaseMs << (s_retry < 4 ? s_retry : 4);
-    if (backoff > kReconnectMaxMs) backoff = kReconnectMaxMs;
-    ESP_LOGD(TAG, "station disconnected (reason=%d) — reconnect in %ums", reason, static_cast<unsigned>(backoff));
-    ScheduleReconnect(backoff);
+    UpdateJoinProgress();
+    ESP_LOGW(TAG, "WiFi attempt %u: %s (reason=%u, %us left)", s_join.Attempts(),
+             JoinMessage(s_join_failure), reason, s_join_left.load());
 }
 
 void WifiEvent(void*, esp_event_base_t base, int32_t id, void* data) {
     if (base != WIFI_EVENT) return;
-    switch (id) {
-    case WIFI_EVENT_STA_START:
-        if (s_want_connect) esp_wifi_connect();
-        break;
-    case WIFI_EVENT_STA_CONNECTED:
-        ESP_LOGD(TAG, "station associated — awaiting IP");
-        break;
-    case WIFI_EVENT_STA_DISCONNECTED:
-        OnStaDisconnected(static_cast<const wifi_event_sta_disconnected_t*>(data)->reason);
-        break;
-    case WIFI_EVENT_AP_STACONNECTED:
-        ESP_LOGD(TAG, "portal: a client joined the SoftAP");
-        break;
-    case WIFI_EVENT_AP_STADISCONNECTED:
-        ESP_LOGD(TAG, "portal: a client left the SoftAP");
-        break;
-    default:
-        break;
+    {
+        std::lock_guard<std::mutex> lock(s_wifi_mtx);
+        switch (id) {
+        case WIFI_EVENT_STA_START:
+            if (s_want_connect) ConnectStation();
+            break;
+        case WIFI_EVENT_STA_CONNECTED:
+            if (s_want_connect && s_join.Active()) {
+                s_ignore_leave = false;
+                s_join.Associated();
+                s_join_failure = JoinFailure::kNone;
+                UpdateJoinProgress();
+                ESP_LOGI(TAG, "WiFi associated; waiting for IP");
+            }
+            break;
+        case WIFI_EVENT_STA_DISCONNECTED:
+            OnStaDisconnected(static_cast<const wifi_event_sta_disconnected_t*>(data)->reason);
+            break;
+        case WIFI_EVENT_AP_STACONNECTED:
+            ESP_LOGD(TAG, "portal: a client joined the SoftAP");
+            break;
+        case WIFI_EVENT_AP_STADISCONNECTED:
+            ESP_LOGD(TAG, "portal: a client left the SoftAP");
+            break;
+        default:
+            break;
+        }
     }
+    if (id == WIFI_EVENT_STA_CONNECTED || id == WIFI_EVENT_STA_DISCONNECTED) ReportStatus();
 }
 
 void IpEvent(void*, esp_event_base_t base, int32_t id, void* data) {
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        OnGotIp(static_cast<const ip_event_got_ip_t*>(data)->ip_info);
+        {
+            std::lock_guard<std::mutex> lock(s_wifi_mtx);
+            OnGotIp(static_cast<const ip_event_got_ip_t*>(data)->ip_info);
+        }
+        ReportStatus();
     }
+}
+
+void OnProvCreds(const char* ssid, const char* pass);
+void ApplyProvCreds(const WifiCredentials& creds);
+
+void TickCb(void*) { (void)esp_event_post(kWifiControl, kWifiTick, nullptr, 0, 0); }
+
+void WifiControl(void*, esp_event_base_t, int32_t id, void* data) {
+    bool report = false;
+    {
+        std::lock_guard<std::mutex> lock(s_wifi_mtx);
+        if (id == kWifiCredentials) {
+            if (s_phase == Phase::kIdle) return;
+            ApplyProvCreds(*static_cast<const WifiCredentials*>(data));
+            report = true;
+        } else if (s_join.Active()) {
+            const int64_t now = NowMs();
+            if (s_join.Expired(now)) {
+                if (s_join.WaitingIp()) s_join_failure = JoinFailure::kNoIp;
+                else if (s_join_failure == JoinFailure::kNone) s_join_failure = JoinFailure::kTimeout;
+                ESP_LOGW(TAG, "WiFi join stopped after 20s: %s; setup available", JoinMessage(s_join_failure));
+                s_join.Stop();
+                s_want_connect = false;
+                if (s_phase == Phase::kProvisioning) {
+                    al_wifi_prov_set_status(AL_PROV_FAILED, nullptr, PortalReason(s_join_failure));
+                    DisconnectStation();
+                } else {
+                    StartProvisioning();
+                }
+                UpdateJoinProgress();
+                report = true;
+            } else {
+                const unsigned previous = s_join_left;
+                if (s_join.TakeRetry(now) && s_want_connect) {
+                    ESP_LOGI(TAG, "WiFi retry %u (%us left)", s_join.Attempts(), s_join.RemainingSeconds(now));
+                    ConnectStation();
+                }
+                UpdateJoinProgress();
+                report = previous != s_join_left && s_join_left % 5 == 0;
+            }
+        }
+        if (s_portal_close_at && NowMs() >= s_portal_close_at) {
+            s_portal_close_at = 0;
+            al_wifi_prov_stop();
+            esp_wifi_set_mode(WIFI_MODE_STA);
+            ESP_LOGI(TAG, "provisioning portal closed; SoftAP down");
+            report = true;
+        }
+    }
+    if (report) ReportStatus();
 }
 
 // One-time WiFi stack bring-up: netif + event loop + default STA/AP interfaces + driver + handlers.
@@ -297,13 +394,14 @@ esp_err_t WifiInitOnce() {
 
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &WifiEvent, nullptr, nullptr);
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &IpEvent, nullptr, nullptr);
+    esp_event_handler_instance_register(kWifiControl, ESP_EVENT_ANY_ID, &WifiControl, nullptr, nullptr);
 
     esp_wifi_set_storage(WIFI_STORAGE_RAM);   // we manage credential persistence ourselves (kNvsNs)
 
-    const esp_timer_create_args_t rc = { .callback = &ReconnectCb,   .arg = nullptr, .dispatch_method = ESP_TIMER_TASK, .name = "al_wifi_reconn", .skip_unhandled_events = true };
-    esp_timer_create(&rc, &s_reconnect_timer);
-    const esp_timer_create_args_t tc = { .callback = &TeardownProvCb, .arg = nullptr, .dispatch_method = ESP_TIMER_TASK, .name = "al_wifi_teardown", .skip_unhandled_events = true };
-    esp_timer_create(&tc, &s_teardown_timer);
+    const esp_timer_create_args_t tick = { .callback = &TickCb, .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK, .name = "al_wifi_join", .skip_unhandled_events = true };
+    r = esp_timer_create(&tick, &s_tick_timer);
+    if (r != ESP_OK) return r;
 
     BuildApSsid();
     s_wifi_inited = true;
@@ -319,42 +417,73 @@ void StartSta(const char* ssid, const char* pass) {
     }
     s_phase = Phase::kStaConnecting;
     s_want_connect = true;
-    s_retry = 0;
+    s_join.Begin(NowMs());
+    s_join_failure = JoinFailure::kNone;
+    UpdateJoinProgress();
     esp_wifi_set_mode(WIFI_MODE_STA);
-    ApplyStaConfig(ssid, pass);
+    const esp_err_t r = ApplyStaConfig(ssid, pass);
+    if (r != ESP_OK) {
+        s_join_failure = JoinFailure::kDriver;
+        ESP_LOGW(TAG, "WiFi configuration: %s", esp_err_to_name(r));
+    }
     if (!s_started) { esp_wifi_start(); s_started = true; }   // STA_START -> connect
-    else            { esp_wifi_connect(); }
-    ESP_LOGI(TAG, "joining WiFi");
+    else            { ConnectStation(); }
+    ESP_LOGI(TAG, "joining WiFi (20s limit)");
 }
 
 // The user submitted credentials on the portal
 void OnProvCreds(const char* ssid, const char* pass) {
+    WifiCredentials creds = {};
+    snprintf(creds.ssid, sizeof creds.ssid, "%s", ssid);
+    snprintf(creds.pass, sizeof creds.pass, "%s", pass ? pass : "");
+    if (esp_event_post(kWifiControl, kWifiCredentials, &creds, sizeof creds, 0) != ESP_OK) {
+        al_wifi_prov_set_status(AL_PROV_FAILED, nullptr, "fail");
+        ESP_LOGW(TAG, "WiFi setup request queue is full; retry from the page");
+    }
+}
+
+void ApplyProvCreds(const WifiCredentials& creds) {
+    if (!al_wifi_prov_active()) return;
+    s_portal_close_at = 0;
+    s_want_connect = false;
+    DisconnectStation();
     {
         std::lock_guard<std::mutex> lk(s_cred_mtx);
-        strncpy(s_ssid, ssid, sizeof(s_ssid) - 1); s_ssid[sizeof(s_ssid) - 1] = '\0';
-        strncpy(s_pass, pass ? pass : "", sizeof(s_pass) - 1); s_pass[sizeof(s_pass) - 1] = '\0';
+        memcpy(s_ssid, creds.ssid, sizeof s_ssid);
+        memcpy(s_pass, creds.pass, sizeof s_pass);
     }
-    s_retry = 0;
+    s_phase = Phase::kProvisioning;
+    s_prov_failures = 0;
+    s_join.Begin(NowMs());
+    s_join_failure = JoinFailure::kNone;
     s_want_connect = true;
     al_wifi_prov_set_status(AL_PROV_CONNECTING, nullptr, nullptr);
-    ApplyStaConfig(ssid, pass);
-    esp_wifi_disconnect();   // drop any half-open attempt, then connect with the new creds
-    esp_wifi_connect();
+    const esp_err_t r = ApplyStaConfig(creds.ssid, creds.pass);
+    if (r == ESP_OK) ConnectStation();
+    else {
+        s_want_connect = false;
+        s_join.Stop();
+        s_join_failure = JoinFailure::kDriver;
+        al_wifi_prov_set_status(AL_PROV_FAILED, nullptr, "fail");
+        ESP_LOGW(TAG, "WiFi configuration: %s", esp_err_to_name(r));
+    }
+    UpdateJoinProgress();
 }
 
 // Bring up the SoftAP + captive portal and wait for the user to enter their WiFi
 void StartProvisioning() {
     s_want_connect = false;
-    s_retry = 0;
+    s_join.Stop();
+    s_portal_close_at = 0;
+    s_prov_failures = 0;
+    UpdateJoinProgress();
     s_phase = Phase::kProvisioning;
-    if (s_teardown_timer) esp_timer_stop(s_teardown_timer);
 
-    if (s_started) esp_wifi_disconnect();
+    if (s_started) DisconnectStation();
     esp_wifi_set_mode(WIFI_MODE_APSTA);   // AP for the portal, STA idle so the page can scan + then join
     ApplyApConfig();
     if (!s_started) { esp_wifi_start(); s_started = true; }
     al_wifi_prov_start(s_ap_ssid, &OnProvCreds);
-    ReportStatus();   // show "join the hotspot" right away
 }
 
 // Translate the cloud session state into agent_link_status_t. WiFi-specific states are mapped only
@@ -378,16 +507,34 @@ void Compose(const agent_cloud_status_t& c, agent_link_status_t* out) {
         return;
     }
 
+    if (s_phase != Phase::kStaConnected) {
+        const unsigned left = s_join_left;
+        const char* reason = JoinMessage(s_join_failure);
+        if (al_wifi_prov_active()) {
+            say(AGENT_LINK_PHASE_SETUP, "Set up WiFi", "");
+            if (left) {
+                snprintf(out->hint, sizeof out->hint, "%s - %us left", s_waiting_ip ? "Waiting for IP" : reason, left);
+            } else {
+                snprintf(out->hint, sizeof out->hint, "%s%sJoin %s, then open 192.168.4.1",
+                         s_join_failure == JoinFailure::kNone ? "" : reason,
+                         s_join_failure == JoinFailure::kNone ? "" : ". ", s_ap_ssid);
+            }
+        } else {
+            say(AGENT_LINK_PHASE_CONNECTING, "Joining WiFi", "");
+            snprintf(out->hint, sizeof out->hint, "%s. Attempt %u; setup in %us",
+                     s_waiting_ip ? "Waiting for IP" : reason, s_join_attempt.load(), left);
+        }
+        return;
+    }
+    if (al_wifi_prov_active()) {
+        say(AGENT_LINK_PHASE_CONNECTING, "WiFi connected", "Closing setup and connecting to the platform");
+        return;
+    }
+
     switch (c.state) {
     case AGENT_CLOUD_IDLE:
     case AGENT_CLOUD_NO_NETWORK:
-        if (al_wifi_prov_active()) {
-            say(AGENT_LINK_PHASE_SETUP, "Set up WiFi", "");
-            snprintf(out->hint, sizeof out->hint,
-                     "Join the %s hotspot from your phone, then pick your network", s_ap_ssid);
-        } else {
-            say(AGENT_LINK_PHASE_CONNECTING, "Joining WiFi", "Connecting to the saved network");
-        }
+        say(AGENT_LINK_PHASE_CONNECTING, "Connecting", "Connecting to the platform");
         break;
 
     case AGENT_CLOUD_CLAIMING:
@@ -510,6 +657,7 @@ void OnRealtimeText(const char* text) {
 // the portal stays up for kProvTeardownMs after provisioning so the phone can show the result, and
 // meanwhile its SoftAP and HTTP server compete for the internal RAM a TLS handshake may need.
 bool NetReady() {
+    if (s_phase != Phase::kStaConnected) return false;
     if (al_wifi_prov_active()) return false;
     esp_netif_t* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (!sta) return false;
@@ -577,26 +725,43 @@ void StartCloudSession() {
 
 // agent_transport_t interface
 esp_err_t wifi_start(void* /*impl*/) {
-    esp_err_t r = WifiInitOnce();
-    if (r != ESP_OK) return r;
-    (void)s_on_conn; (void)s_on_stream;
+    {
+        std::lock_guard<std::mutex> lock(s_wifi_mtx);
+        esp_err_t r = WifiInitOnce();
+        if (r != ESP_OK) return r;
+        (void)s_on_conn; (void)s_on_stream;
 
-    char ssid[33] = {0}, pass[65] = {0};
-    if (s_cfg && s_cfg->ssid && s_cfg->ssid[0]) {
-        StartSta(s_cfg->ssid, s_cfg->password ? s_cfg->password : "");
-    } else if (LoadCreds(ssid, sizeof ssid, pass, sizeof pass)) {
-        ESP_LOGI(TAG, "using stored WiFi credentials");
-        StartSta(ssid, pass);
-    } else {
-        ESP_LOGI(TAG, "no WiFi credentials — starting captive-portal provisioning");
-        StartProvisioning();
+        char ssid[33] = {0}, pass[65] = {0};
+        if (s_cfg && s_cfg->ssid && s_cfg->ssid[0]) {
+            StartSta(s_cfg->ssid, s_cfg->password ? s_cfg->password : "");
+        } else if (LoadCreds(ssid, sizeof ssid, pass, sizeof pass)) {
+            ESP_LOGI(TAG, "using stored WiFi credentials");
+            StartSta(ssid, pass);
+        } else {
+            ESP_LOGI(TAG, "no WiFi credentials — starting captive-portal provisioning");
+            StartProvisioning();
+        }
+        r = esp_timer_start_periodic(s_tick_timer, 250000);
+        if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) return r;
     }
 
     StartCloudSession();
+    ReportStatus();
     return ESP_OK;
 }
 
 void wifi_stop(void* /*impl*/) {
+    {
+        std::lock_guard<std::mutex> lock(s_wifi_mtx);
+        s_want_connect = false;
+        s_join.Stop();
+        s_portal_close_at = 0;
+        s_phase = Phase::kIdle;
+        UpdateJoinProgress();
+        if (s_tick_timer) esp_timer_stop(s_tick_timer);
+        al_wifi_prov_stop();
+        if (s_started) { esp_wifi_disconnect(); esp_wifi_stop(); s_started = false; }
+    }
     s_realtime_wanted.store(false);
     s_platform_voice.store(false);
     cloud_session_stop();
@@ -606,12 +771,6 @@ void wifi_stop(void* /*impl*/) {
         std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
         s_on_state(AGENT_STATE_DISCONNECTED);
     }
-    if (s_reconnect_timer) esp_timer_stop(s_reconnect_timer);
-    if (s_teardown_timer)  esp_timer_stop(s_teardown_timer);
-    al_wifi_prov_stop();
-    s_want_connect = false;
-    if (s_started) { esp_wifi_disconnect(); esp_wifi_stop(); s_started = false; }
-    s_phase = Phase::kIdle;
 }
 
 // What MQTT does not carry yet is refused. Each caller logs once, since callers retry.

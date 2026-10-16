@@ -21,7 +21,7 @@ The touch-screen flow is:
 | List conversations | `GET /api/agents/{agent_id}/actions/realtime_voice/conversations` |
 | Create a conversation | `POST` to the same conversations path |
 | Delete a conversation | `DELETE /api/agents/{agent_id}/actions/realtime_voice/conversations/{conversation_id}` |
-| Start a call | `POST /api/agents/{agent_id}/actions/realtime_voice/realtime-grant` with `session_id` |
+| Start a call | `POST /api/agents/{agent_id}/actions/realtime_voice/realtime-grant` with `session_id` and `audio_config` |
 | Recover a busy grant | On HTTP 409 only, `POST /api/agents/{agent_id}/actions/realtime_voice/realtime-refresh` with the same `session_id` |
 | End a call | `DELETE /api/agents/{agent_id}/actions/realtime_voice/realtime-grant/{session_id}` |
 
@@ -36,26 +36,50 @@ bodies, device IDs, conversation IDs, and saved WiFi names.
 
 ## Audio path
 
-`cloud_platform.cc` owns the user API calls. `cloud_realtime.cc` owns grants, WebSocket I/O, and
-audio conversion. `transport_wifi.cpp` exposes that worker to the SDK; the Korvo board owns mic,
+`cloud_platform.cc` owns the user API calls. `realtime_format.h` validates the negotiated audio.
+`cloud_realtime.cc` owns grants, WebSocket I/O, and the encoder and decoder workers.
+`transport_wifi.cpp` exposes them to the SDK; the Korvo board owns mic,
 speaker, and UI. The component does not access the codec or display.
 
-After `session.ready`, the board sends PCM16LE, 16 kHz, mono microphone chunks as
-`input_audio.append`. Platform conversations use server endpointing, so the microphone remains live
-while replies play. The worker batches up to four queued 20 ms chunks per WebSocket message without
-waiting for more data. Its bounded queue drops new mic chunks when WiFi cannot keep up.
+Platform grants request mono Opus in both directions: 16 kHz input, 24 kHz output, 20 ms packets.
+`audio_config` contains the inner input/output object, using `sampleRate` and `packetDurationMs`.
+The platform wraps it in `audio` for the upstream request. `bitrate` is sent only for output.
+The current platform grant may report default PCM16 metadata even when Opus was accepted.
+`session.ready` confirms the actual format; PCM16 fallback there is logged explicitly.
+`CONFIG_AGENT_LINK_REALTIME_OPUS` applies to platform sessions as well as direct tests.
+
+After `session.ready`, the board supplies PCM16LE, 16 kHz microphone chunks. A dedicated encoder
+uses a PSRAM stack and produces 24 kbit/s Opus. Each `input_audio.append` contains one Base64 Opus
+packet; packets are never concatenated. If PCM16 was negotiated, the network worker batches up to
+eight queued chunks without waiting for more. Platform conversations use server endpointing, so
+the microphone stays live. Both uplink queues are bounded.
 
 Replies arrive as binary audio or `response.audio.delta`. The negotiated output is 24 kHz mono
-PCM16 or Opus; the worker converts it to 16 kHz PCM16 for the board. `response.audio.done` marks the
+PCM16 or Opus. The network worker copies complete messages to a bounded PSRAM queue. A separate
+decoder worker converts them to 16 kHz PCM16 and paces playback, so waiting for the speaker does not
+block microphone upload or WebSocket reads. TCP_NODELAY avoids waiting between small WebSocket
+header and payload writes. Receive polling waits only when no uplink data is pending.
+Interruption invalidates queued downlink audio immediately, without waiting for playback pacing.
+`response.audio.done` marks the
 end of this reply. Korvo Cloud holds playback PCM in PSRAM and starts after about 500 ms is queued;
 after an underrun it waits for about 1000 ms. End-of-reply releases a shorter tail immediately.
-The playback buffer cannot make up for a sustained shortage of network throughput. Acoustic echo
-cancellation is not implemented.
+The playback buffer cannot make up for a sustained shortage of network throughput.
 
-Every five seconds during a continuous call, one `uplink` line reports captured, sent, and dropped
-frames, queue depth, WebSocket send time, receive activity, and task headroom. Reply and speaker
+Korvo Cloud currently prevents acoustic feedback by uploading silence during speaker playback.
+The microphone keeps sampling; real microphone uploads resume after the I2S drain allowance
+(100 ms) and acoustic tail (200 ms). This guard follows actual speaker writes, so a cloud thinking
+pause does not disable the microphone. Speaking over the agent does not interrupt it in this mode.
+This is a playback guard, not acoustic echo cancellation.
+
+Korvo Cloud WiFi uses size optimization to keep both Opus codecs within the existing OTA slot.
+
+Every five seconds during a continuous call, one `voice` line reports captured, sent, and dropped
+20 ms frames, queued duration, WebSocket payload bytes/s, decoded duration, average/maximum send
+time, encoder time, pending downlink bytes, and mic/decoder/encoder stack headroom. Reply and speaker
 summaries show duration, packet gaps, underruns, and dropped playback
-bytes. These counters contain no audio or credentials.
+bytes. Reply start, interruption, end, and speaker drain counts distinguish a server interruption
+from a playback underrun. Normal call cancellation does not count as an Opus codec failure.
+These counters contain no audio or credentials.
 
 ## Other grant sources
 

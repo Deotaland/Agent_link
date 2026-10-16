@@ -1,4 +1,5 @@
 #include "../src/cloud/realtime_audio.h"
+#include "../src/cloud/realtime_format.h"
 
 #include <algorithm>
 #include <cassert>
@@ -10,6 +11,73 @@
 
 using agentlink::realtime::Message;
 using agentlink::realtime::Pcm24To16;
+
+static void TestAudioFormats() {
+    using agentlink::realtime::AudioFormat;
+    using agentlink::realtime::ReadAudioFormat;
+    cJSON* request = cJSON_Parse(agentlink::realtime::kOpusAudioConfig);
+    assert(request);
+    const cJSON* input = cJSON_GetObjectItemCaseSensitive(request, "input");
+    const cJSON* output = cJSON_GetObjectItemCaseSensitive(request, "output");
+    bool opus = false;
+    assert(agentlink::realtime::AudioDirection(input, 16000, &opus) && opus);
+    assert(!cJSON_HasObjectItem(input, "bitrate"));
+    assert(agentlink::realtime::AudioDirection(output, 24000, &opus) && opus);
+    assert(cJSON_GetObjectItemCaseSensitive(output, "bitrate")->valueint == 24000);
+    cJSON_Delete(request);
+    for (const char* format : {
+            R"({"data":{"audio_config":{"input":{"encoding":"opus","sample_rate":16000,"channels":1,"packet_duration_ms":20},"output":{"encoding":"opus","sample_rate":24000,"channels":1,"packet_duration_ms":20}}}})",
+            R"({"realtimeConnection":{"audio":{"input":{"encoding":"opus","sampleRate":16000,"channels":1,"packetDurationMs":20},"output":{"encoding":"opus","sampleRate":24000,"channels":1,"packetDurationMs":20}}}})"}) {
+        cJSON* json = cJSON_Parse(format);
+        AudioFormat audio;
+        assert(ReadAudioFormat(json, &audio, true));
+        assert(audio.input_opus && audio.output_opus);
+        cJSON_Delete(json);
+    }
+    for (const char* bad : {
+            R"({"audio":{"input":{"encoding":"opus","sample_rate":16000,"channels":1},"output":{"encoding":"opus","sample_rate":24000,"channels":1,"packet_duration_ms":40}}})",
+            R"({"audio":{"input":{"encoding":"opus","sample_rate":48000,"channels":1},"output":{"encoding":"opus","sample_rate":24000,"channels":1}}})",
+            R"({"audio":{"input":{"encoding":"adpcm","sample_rate":16000,"channels":1},"output":{"encoding":"opus","sample_rate":24000,"channels":1}}})",
+            R"({"audio":{"output":{"encoding":"opus","sampleRate":24000,"channels":1}}})"}) {
+        cJSON* json = cJSON_Parse(bad);
+        AudioFormat audio;
+        assert(!ReadAudioFormat(json, &audio, true));
+        assert(!audio.input_opus && !audio.output_opus);
+        cJSON_Delete(json);
+    }
+    AudioFormat audio{true, true};
+    cJSON* ready = cJSON_Parse(R"({"audio":{"output":{"encoding":"pcm16","sampleRate":24000,"channels":1}}})");
+    assert(ReadAudioFormat(ready, &audio, false));
+    assert(audio.input_opus && !audio.output_opus);
+    cJSON_Delete(ready);
+}
+
+static void TestEncoderFrames() {
+    std::vector<uint8_t> input(640 * 11 + 176);
+    for (size_t i = 0; i < input.size(); ++i) input[i] = static_cast<uint8_t>(i * 13);
+    for (size_t chunk : {1u, 176u, 640u, 1000u}) {
+        agentlink::realtime::PcmFrames<640> frames;
+        std::vector<uint8_t> emitted;
+        const auto emit = [&](const uint8_t* pcm) {
+            emitted.insert(emitted.end(), pcm, pcm + 640);
+            return true;
+        };
+        for (size_t offset = 0; offset < input.size(); offset += chunk)
+            assert(frames.Append(input.data() + offset, std::min(chunk, input.size() - offset), emit));
+        assert(emitted.size() == 640 * 11);
+        assert(frames.Flush(emit));
+        assert(emitted.size() == 640 * 12);
+        assert(std::equal(input.begin(), input.end(), emitted.begin()));
+        assert(std::all_of(emitted.begin() + input.size(), emitted.end(), [](uint8_t b) { return b == 0; }));
+        assert(frames.Flush(emit) && emitted.size() == 640 * 12);
+        frames.Append(input.data(), 100, emit);
+        frames.Reset();
+        assert(frames.Flush(emit) && emitted.size() == 640 * 12);
+        size_t calls = 0;
+        assert(!frames.Append(input.data(), 1280, [&](const uint8_t*) { ++calls; return false; }));
+        assert(calls == 1);
+    }
+}
 
 static void TestControlSends() {
     for (const char* text : {
@@ -117,8 +185,10 @@ static void TestMessages() {
 }
 
 int main() {
+    TestAudioFormats();
+    TestEncoderFrames();
     TestControlSends();
     TestResampling();
     TestMessages();
-    std::puts("PASS: writable WS control frames, failed-send isolation, PCM rate/pitch, fragments and bounds");
+    std::puts("PASS: audio negotiation, 20ms encoder frames, writable WS control, PCM rate/pitch, fragments and bounds");
 }

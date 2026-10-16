@@ -26,7 +26,7 @@ bool on_command(uint16_t cmd, const uint8_t* payload, size_t len,
 
 void on_status(const agent_link_status_t* st, void*) {
     if (!st) return;
-    ESP_LOGI(TAG, "[link] %s: %s", st->title, st->hint);
+    ESP_LOGI(TAG, "[link] %s (phase=%d)", st->title, static_cast<int>(st->phase));
     Board::GetInstance().OnLinkStatus(*st);
 }
 

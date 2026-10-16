@@ -606,8 +606,8 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
             const uint8_t effective_status = missing_channel ? 1 : reply_status;
             const bool accepted = !s_have_out || !s_out.on_voice_reply ||
                 s_out.on_voice_reply(session_id, effective_status, s_out.ctx);
-            ESP_LOGI(TAG, "VoiceReply: session=%u status=%u %s", (unsigned)session_id,
-                     (unsigned)reply_status, accepted ? "accepted" : "ignored");
+            ESP_LOGI(TAG, "VoiceReply: status=%u %s", (unsigned)reply_status,
+                     accepted ? "accepted" : "ignored");
             if (missing_channel) ESP_LOGW(TAG, "VoiceReply: audio channel unavailable");
             if (accepted) switch (effective_status) {
             case 2:

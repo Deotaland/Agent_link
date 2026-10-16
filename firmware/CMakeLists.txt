@@ -88,7 +88,8 @@ if(EXISTS "${_sdkconfig}")
         if(_selected_board STREQUAL "BOARD_TYPE_ESP32S3_KORVO_CLOUD" AND
            "CONFIG_AGENT_LINK_TRANSPORT_WIFI=y" IN_LIST _sdkconfig_lines)
             list(APPEND _board_forced_options "CONFIG_LWIP_TCP_WND_DEFAULT=32768"
-                                              "CONFIG_LWIP_TCP_RECVMBOX_SIZE=26")
+                                              "CONFIG_LWIP_TCP_RECVMBOX_SIZE=26"
+                                              "CONFIG_COMPILER_OPTIMIZATION_SIZE=y")
         endif()
         if(_selected_board STREQUAL "BOARD_TYPE_ESP32S3_KORVO_CLOUD")
             list(APPEND _board_forced_options "CONFIG_ESP_CONSOLE_SECONDARY_NONE=y"

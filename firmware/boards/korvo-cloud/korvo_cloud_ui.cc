@@ -474,7 +474,7 @@ void ShowConversationRows() {
         if (i < s_conversation_count) {
             const auto& conversation = s_conversations[i];
             const char* name = conversation.name[0] ? conversation.name : conversation.id;
-            snprintf(caption, sizeof caption, "%u. %s", (unsigned)(s_conversation_offset + i + 1), name);
+            snprintf(caption, sizeof caption, "%u. %.95s", (unsigned)(s_conversation_offset + i + 1), name);
         } else snprintf(caption, sizeof caption, "-");
         lv_label_set_text(s_conversation_rows[i], caption);
         lv_obj_t* button = lv_obj_get_parent(s_conversation_rows[i]);

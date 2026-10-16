@@ -299,13 +299,18 @@ extern "C" esp_err_t agent_link_platform_delete_conversation(int agent_id,
 
 esp_err_t cloud_platform_grant(int agent_id, const char* session_id, bool refresh,
                                char* url, size_t url_size, char* token, size_t token_size,
-                               bool* opus, int* http_status) {
-    if (agent_id <= 0 || !SafeId(session_id) || !url || !token || !opus) return ESP_ERR_INVALID_ARG;
+                               agentlink::realtime::AudioFormat* audio, int* http_status) {
+    if (agent_id <= 0 || !SafeId(session_id) || !url || !token || !audio) return ESP_ERR_INVALID_ARG;
     char path[192];
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/%s", agent_id,
              refresh ? "realtime-refresh" : "realtime-grant");
-    char body[128];
+    char body[512];
+#if CONFIG_AGENT_LINK_REALTIME_OPUS
+    snprintf(body, sizeof body, "{\"session_id\":\"%s\",\"audio_config\":%s}", session_id,
+             agentlink::realtime::kOpusAudioConfig);
+#else
     snprintf(body, sizeof body, "{\"session_id\":\"%s\"}", session_id);
+#endif
     cJSON* root = nullptr;
     esp_err_t result = Exchange(refresh ? "refresh voice grant" : "request voice grant",
                                 HTTP_METHOD_POST, path, body, kSmallBytes, &root, http_status);
@@ -320,27 +325,14 @@ esp_err_t cloud_platform_grant(int agent_id, const char* session_id, bool refres
     else {
         Copy(url, url_size, ws);
         Copy(token, token_size, access);
-        const cJSON* audio = Field(data, "audio_config");
-        if (!audio) audio = Field(data, "audio");
-        const cJSON* input = Field(audio, "input");
-        const cJSON* output = Field(audio, "output");
-        const char* encoding = String(output, "encoding");
-        const char* input_encoding = String(input, "encoding");
-        const cJSON* input_rate = Field(input, "sample_rate");
-        const cJSON* input_channels = Field(input, "channels");
-        const cJSON* output_rate = Field(output, "sample_rate");
-        const cJSON* output_channels = Field(output, "channels");
-        if (!input_encoding || strcmp(input_encoding, "pcm16") != 0 ||
-            !cJSON_IsNumber(input_rate) || input_rate->valueint != 16000 ||
-            !cJSON_IsNumber(input_channels) || input_channels->valueint != 1 ||
-            !cJSON_IsNumber(output_rate) || output_rate->valueint != 24000 ||
-            !cJSON_IsNumber(output_channels) || output_channels->valueint != 1) {
+        if (!agentlink::realtime::ReadAudioFormat(Data(root), audio, true)) {
             result = ESP_ERR_NOT_SUPPORTED;
         }
-        *opus = encoding && strcmp(encoding, "opus") == 0;
-        if (!encoding || (strcmp(encoding, "pcm16") != 0 && !*opus)) result = ESP_ERR_NOT_SUPPORTED;
 #if !CONFIG_AGENT_LINK_REALTIME_OPUS
-        if (*opus) result = ESP_ERR_NOT_SUPPORTED;
+        if (audio->input_opus || audio->output_opus) result = ESP_ERR_NOT_SUPPORTED;
+#else
+        if (result == ESP_OK && (!audio->input_opus || !audio->output_opus))
+            ESP_LOGD(TAG, "grant metadata reports PCM16; awaiting session.ready audio settings");
 #endif
     }
     cJSON_Delete(root);

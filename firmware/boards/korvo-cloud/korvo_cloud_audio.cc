@@ -76,7 +76,10 @@ void KorvoCloudAudio::PlayPcm(const uint8_t* pcm16, size_t bytes) {
 
 void KorvoCloudAudio::StopPlayback() { play_generation_.fetch_add(1); }
 
-void KorvoCloudAudio::EndPlayback() { play_finished_.store(true); }
+void KorvoCloudAudio::EndPlayback() {
+    play_finished_.store(true);
+    ESP_LOGI(TAG, "speaker reply end #%u", play_ends_.fetch_add(1) + 1);
+}
 
 void KorvoCloudAudio::PlayTaskEntry(void* arg) { static_cast<KorvoCloudAudio*>(arg)->PlayLoop(); }
 
@@ -87,12 +90,15 @@ void KorvoCloudAudio::PlayLoop() {
     const size_t resume_bytes = kc_audio::PrebufferBytes(capacity, 1000);
     kc_audio::PlaybackGate gate(start_bytes, resume_bytes);
     size_t played = 0;
+    unsigned drains = 0, resets = 0;
     ESP_LOGI(TAG, "speaker prebuffer: start=%u ms resume=%u ms (reply end bypasses both)",
              static_cast<unsigned>(start_bytes / 32), static_cast<unsigned>(resume_bytes / 32));
     while (true) {
         const uint32_t generation = play_generation_.load();
         if (generation != play_cleared_.load()) {
             std::lock_guard<std::mutex> lock(play_mutex_);
+            ESP_LOGI(TAG, "speaker reset #%u (queued=%u ms)", ++resets,
+                     static_cast<unsigned>(xStreamBufferBytesAvailable(play_buf_) / 32));
             while (xStreamBufferReceive(play_buf_, buf, sizeof(buf), 0)) {}
             play_finished_.store(false);
             play_dropped_.store(0);
@@ -104,9 +110,9 @@ void KorvoCloudAudio::PlayLoop() {
         const bool finished = play_finished_.load();
         const bool was_playing = gate.Playing();
         if (!gate.Ready(available, finished, esp_timer_get_time() / 1000)) {
-            if (finished && !available && played) {
-                ESP_LOGI(TAG, "speaker drained: %u ms, underruns=%u, dropped=%u bytes",
-                         static_cast<unsigned>(played / 32), gate.Underruns(),
+            if (finished && !available && played && echo_guard_.Drained(esp_timer_get_time())) {
+                ESP_LOGI(TAG, "speaker drained #%u: %u ms, underruns=%u, dropped=%u bytes",
+                         ++drains, static_cast<unsigned>(played / 32), gate.Underruns(),
                          static_cast<unsigned>(play_dropped_.exchange(0)));
                 played = 0;
                 gate.Reset();
@@ -121,6 +127,7 @@ void KorvoCloudAudio::PlayLoop() {
         const size_t n = xStreamBufferReceive(play_buf_, buf, sizeof(buf), 0);
         if (generation != play_generation_.load()) continue;
         if (n >= sizeof(int16_t)) {
+            echo_guard_.OnWrite(esp_timer_get_time(), n / sizeof(int16_t));
             if (codec_.WritePcm(buf, n / sizeof(int16_t)) != ESP_OK)
                 ESP_LOGW(TAG, "speaker I2S write failed");
             played += n;
@@ -152,6 +159,8 @@ void KorvoCloudAudio::MicLoop() {
     const size_t want_frame = static_cast<size_t>(cfg_.sample_rate) / 50;   // 20ms
     const size_t frame      = want_frame > kMicBufSamples ? kMicBufSamples : want_frame;
     int16_t buf[kMicBufSamples];
+    bool echo_muted = false;
+    unsigned muted_frames = 0;
 
     while (true) {
         const bool want_asr = want_asr_.load(std::memory_order_acquire);
@@ -216,7 +225,15 @@ void KorvoCloudAudio::MicLoop() {
             (void)codec_.StopMic();
         }
 
-        if (!need_mic) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
+        if (!need_mic) {
+            if (echo_muted) {
+                ESP_LOGI(TAG, "mic echo guard off (%u frames sent as silence)", muted_frames);
+                echo_muted = false;
+                muted_frames = 0;
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
 
         // One read, fanned out to whichever uplinks are live.
         size_t got = 0;
@@ -242,12 +259,21 @@ void KorvoCloudAudio::MicLoop() {
         }
         if (cmd_on) {
             if (agent_link_state() != AGENT_STATE_READY) {
-                ESP_LOGW(TAG, "link dropped mid-command, closing the voice session");
+                if (continuous ? want_continuous_.load() : want_cmd_.load())
+                    ESP_LOGW(TAG, "link dropped mid-command, closing the voice session");
                 agent_link_stream_close(voice_stream_, continuous);
                 cmd_on_.store(false, std::memory_order_release);
                 want_cmd_.store(false, std::memory_order_release);
                 want_continuous_.store(false, std::memory_order_release);
             } else {
+                const bool silence = continuous && echo_guard_.Muted(esp_timer_get_time());
+                if (silence != echo_muted) {
+                    if (silence) ESP_LOGI(TAG, "mic echo guard on");
+                    else ESP_LOGI(TAG, "mic echo guard off (%u frames sent as silence)", muted_frames);
+                    echo_muted = silence;
+                    muted_frames = 0;
+                }
+                if (silence) { memset(buf, 0, bytes); ++muted_frames; }
                 const esp_err_t r = agent_link_stream_write(voice_stream_, buf, bytes);
                 // A full continuous queue drops this frame; the worker reports totals every five seconds.
                 if (r != ESP_OK && !(r == ESP_ERR_NO_MEM && continuous)) {

@@ -15,7 +15,8 @@ selected board to the component.
 | `src/transport_ble.cpp`, `transport_wifi.cpp`, `transport_muse.cpp` | Transport adapters; no board hardware code |
 | `src/cloud/cloud_session.cc`, `cloud_api.cc`, `cloud_credential.cc` | WiFi device claim, `auth_key`, and platform session |
 | `src/cloud/cloud_mqtt.cc`, `cloud_json.cc` | MQTT connection and command/response bridge |
-| `src/cloud/cloud_platform.cc`, `cloud_realtime.cc`, `realtime_audio.h` | User API calls, realtime WebSocket, and audio conversion |
+| `src/cloud/cloud_platform.cc`, `cloud_realtime.cc` | User API calls, realtime WebSocket, and audio workers |
+| `src/cloud/realtime_format.h`, `realtime_audio.h` | Audio negotiation, PCM frame boundaries, resampling, and WebSocket assembly |
 | `boards/<board>/` | Pins, codec, display, controls, playback buffer, and board UI |
 
 The board calls `agent_link_init()` and `agent_link_start()` through the shared app. Output
@@ -34,6 +35,10 @@ only callbacks covered by the board's capability bits.
 WiFi currently has no publisher for unsolicited SDK control events. Its MQTT bridge handles
 command replies, including an explicit manifest fetch. Do not treat a ready WiFi link as proof that
 BLE-style event notifications are available.
+
+WiFi joins and reconnects have a 20-second limit, including the wait for an IP address. On timeout,
+the device opens the setup hotspot; a failed attempt from the setup page leaves it open for retry.
+Only a successful join replaces the saved credentials. Changing WiFi keeps the platform binding.
 
 ## Credentials
 
