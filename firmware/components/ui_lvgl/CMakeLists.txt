@@ -1,0 +1,6 @@
+idf_component_register()
+if(CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY)
+    idf_component_get_property(_lvgl lvgl__lvgl COMPONENT_LIB)
+    target_compile_options(${_lvgl} PRIVATE -include esp_attr.h)
+    target_compile_definitions(${_lvgl} PRIVATE LV_ATTRIBUTE_LARGE_RAM_ARRAY=EXT_RAM_BSS_ATTR)
+endif()

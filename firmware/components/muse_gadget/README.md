@@ -22,7 +22,7 @@ linked.
 | `port/muse_tts_decode.c` | Pulls the hex MP3 out of MiniMax's JSON and decodes it (`../minimp3`) to 16 kHz mono. No ESP-IDF, so it can be tested on a PC. |
 | `Kconfig` | The upstream `GADGET_*` / `HOMEHUB_*` options the build uses; the rest stay undefined (off). |
 | `../noise_core/` | `esp32/components/noise_core`, vendored as-is (Noise XX + HTTP-over-Noise framing). |
-| `../agent_link/src/transport_muse.cpp` | The agent_link backend on top of this component. |
+| `../agent_link/src/transports/muse/transport_muse.cpp` | The agent_link backend on top of this component. |
 
 Upstream revision: `693cde9a884ad1edc87251b9f8944815f8de4809` (2026-10-03).
 

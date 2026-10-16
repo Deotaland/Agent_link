@@ -11,13 +11,15 @@ selected board to the component.
 | --- | --- |
 | `include/agent_link.h`, `agent_link_stream.h` | Lifecycle, status, callbacks, and media streams |
 | `include/agent_link_io.h`, `agent_link_ota.h`, `agent_link_platform.h` | Device I/O, OTA, and platform conversation calls |
-| `src/agent_link.cpp`, `protocol.cpp`, `audio_downlink.cpp` | Shared capability routing, control frames, and BLE audio decoding |
-| `src/transport_ble.cpp`, `transport_wifi.cpp`, `transport_muse.cpp` | Transport adapters; no board hardware code |
-| `src/cloud/cloud_session.cc`, `cloud_api.cc`, `cloud_credential.cc` | WiFi device claim, `auth_key`, and platform session |
-| `src/cloud/cloud_mqtt.cc`, `cloud_json.cc` | MQTT connection and command/response bridge |
-| `src/cloud/cloud_platform.cc`, `cloud_realtime.cc` | User API calls, realtime WebSocket, and audio workers |
-| `src/cloud/realtime_format.h`, `realtime_audio.h` | Audio negotiation, PCM frame boundaries, resampling, and WebSocket assembly |
-| `boards/<board>/` | Pins, codec, display, controls, playback buffer, and board UI |
+| `src/core/` | Lifecycle, capabilities, control protocol and device identity |
+| `src/audio/` | PCM/ADPCM downlink, playback accounting and flow control |
+| `src/ota/` | Firmware receive, validation and boot-slot selection |
+| `src/transports/ble/` | GATT control, L2CAP data and bounded voice queue |
+| `src/transports/wifi/` | Station, provisioning and platform clients under `cloud/` |
+| `src/transports/muse/` | Muse adapter |
+| `src/transports/disabled.cpp` | Unsupported implementations for omitted backends |
+| `apps/<app>/` | UI, voice/recording workflows and hardware callbacks |
+| `boards/` | Pins, hardware bring-up and shared drivers |
 
 The board calls `agent_link_init()` and `agent_link_start()` through the shared app. Output
 callbacks may run on transport or media tasks: queue slow hardware work and return promptly. Streaming input uses
@@ -42,10 +44,24 @@ Only a successful join replaces the saved credentials. Changing WiFi keeps the p
 
 ## Credentials
 
-Keep WiFi passwords, platform user tokens, and direct-test API keys in private `sdkconfig` or NVS.
+Keep WiFi passwords, platform user tokens, and direct-test API keys in `sdkconfig.private` or NVS.
 Do not add real credentials to source, defaults, examples, logs, or distributable firmware images.
 The platform user token in `sdkconfig` is embedded in the built image; use a device-scoped
 authorization method before distributing that configuration.
 
 This project builds with ESP-IDF 5.5. The board and transport are selected at build time; see the
-[firmware README](../../README.md) for the supported boards and build commands.
+[firmware profiles](../../profiles/README.md) for the supported combinations and build commands.
+
+## Backend selection in another ESP-IDF project
+
+This firmware passes the profile backend before dependency expansion. A project that copies
+this component can choose a backend in its top-level `CMakeLists.txt`, before `project()`:
+
+```cmake
+set(ENV{AGENT_LINK_BUILD_BACKEND} "BLE")  # BLE, WIFI or MUSE
+```
+
+The BLE API and wire protocol are unchanged. Selecting WiFi adds the platform, provisioning
+and Opus clients; Muse also needs the repository's Muse components. Calls to an omitted backend
+return `ESP_ERR_NOT_SUPPORTED`. Without a backend selection, the component keeps its legacy
+multi-backend build; that requires the same companion components as before.

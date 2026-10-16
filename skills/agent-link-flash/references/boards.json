@@ -349,7 +349,7 @@
     },
     {
       "board_type": "ESP32S3_KORVO",
-      "dir": "korvo",
+      "dir": "korvo-ble",
       "target": "esp32s3",
       "model": "Korvo 2 V3",
       "product": "ESP32S3 Korvo 2 V3 development board",
@@ -399,7 +399,7 @@
     },
     {
       "board_type": "ESP32S3_KORVO_CLOUD",
-      "dir": "korvo-cloud",
+      "dir": "korvo-wifi",
       "target": "esp32s3",
       "model": "Korvo 2 V3",
       "product": "ESP32S3 Korvo 2 V3 development board",

@@ -87,6 +87,3 @@ Without a platform user token, the backend may deliver a short-lived grant over 
 MQTT downlink. `CONFIG_AGENT_LINK_REALTIME_DIRECT` is a separate development path using a fixed
 Agent Stack session and a private User API Key. Both feed the same WebSocket worker; neither is the
 touch-screen conversation flow. Keep either credential in private `sdkconfig`.
-
-The host-side resampler and WebSocket assembler checks are in
-[`tests/realtime_audio_test.cpp`](tests/realtime_audio_test.cpp).

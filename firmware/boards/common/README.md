@@ -1,10 +1,10 @@
 # boards/common/ — cross-board drivers
 
 Drivers and helpers that more than one board may use (chip drivers, bus helpers). The board only passes
-pins; the driver itself is board-independent. `main/CMakeLists.txt` compiles every `*.cc`/`*.c` here, and
-the include path `../boards/common` lets a board `#include "xxx.h"` directly.
+pins; the driver itself is board-independent. `profiles/profiles.json` lists the required driver files;
+`components/board_support` compiles only that list and exports the include path to the application.
 
-| Files                                      | Purpose                                                                                                                                                             | Dependencies (in main's REQUIRES)                                   |
+| Files                                      | Purpose                                                                                                                                                             | Dependencies (in board_support)                                    |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `sh8501_panel.{h,cc}`                      | SH8501 AMOLED (SPI), **full vendor init**: init + solid fill + blit + brightness; pins come from `Sh8501Config`. Lights up sample panels whose OTP was never burned | `esp_lcd`, `esp_lcd_sh8501`, `esp_driver_spi`, `esp_driver_gpio`    |
 | `sh8501_lk_panel.{h,cc}`                   | Same panel, **factory 简码 (short-code / LK) init** — what the mass-produced hardware needs. Same interface as `Sh8501Panel`; see the note below                    | `esp_lcd`, `esp_lcd_sh8501_lk`, `esp_driver_spi`, `esp_driver_gpio` |

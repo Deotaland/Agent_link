@@ -1,223 +1,111 @@
-# agent_link
+# Agent Link firmware
 
 **English** | [简体中文](README.zh-CN.md)
 
-A connectivity layer that puts embedded devices on the **Deotaland Agent platform**. A device declares which capabilities it has (microphone, speaker, screen, sensors, and so on) and registers a few callbacks; the library handles BLE advertising, GATT, and frame encoding. There is no Bluetooth or wire-protocol code to write on the device side.
+Agent Link connects embedded devices to the Deotaland Agent platform. The reusable ESP-IDF
+component is [`components/agent_link`](components/agent_link/README.md); this project supplies
+board drivers, applications and supported firmware configurations.
 
-The repository is a complete ESP-IDF project. The reusable SDK lives in `components/agent_link/`; everything around it is reference firmware you can build and flash as-is.
+## Build
 
-## What you implement
+Use ESP-IDF 5.5.x (validated with 5.5.4) or 6.1.x. Activate one environment, then run from this directory:
 
-1. **Capabilities**: a bitmask of `AGENT_CAP_*` flags describing the hardware you have.
-2. **Output callbacks**: the Agent calls these to drive your hardware (play audio, show text, vibrate). Implement the ones you support and leave the rest `NULL`.
-3. **Push calls**: the device calls `agent_link_push_*` to send data up: microphone audio, sensor readings, battery level.
+A fresh checkout needs no existing `build/`, `sdkconfig`, private configuration or test files.
+The build tool generates the selected configuration; ESP-IDF downloads the managed dependencies
+using the committed manifests and `dependencies.lock`.
 
-Everything below that (BLE, GATT, L2CAP, framing) is the SDK's job.
-
-## Design
-
-| Principle | Consequence |
-|---|---|
-| Capability-driven | The device declares its hardware as a `caps` bitmask and implements only the matching callbacks; unsupported features stay off. Sensors and actuators additionally announce themselves in a manifest sent on connect. |
-| Callbacks in, push-calls out | Downlink (Agent to device) arrives as callbacks; uplink (device to Agent) goes through `agent_link_push_*`. The SDK never touches a GPIO, which is what keeps it portable. |
-| Transport behind an interface | The core talks to an abstract `agent_transport_t`. BLE is implemented today; the same core is meant to run over WiFi or USB once those backends exist, with no change to device code. |
-| Board as a class | Each board is a small C++ class implementing `Board` (`PlayAudio`, `ShowText`, `Vibrate`, battery). Adding or swapping a board touches only its own directory. |
-
-## Architecture
-
-```
-              Cloud Agent  <-->  Phone App
-                      |
-                   ( BLE )
-   ============================================================
-    components/agent_link/        the SDK (chip-independent)
-      transport_ble.cpp           NimBLE advertising / GATT / L2CAP
-      protocol.cpp                frame encode / decode
-      agent_link.cpp              capability routing + lifecycle
-   ============================================================
-      uplink  push_*/report_*  ^      v  downlink  on_* callbacks
-   ============================================================
-    main/app_main.cpp             shared app (board-independent)
-      binds agent_link callbacks to Board::GetInstance()
-   ============================================================
-    boards/<board>/               your hardware: pins + drivers
-      config.h   config.json   <board>.cc   (implements Board)
-   ============================================================
+```powershell
+python tools/build_firmware.py
 ```
 
-Uplink: the board calls `agent_link_push_*`, the core builds a frame, and the transport sends it. Downlink: the transport receives a frame, the core routes it by capability, and your callback drives the hardware.
+A menu lists the supported profiles; choose a number without typing a profile name. In the SDK
+configuration editor or `menuconfig`, use **Agent Link Device → Firmware profile**, save, then build.
+Available choices depend on the current target chip. Use the terminal menu to change chips.
+Automated builds can still specify a name, such as `python tools/build_firmware.py korvo-ble`.
 
-## Build and flash
+A firmware profile fixes the board, application, target chip and backend together. For Korvo,
+`korvo-ble` provides the phone App firmware; `korvo-wifi` provides the platform UI and realtime
+voice. Only combinations listed by the tool are supported. ESP32-P4 is not adapted.
 
-You need ESP-IDF v5.0 or newer and a board with an on-chip BLE radio. The ESP-IDF project lives in
-`firmware/`, so build from there:
+The tool reuses `build/`, runs two compiler jobs, and produces `agent_link.bin`, `merged.bin`,
+and matching debugging artifacts. It does not flash. Once configured, the IDE can continue to
+build the same profile.
 
-```bash
-cd firmware
-idf.py set-target esp32s3     # match your board's chip (see "target" in boards/<board>/config.json)
-idf.py menuconfig             # Agent Link Device -> Board Type (defaults to rorolee-s3)
-idf.py build
-idf.py -p <port> flash monitor
+To change SDK versions, activate the other ESP-IDF environment and run the same build command.
+The tool detects the SDK checkout/version, clears the old `build/` cache and regenerates the
+profile configuration. Private settings remain in `sdkconfig.private`; neither SDK installation
+is modified. Before an IDE build after switching SDKs, run the tool once.
+The 5.5 build uses `dependencies.lock`; 6.1 uses `dependencies.idf6.lock` so the two
+component managers retain their own lock formats.
+
+Dual-version build validation covers `korvo-ble` (ESP32-S3). Other profiles have not
+yet completed individual 6.1 build and device validation.
+
+```powershell
+python tools/build_firmware.py korvo-ble --configure-only
+python tools/build_firmware.py korvo-ble --reset-config
+python tools/build_firmware.py --check
 ```
 
-On boot the log looks roughly like this:
+Common defaults, chip defaults, backend defaults and the profile's own defaults are applied in
+that order. Local credentials are loaded last from gitignored `sdkconfig.private`. The first
+migration backs up the original `sdkconfig` to `sdkconfig.before-profile` and imports known
+credentials and related options. Edit credentials in `sdkconfig.private`; do not commit it or
+distribute an image containing them.
 
-```
-agent_link.app: board = ROROLEE_S3, caps = 0x023f
-agent_link: init: name='ROROLEE_S3' caps=0x023f proto=v1 transport=ble io=0
-agent_link.ble: BLE started — Service C 0xFFC0 registered; advertising on sync
-agent_link.ble: advertising as 'ROROLEE_S3'
-```
+Saving a new profile applies its defaults on the next build and regenerates `sdkconfig`. The
+terminal tool clears the existing build cache only when changing chips. Unchanged profiles build
+incrementally. CMake delegates profile changes to the configuration tool and validates the result;
+it does not append settings. See [firmware profiles](profiles/README.md) for details.
 
-Scan with a BLE tool such as nRF Connect or LightBlue. If the device shows up by name and exposes control service `0xFFC0`, the link is up.
+## Connection backends
 
-## Capabilities
+| Backend | Connection                                                                 |
+| ------- | -------------------------------------------------------------------------- |
+| BLE     | GATT control and L2CAP audio/image channels through the Rorolee App        |
+| WiFi    | Hotspot setup, platform activation, MQTT commands and realtime voice       |
+| Muse    | BLE pairing through the Muse app, followed by WiFi access to Muse services |
 
-`agent_cap_t` is a bit per capability, combined with bitwise OR:
+The SDK reports connection status through `agent_link_status_t`. Hardware callbacks receive
+PCM audio, text or peripheral commands. Backend support in the SDK does not imply that every
+application has been adapted to every backend.
 
-```
-MIC  SPEAKER  SCREEN  BUTTON  HAPTIC  BATTERY  LED  SENSOR  ACTUATOR  RECORDING  CAMERA
-```
+## Layout
 
-Set the bits for the hardware you have, then implement the callbacks and push calls that match them.
-
-## Output callbacks (Agent to device)
-
-Fields of `agent_output_cb_t`. Implement what you support; the rest stay `NULL`.
-
-| Callback | Called when |
-|---|---|
-| `on_audio_out(pcm16, bytes)` / `on_audio_end()` | TTS audio arrives (PCM16, 16 kHz, mono), segment by segment |
-| `on_show_text(utf8)` / `on_show_image(rgb565_be, w, h)` | Text or an image should be shown on screen |
-| `on_haptic(ms)` / `on_led(rgb)` / `on_actuate(ch, val)` | Vibration, LED, or a generic actuator |
-| `on_agent_list(json)` | The platform sends the list of available Agents for a selection UI |
-| `on_command(cmd, payload, len, resp, cap, *resp_len)` | A query that must return data (the various `Get*`): fill `resp`, return `true`, and the SDK replies with it. `0x03 GetChargingStatus` is answered by the SDK from its cached battery value |
-| `on_custom(cmd, payload, len)` | Escape hatch for device-private commands, fire-and-forget |
-
-## Pushing data up (device to Agent)
-
-Implemented today:
-
-- `agent_link_push_voice` / `agent_link_voice_end`: stream microphone PCM (16 kHz, 16-bit, mono).
-- `agent_link_register_io` / `agent_link_push_reading`: declare sensors and actuators, then report readings. Actuator commands are routed back to the callback you registered.
-- `agent_link_report_battery`: battery percentage and charging state, de-duplicated internally.
-
-Declared but not yet wired to the transport (see [Status](#status)): `agent_link_push_event`, `agent_link_report_selected_agent`, `agent_link_recording_start/data/end`, `agent_link_push_video`.
-
-## Control plane vs data plane
-
-| | Control plane | Data plane |
-|---|---|---|
-| Carries | Commands, responses, events (small, reliable) | Voice, recording, files (high throughput) |
-| BLE channel | GATT write/notify on service `0xFFC0` | Voice uplink: GATT Notify `0xFFA1` (event `0x40`). TTS downlink, recording, files: L2CAP CoC (PSM `0x0081`) |
-| Transport call | `send_ctrl` | `stream_start` / `send_stream` / `stream_end` |
-| Device API | `report_battery`, `push_reading`, `push_event`, `on_command`, `on_custom` | `push_voice` / `voice_end`, `on_audio_out`, `recording_*`, `push_video` |
-
-## A minimal integration
-
-```c
-#include "agent_link.h"
-
-static void my_play(const uint8_t* pcm, size_t n, void* ctx) { /* write to the speaker codec */ }
-static void my_draw(const char* utf8, void* ctx)            { /* render to the screen */ }
-
-void app_start(void) {
-    static agent_output_cb_t out = { .on_audio_out = my_play, .on_show_text = my_draw };
-    agent_link_config_t cfg = {
-        .device_name = "MyThing",
-        .caps        = AGENT_CAP_MIC | AGENT_CAP_SPEAKER | AGENT_CAP_SCREEN,
-        .output      = &out,
-    };
-    agent_link_init(&cfg);
-    agent_link_start();
-    // then: feed the mic with agent_link_push_voice(pcm, n)
-}
-```
-
-In this repository that glue already exists in `main/app_main.cpp`, which forwards the audio, text, and haptic callbacks to the selected `Board`. You only write the board.
-
-## Adding a board
-
-A board is three files, most easily copied from `boards/rorolee-s3/`:
-
-```
-boards/my-board/
-├── config.h      # pins and feature macros
-├── config.json   # target chip, sdkconfig fragment, dependencies
-└── my_board.cc   # class MyBoard : public Board { ... };  DECLARE_BOARD(MyBoard);
-```
-
-Then register it in two places: add a `BOARD_TYPE_MY_BOARD` choice in `main/Kconfig.projbuild`, and one `elseif` branch in the board-select chain of `main/CMakeLists.txt`. `main/app_main.cpp` and `main/board.h` do not change. The full walkthrough is in [`boards/README.md`](boards/README.md).
-
-## Supported targets
-
-The only transport implemented so far is BLE (NimBLE), so the target needs an on-chip BLE radio: ESP32, ESP32-S3, ESP32-C3, ESP32-C6, ESP32-H2, and similar. Parts without a native radio (ESP32-S2, ESP32-P4) will depend on the WiFi or USB backend, which is scaffolded (`transport_wifi.cpp`) but not implemented. Per-chip differences live entirely under `boards/<board>/`; changing chip is `idf.py set-target <chip>` plus selecting the matching board.
-
-## Repository layout
-
-```
+```text
 firmware/
-├── CMakeLists.txt               top-level project
-├── sdkconfig.defaults
-├── main/                        shared app, board-independent
-│   ├── app_main.cpp             binds agent_link callbacks to the selected Board
-│   ├── board.h                  abstract Board interface + DECLARE_BOARD
-│   ├── Kconfig.projbuild        Board Type selection
-│   └── CMakeLists.txt           compiles the selected board's sources
-├── boards/                      one directory per board
-│   ├── README.md                how to add a board
-│   ├── common/                  drivers shared across boards (codec, panels)
-│   ├── rorolee-s3/              reference board (ESP32-S3)
-│   ├── work-badge/              electronic staff badge, same hardware (ESP32-S3)
-│   └── ...                      es8311-voice, es8311-asr, gc2145-camera, esp32p4-waveshare
-└── components/
-    ├── agent_link/              the SDK (protocol + transport); has its own README
-    ├── esp_lcd_sh8501_lk/       SH8501 factory short-code driver (reference board + work-badge)
-    └── esp_lcd_sh8501/          SH8501 full vendor init, for panels whose OTP was never burned
+  profiles/                  supported combinations and short sdkconfig fragments
+  tools/build_firmware.py    configure, validate, build and merge one profile
+  cmake/                    build integration
+  main/                     app_main and profile selection menu
+  apps/<app>/               UI, voice sessions, recording and SDK callbacks
+  apps/common/              Application interface
+  boards/<board>/           wiring, hardware initialization and catalog
+  boards/common/            shared display, codec, camera and peripheral drivers
+  components/board_support/ selected hardware drivers
+  components/ui_lvgl/       optional LVGL integration
+  components/agent_link/    core, audio, OTA and selected transport
+  components/muse_gadget/   vendored Muse integration
 ```
 
-## Status
+`profiles/profiles.json` selects the application, hardware, drivers, UI and transport together.
+Korvo BLE and WiFi share `boards/korvo/`; each keeps its own UI and audio workflow under `apps/`.
+The SDK compiles the selected transport and keeps disabled APIs available with an unsupported result.
+Public SDK interfaces, device models and flash partition layouts are preserved.
 
-| Area | State |
-|---|---|
-| BLE advertising, connectable, control service `0xFFC0` | Done |
-| Control plane: App-to-device commands (ACK + routing), device-to-App events (e.g. battery `0x14`), connection state to `on_state` | Done |
-| Voice uplink: `push_voice`/`voice_end` to GATT Notify `0xFFA1` (`0x40 VoiceChunk`), with MTU-aware slicing and backpressure | Implemented, not yet validated on hardware |
-| Voice downlink: App pushes audio over L2CAP CoC `0x0081` — raw PCM or IMA-ADPCM, decoded to PCM16 for `on_audio_out`, with `0x20` flow control so a long reply cannot outrun the speaker | Implemented, not yet validated on hardware |
-| Device I/O: `register_io`, `push_reading`, actuator downlink (manifest `0x18`, reading `0x19`, actuate `0x33`, pull `0x34`) | Implemented, not yet validated on hardware |
-| OTA firmware upgrade: App pushes an image over L2CAP `0x0081` (`0x37`/`0x56`, progress `0x38`), SHA-256 verified, rollback-protected | Implemented, not yet validated on hardware |
-| Recording / file download over L2CAP uplink | Not implemented |
-| Video (`push_video`) | Interface only; needs the WiFi/WebRTC backend |
-| WiFi / USB transport backends | Scaffolding only (`transport_wifi.cpp`) |
-| Reference board `rorolee-s3` | Display, ES8311/ES7210 codec, push-to-talk mic, and BQ27220 fuel gauge are wired. On-screen text is a placeholder (solid fill, no font rendering); haptic logs only |
-| Board `work-badge` | Electronic staff badge on the mass-production board (production pin map, factory short code SH8501 panel): LVGL name card the App fills in over device I/O, persisted in NVS, plus an OTA progress screen. Latin text only until a CJK font is generated ([README](boards/work-badge/README.md)) |
+To add hardware, follow [boards/README.md](boards/README.md), then add a profile and validate
+the board catalog. Code shared by multiple boards belongs in `boards/common/`.
 
-Rough order of work: control plane (done) → voice (done) → device I/O (done) → L2CAP recording/file → WiFi backend → video.
+## Using the component
 
-## BLE protocol
+Copy `components/agent_link/` into an ESP-IDF project's `components/`, add `agent_link` to its
+dependencies, select the backend before `project()` (see the component README), and register capabilities and output callbacks through `agent_link.h`.
+Microphone input uses `agent_link_stream_open/write/close`; hardware output arrives in callbacks.
+Queue slow hardware work because callbacks may run on transport tasks.
 
-Frames are a 6-byte header plus payload: `version (0x01)`, `message_type`, `command_id`, `sequence`, `payload_len` (little-endian uint16), then the payload. The low 7 bits of `message_type` are `0x01` command, `0x02` response, `0x03` event; the top bit `0x80` marks an encrypted payload (encryption is not enabled yet, so frames are plaintext).
-
-GATT layout:
-
-- Service `0xFFC0` (control): `0xFFC1` command (App writes, device notifies the response), `0xFFC4` event (device notifies).
-- Service `0xFFA0` (voice): `0xFFA1` notify, carrying voice-uplink event `0x40 VoiceChunk`.
-- Standard services `0x180F` Battery (`0x2A19`) and `0x180A` Device Information (`0x2A29` manufacturer, `0x2A24` model, `0x2A26` firmware revision).
-- Service `0xFFB0` (file/OTA): `0xFFB1` command (App writes `0x37`/`0x56`, device notifies the response). Present so the shipping App's OTA path works unchanged.
-- L2CAP CoC on PSM `0x0081` receives downlink TTS audio and forwards it to `on_audio_out`, and carries the firmware image while an OTA is running. Recording and file uplink over the same channel are not implemented yet.
-
-Device I/O rides the control plane: a self-describing manifest (event `0x18`), typed readings (event `0x19`), an actuator command (`0x33`), and a manifest pull (`0x34`). A voice-uplink frame is the 6-byte header followed by `session_id` (4), `sequence` (4), `flags` (1), and PCM. Per-notify PCM is sized to `min(MTU - 3 - 15, 494)` on ESP32-C3 and `min(MTU - 3 - 15, 205)` on other chips, rounded down to an even length. C3 packets span microphone reads; the final short packet is sent when recording ends.
-
-## Using only the SDK
-
-`components/agent_link/` is a standalone ESP-IDF component. Copy it into your project's `components/`, add `agent_link` to `REQUIRES` in your `main/CMakeLists.txt`, and `#include "agent_link.h"`. Details are in the [component README](components/agent_link/README.md).
+See the [component README](components/agent_link/README.md) and
+[realtime voice notes](components/agent_link/REALTIME.md) for API behavior and credentials.
 
 ## License
 
-Released under the MIT License; see [LICENSE](../LICENSE). Copyright (c) 2026 DEOTALAND LIMITED (德奧塔文化科技有限公司).
-
-The board directory layout takes inspiration from [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32), which is also MIT.
-
-`components/esp_lcd_sh8501/` is Espressif's SH8501 panel driver and `components/esp_lcd_sh8501_lk/` is a
-modified version of it for factory short-code panels; both, and everything under `managed_components/`, are
-licensed Apache-2.0 and carry their own copyright and modification notices.
+MIT; see [LICENSE](../LICENSE). Vendored components retain their own licenses.

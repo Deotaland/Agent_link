@@ -1,96 +1,23 @@
-set(SOURCES "app_main.cpp")
-set(INCLUDE_DIRS "." "${CMAKE_CURRENT_SOURCE_DIR}/../boards/common")
-
-file(GLOB COMMON_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/../boards/common/*.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../boards/common/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../boards/common/*.c)
-list(APPEND SOURCES ${COMMON_SOURCES})
-
-if(CONFIG_BOARD_TYPE_ROROLEE_S3)
-    set(BOARD_DIR "rorolee-s3")
-elseif(CONFIG_BOARD_TYPE_ESP32P4_WAVESHARE)
-    set(BOARD_DIR "esp32p4-waveshare")
-elseif(CONFIG_BOARD_TYPE_ESP32S3_ES8311_VOICE)
-    set(BOARD_DIR "es8311-voice")
-elseif(CONFIG_BOARD_TYPE_ESP32S3_ES8311_ASR)
-    set(BOARD_DIR "es8311-asr")
-elseif(CONFIG_BOARD_TYPE_ESP32S3_GC2145_CAMERA)
-    set(BOARD_DIR "gc2145-camera")
-elseif(CONFIG_BOARD_TYPE_ESP32S3_KORVO)
-    set(BOARD_DIR "korvo")
-elseif(CONFIG_BOARD_TYPE_ESP32S3_KORVO_CLOUD)
-    set(BOARD_DIR "korvo-cloud")
-elseif(CONFIG_BOARD_TYPE_ESP32S3_WORK_BADGE)
-    set(BOARD_DIR "work-badge")
-elseif(CONFIG_BOARD_TYPE_ROROLEE_MUSE)
-    set(BOARD_DIR "rorolee-muse")
-elseif(CONFIG_BOARD_TYPE_WOWNNY_MUSE OR CONFIG_BOARD_TYPE_WOWNNY_OLD_MUSE)
-    set(BOARD_DIR "wownny-muse")   # both revisions, config.h has the pin differences
-elseif(CONFIG_BOARD_TYPE_M5STACK_STOPWATCH)
-    set(BOARD_DIR "m5stack-stopwatch")
-elseif(CONFIG_BOARD_TYPE_FOLOTOY_AI_PASSPORT)
-    set(BOARD_DIR "ai-passport")
-# Add a new board: add a line elseif(CONFIG_BOARD_TYPE_XXX) set(BOARD_DIR "your-board")
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/profile_build.cmake")
+set(APP_DIR "${FIRMWARE_ROOT}/apps/${PROFILE_app}")
+file(GLOB _app_sources "${APP_DIR}/*.cc" "${APP_DIR}/*.cpp" "${APP_DIR}/*.c")
+set(_includes "." "${FIRMWARE_ROOT}/apps/common" "${APP_DIR}"
+              "${FIRMWARE_ROOT}/boards/${PROFILE_board}")
+set(_requires agent_link board_support nvs_flash esp_adc)
+if(PROFILE_ui STREQUAL "lvgl")
+    list(APPEND _requires ui_lvgl)
 endif()
-
-# The Muse boards: an optional avatar renderer, never committed (boards/<board>/avatar holds it,
-# and its .gitignore keeps it out of git). Present, it is built and the UI draws it.
-if(BOARD_DIR AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../boards/${BOARD_DIR}/avatar/muse_pixel.c")
-    list(APPEND SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../boards/${BOARD_DIR}/avatar/muse_pixel.c")
-    set(BOARD_HAS_AVATAR 1)
+if(PROFILE_backend STREQUAL "MUSE")
+    list(APPEND _requires esp_wifi)
 endif()
-
-if(BOARD_DIR)
-    file(GLOB BOARD_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/../boards/${BOARD_DIR}/*.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../boards/${BOARD_DIR}/*.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../boards/${BOARD_DIR}/*.c
-    )
-    list(APPEND SOURCES ${BOARD_SOURCES})
-elseif(NOT CMAKE_BUILD_EARLY_EXPANSION)
-    message(FATAL_ERROR "No board selected. Run: idf.py menuconfig -> Agent Link Device -> Board Type")
+set(_avatar "${FIRMWARE_ROOT}/boards/${PROFILE_board}/avatar/muse_pixel.c")
+if(EXISTS "${_avatar}")
+    list(APPEND _app_sources "${_avatar}")
+    list(APPEND _includes "${FIRMWARE_ROOT}/boards/${PROFILE_board}")
 endif()
-
-# REQUIRES CANNOT BE CONDITIONAL ON CONFIG_*.
-#
-# ESP-IDF collects REQUIRES in a first "early expansion" pass that runs this file in a child process
-# in CMake script mode, where sdkconfig has not been loaded — so every CONFIG_* reads as empty and an
-# if(CONFIG_BOARD_TYPE_...) around a REQUIRES silently contributes nothing. (SRCS above is fine: that
-# is re-evaluated in the normal pass, which is why the board-select chain works.)
-#
-# This is survivable for most of the per-board components only by luck:
-#   - esp_lcd_co5300, esp32-camera and lvgl are in main/idf_component.yml, and the component manager
-#     injects managed dependencies into main's PRIV_REQUIRES on its own. Their target rules there are
-#     also what keeps a P4-only or S3-only component out of the wrong build — something an
-#     unconditional REQUIRES here could NOT do, since a missing component is a hard error.
-#   - esp_driver_rmt (gc2145-camera's WS2812) arrives through the common `driver` umbrella.
-# Anything outside those two categories has to be listed unconditionally below. fatfs is the first
-# one that was not covered, it publicly requires sdmmc/esp_driver_sdmmc,so the TF card needs no separate entry.
-#
-# Adding a board that needs a NEW component: put it in idf_component.yml if it is a managed
-# dependency (with a `rules:` target gate when it is target-specific), otherwise add it to the list
-# below. Do not add an if(CONFIG_...) block here expecting it to work.
-
-idf_component_register(
-    SRCS ${SOURCES}
-    INCLUDE_DIRS ${INCLUDE_DIRS}
-    REQUIRES agent_link esp_driver_gpio esp_driver_spi esp_lcd esp_lcd_sh8501 esp_lcd_sh8501_lk
-             esp_lcd_gc9d01 esp_codec_dev esp_driver_i2c esp_driver_i2s nvs_flash esp_partition
-             fatfs esp_wifi esp_adc)
-
+idf_component_register(SRCS app_main.cpp ${_app_sources} INCLUDE_DIRS ${_includes}
+                       REQUIRES ${_requires})
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
-
-# Network boards: LVGL's static heap would otherwise compete with Wi-Fi and TLS for internal RAM.
-# The repo-root CMakeLists turns on SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY, and the attribute puts it
-# in PSRAM; LVGL leaves LV_ATTRIBUTE_LARGE_RAM_ARRAY to be defined from outside. (Target properties,
-# not REQUIRES, so a CONFIG_ test is fine here.)
-if(BOARD_HAS_AVATAR)
-    message(STATUS "${BOARD_DIR}: avatar renderer found, the UI will draw it")
+if(EXISTS "${_avatar}")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE VOICE_UI_AVATAR=1)
-endif()
-if(CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY)
-    idf_component_get_property(lvgl_lib lvgl__lvgl COMPONENT_LIB)
-    target_compile_options(${lvgl_lib} PRIVATE -include esp_attr.h)
-    target_compile_definitions(${lvgl_lib} PRIVATE LV_ATTRIBUTE_LARGE_RAM_ARRAY=EXT_RAM_BSS_ATTR)
 endif()

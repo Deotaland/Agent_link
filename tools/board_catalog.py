@@ -18,7 +18,7 @@ import catalog  # noqa: E402
 
 BOARDS = ROOT / "firmware" / "boards"
 KCONFIG = ROOT / "firmware" / "main" / "Kconfig.projbuild"
-MAIN_CMAKE = ROOT / "firmware" / "main" / "CMakeLists.txt"
+PROFILES = ROOT / "firmware" / "profiles" / "profiles.json"
 DOCS = {"en": ROOT / "AGENTS.md", "zh": ROOT / "AGENTS.zh-CN.md"}
 BEGIN, END = "<!-- boards:begin -->", "<!-- boards:end -->"
 
@@ -40,14 +40,10 @@ def kconfig_board_types():
     return list(dict.fromkeys(found))   # a symbol may be defined more than once
 
 
-def cmake_board_dirs():
-    """BOARD_TYPE suffix -> board directory, from the select chain in main/CMakeLists.txt."""
-    text = MAIN_CMAKE.read_text(encoding="utf-8")
-    out = {}
-    for cond, d in re.findall(r"(?:else)?if\(([^)]*)\)\s*\n\s*set\(BOARD_DIR \"([^\"]+)\"\)", text):
-        for t in re.findall(r"CONFIG_BOARD_TYPE_(\w+)", cond):
-            out[t] = d
-    return out
+def profile_board_dirs():
+    """The firmware manifest selects the hardware and application together."""
+    profiles = json.loads(PROFILES.read_text(encoding="utf-8"))
+    return {p["board_type"]: p["board"] for p in profiles.values()}
 
 
 def repo_problems(entries):
@@ -57,15 +53,21 @@ def repo_problems(entries):
     problems += [f"BOARD_TYPE_{t} appears {types.count(t)} times" for t in sorted(set(types)) if types.count(t) > 1]
     problems += [f"BOARD_TYPE_{t} (main/Kconfig.projbuild) has no catalog entry" for t in known if t not in types]
     problems += [f"BOARD_TYPE_{t} is not in main/Kconfig.projbuild" for t in types if t not in known]
-    dirs = cmake_board_dirs()
+    dirs = profile_board_dirs()
     for e in entries:
         t = e["board_type"]
-        if dirs.get(t) != e["dir"]:
-            problems.append(f"BOARD_TYPE_{t}: main/CMakeLists.txt builds {dirs.get(t)!r}, catalog says {e['dir']!r}")
+        if e["status"] != "not-adapted" and dirs.get(t) != e["dir"]:
+            problems.append(f"BOARD_TYPE_{t}: profiles/profiles.json selects {dirs.get(t)!r}, catalog says {e['dir']!r}")
+        profiles = json.loads(PROFILES.read_text(encoding="utf-8"))
+        profile = next((p for p in profiles.values() if p["board_type"] == t), None)
+        folders = [BOARDS / e["dir"]]
+        if profile:
+            folders.append(ROOT / "firmware/apps" / profile["app"])
         sources = "".join(p.read_text(encoding="utf-8", errors="replace")
-                          for p in (BOARDS / e["dir"]).glob("*") if p.suffix in (".cc", ".cpp", ".c", ".h"))
+                          for folder in folders for p in folder.glob("*")
+                          if p.suffix in (".cc", ".cpp", ".c", ".h"))
         if f'"{e["fw_model"]}"' not in sources:
-            problems.append(f"BOARD_TYPE_{t}: fw_model {e['fw_model']!r} is not a string in boards/{e['dir']} "
+            problems.append(f"BOARD_TYPE_{t}: fw_model {e['fw_model']!r} is not a string in the hardware/application for {e['dir']} "
                             "(it must be what Model() or Name() returns)")
     by_model = {}
     for e in entries:

@@ -37,14 +37,14 @@ MTUs. A congested packet can wait up to 2 seconds; queue overflow still ends the
 session to avoid sending audio with gaps. Per-second flow logs show capture and
 submission rates, queue depth and both pool counts. Submission is not a phone
 receipt acknowledgement.
-The C3 BLE build omits the unused WiFi transport implementation, provisioning and
-cloud sources. The shared component dependencies remain unconditional.
+The BLE profile omits WiFi provisioning and cloud sources. Its dependencies are
+selected from the firmware profile before ESP-IDF expands component requirements.
 
 Memory snapshots are logged after display/codec initialization, BLE startup and
 before voice creation. Voice and UI tasks log their remaining stack space.
 
-Build in `firmware/build` with ESP-IDF 5.5.4 and low parallelism. For native checks,
-run `tests/run_voice_session_tests.cmd` and `tests/run_raster_ui_tests.cmd` from a
-Visual Studio developer command prompt at the firmware root. The renderer test
-uses the production drawing code, checks full-frame/stripe equality and playback
-gates, and writes `build/ui_*.ppm` previews. It uses AddressSanitizer.
+Build in `firmware/build` with ESP-IDF 5.5.4:
+
+```bash
+python tools/build_firmware.py ai-passport-ble
+```

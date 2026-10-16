@@ -1,2 +1,5 @@
 /.agents/
 /.cache/
+/sdkconfig.private
+/sdkconfig.before-profile
+/.firmware-profile.json

@@ -15,13 +15,11 @@ A connectivity layer that puts embedded devices on the **Deotaland Agent platfor
 ```bash
 git clone https://github.com/Deotaland/Agent_link.git
 cd Agent_link/firmware
-idf.py set-target esp32s3     # match your board's chip
-idf.py menuconfig             # Agent Link Device -> Board Type
-idf.py build
+python tools/build_firmware.py   # choose the firmware profile from the menu
 idf.py -p <port> flash monitor
 ```
 
-Requires ESP-IDF v5.0 or newer. Full build notes, the capability model, and the board-porting guide are in [`firmware/README.md`](firmware/README.md).
+Requires an activated ESP-IDF v5.5.x environment (maintainers use v5.5.4). The build tool generates the configuration and restores managed dependencies; a fresh checkout needs no local config or test files. Full build notes, the capability model, and the board-porting guide are in [`firmware/README.md`](firmware/README.md).
 
 ## License
 
