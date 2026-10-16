@@ -1,20 +1,21 @@
 #pragma once
-// korvo-cloud's on-device UI — phone-shaped, three surfaces and two edge gestures.
+// korvo-cloud's on-device UI — phone-shaped pages, apps and two edge gestures.
 //
-// Two pages you swipe between, plus two things you drop into and come back out of.
+// Two pages you swipe between, plus apps and a shade you can leave with a swipe.
 //
 //   Home    page 0, and the link is its content: whatever agent_link_status_t says — "open the
 //           app" on BLE, "join the hotspot" or an activation code on WiFi, online, or what is
 //           blocking it. Drawn from the status alone, so the same screen serves both transports.
-//   Apps    page 1: the camera icon. Just a launcher — the sensor stays idle until it is tapped.
+//   Apps    page 1: camera, voice and servo launchers.
 //   Camera  the live preview, opened from that icon. Not LVGL at all; the preview task owns the
 //           panel while it is up.
+//   Servo   local SS1–SS8 selector and angle dial; the board's servo task performs I2C writes.
 //   Shade   network, platform and identity detail.
 //
 //   swipe LEFT                      -> next page, wrapping (the phone idiom: the finger drags the
 //                                      content left, revealing what is to the right)
 //   swipe RIGHT                     -> previous page, wrapping
-//   swipe up from the BOTTOM edge   -> leave Camera or Shade, back to the page you came from
+//   swipe up from the BOTTOM edge   -> leave an app or Shade, back to the page you came from
 //   swipe down from the TOP edge    -> Shade
 
 #include <cstdint>
@@ -29,8 +30,9 @@ namespace kc_ui {
 
 enum class Mode {
     kHome,     // page 0: link status
-    kApps,     // page 1: camera and voice request icons
+    kApps,     // page 1: camera, voice and servo launchers
     kCamera,   // live preview; the preview task owns the panel here
+    kServo,    // local servo selector and angle dial
     kVoice,    // continuous realtime voice for the selected session
     kAgents,
     kConversations,
@@ -39,7 +41,9 @@ enum class Mode {
 
 // Bring up LVGL on `lcd`, wire `touch` in as the pointer device, build the screens and start the
 // render task. `touch` may be null: with no pointer and no gestures the board stays on Home forever
-esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio);
+using ServoRequest = bool (*)(uint8_t channel, uint8_t angle, void* ctx);
+esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio,
+                ServoRequest servo_request, void* servo_ctx);
 
 Mode CurrentMode();
 
@@ -56,6 +60,8 @@ void SetLinkStatus(const agent_link_status_t& st);
 
 // The agent_link transport came up or went down (the dot in the status bar).
 void SetLinkState(bool connected);
+// Report the result of the I2C transmit; safe to call from the servo task.
+void SetServoResult(uint8_t channel, uint8_t angle, esp_err_t result);
 void SetVoiceText(const char* utf8);
 
 }  // namespace kc_ui

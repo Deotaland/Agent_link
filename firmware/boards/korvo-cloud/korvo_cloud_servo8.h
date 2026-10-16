@@ -8,7 +8,7 @@
 class KorvoCloudServo8 {
 public:
     esp_err_t Init();
-    esp_err_t SetSs1Angle(uint8_t angle);
+    esp_err_t SetAngle(uint8_t channel, uint8_t angle);
 
 private:
     i2c_master_bus_handle_t bus_ = nullptr;

@@ -53,10 +53,13 @@ constexpr uint32_t kColCode  = 0x2FA8FF;
 constexpr uint32_t kColCam   = 0x2FA8FF;
 constexpr uint32_t kColCam2  = 0x1C6FD0;
 constexpr uint32_t kColVoice = 0xA075EB;
+constexpr uint32_t kColServo = 0x36BFA7;
 
 St7789Lcd*       s_lcd   = nullptr;
 Cst816Touch*     s_touch = nullptr;
 KorvoCloudAudio* s_audio = nullptr;
+ServoRequest     s_servo_request = nullptr;
+void*            s_servo_ctx = nullptr;
 lv_display_t*    s_disp  = nullptr;
 lv_indev_t*      s_indev = nullptr;
 uint8_t*         s_buf   = nullptr;
@@ -83,6 +86,7 @@ lv_obj_t* s_scr_home  = nullptr;
 lv_obj_t* s_scr_apps  = nullptr;
 lv_obj_t* s_scr_shade = nullptr;
 lv_obj_t* s_scr_voice = nullptr;
+lv_obj_t* s_scr_servo = nullptr;
 lv_obj_t* s_scr_agents = nullptr;
 lv_obj_t* s_scr_conversations = nullptr;
 
@@ -94,6 +98,26 @@ lv_obj_t* s_title    = nullptr;   // what the board is doing, one line
 lv_obj_t* s_big      = nullptr;   // the activation code, or a status word
 lv_obj_t* s_hint     = nullptr;   // what the user should do about it
 lv_obj_t* s_voice_hint = nullptr;
+lv_obj_t* s_servo_status = nullptr;
+lv_obj_t* s_servo_select_label = nullptr;
+lv_obj_t* s_servo_picker = nullptr;
+lv_obj_t* s_servo_picker_rows[5] = {};
+lv_obj_t* s_servo_angle_label = nullptr;
+lv_obj_t* s_servo_arc = nullptr;
+uint8_t s_servo_channel = 1;
+uint8_t s_servo_picker_channel = 1;
+uint8_t s_servo_picker_start_channel = 1;
+int32_t s_servo_picker_start_y = 0;
+bool s_servo_picker_active = false;
+uint8_t s_servo_angles[8] = {90, 90, 90, 90, 90, 90, 90, 90};
+uint8_t s_servo_last_sent_channel = 0;
+uint8_t s_servo_last_sent_angle = 0;
+int64_t s_servo_last_send_us = 0;
+portMUX_TYPE s_servo_result_lock = portMUX_INITIALIZER_UNLOCKED;
+uint8_t s_servo_result_channel = 0;
+uint8_t s_servo_result_angle = 0;
+esp_err_t s_servo_result_error = ESP_OK;
+std::atomic<uint32_t> s_servo_result_rev{0};
 int64_t   s_last_voice_request_us = 0;
 int64_t   s_last_voice_attempt_us = 0;
 int64_t   s_last_mic_retry_us = 0;
@@ -849,6 +873,206 @@ void BuildConversations() {
     BuildPill(s_scr_conversations);
 }
 
+void OnServoIcon(lv_event_t* /*e*/) {
+    s_want.store(Mode::kServo, std::memory_order_release);
+}
+
+void ShowServoAngle(uint8_t angle) {
+    if (!s_servo_angle_label) return;
+    char caption[8];
+    snprintf(caption, sizeof caption, "%u", angle);
+    lv_label_set_text(s_servo_angle_label, caption);
+}
+
+void RequestServoAngle(uint8_t angle, bool force) {
+    if (!s_servo_request || !s_servo_status) return;
+    if (s_servo_last_sent_channel == s_servo_channel && s_servo_last_sent_angle == angle) return;
+    const int64_t now = esp_timer_get_time();
+    if (!force && s_servo_last_send_us && now - s_servo_last_send_us < 40000) return;
+    if (!s_servo_request(s_servo_channel, angle, s_servo_ctx)) {
+        lv_label_set_text(s_servo_status, "Servo queue unavailable");
+        lv_obj_set_style_text_color(s_servo_status, lv_color_hex(kColErr), 0);
+        return;
+    }
+    s_servo_last_sent_channel = s_servo_channel;
+    s_servo_last_sent_angle = angle;
+    s_servo_last_send_us = now;
+    char caption[32];
+    snprintf(caption, sizeof caption, "Moving SS%u...", s_servo_channel);
+    lv_label_set_text(s_servo_status, caption);
+    lv_obj_set_style_text_color(s_servo_status, lv_color_hex(kColMuted), 0);
+}
+
+void SelectServoChannel(uint8_t channel) {
+    if (channel == s_servo_channel) return;
+    s_servo_channel = channel;
+    char caption[8];
+    snprintf(caption, sizeof caption, "SS%u", s_servo_channel);
+    lv_label_set_text(s_servo_select_label, caption);
+    lv_arc_set_value(s_servo_arc, s_servo_angles[s_servo_channel - 1]);
+    ShowServoAngle(s_servo_angles[s_servo_channel - 1]);
+    lv_label_set_text(s_servo_status, "Turn dial to move");
+    lv_obj_set_style_text_color(s_servo_status, lv_color_hex(kColMuted), 0);
+}
+
+void RefreshServoPicker() {
+    for (int i = 0; i < 5; ++i) {
+        const int channel = static_cast<int>(s_servo_picker_channel) + i - 2;
+        char caption[8] = {};
+        if (channel >= 1 && channel <= 8) snprintf(caption, sizeof caption, "SS%d", channel);
+        lv_label_set_text(s_servo_picker_rows[i], caption);
+    }
+}
+
+void OnServoPicker(lv_event_t* e) {
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        lv_indev_t* indev = lv_indev_active();
+        if (!indev) return;
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        s_servo_picker_start_y = point.y;
+        s_servo_picker_start_channel = s_servo_channel;
+        s_servo_picker_channel = s_servo_channel;
+        s_servo_picker_active = true;
+        RefreshServoPicker();
+        lv_obj_move_to_index(s_servo_picker, -1);
+        lv_obj_remove_flag(s_servo_picker, LV_OBJ_FLAG_HIDDEN);
+    } else if (code == LV_EVENT_PRESSING && s_servo_picker_active) {
+        lv_indev_t* indev = lv_indev_active();
+        if (!indev) return;
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        // Sliding down walks SS1 -> SS8; the highlighted choice stays centered.
+        int channel = static_cast<int>(s_servo_picker_start_channel) +
+                      (point.y - s_servo_picker_start_y) / 16;
+        if (channel < 1) channel = 1;
+        if (channel > 8) channel = 8;
+        if (channel != s_servo_picker_channel) {
+            s_servo_picker_channel = static_cast<uint8_t>(channel);
+            RefreshServoPicker();
+        }
+    } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) &&
+               s_servo_picker_active) {
+        s_servo_picker_active = false;
+        lv_obj_add_flag(s_servo_picker, LV_OBJ_FLAG_HIDDEN);
+        if (code == LV_EVENT_RELEASED) SelectServoChannel(s_servo_picker_channel);
+    }
+}
+
+void OnServoArc(lv_event_t* e) {
+    const uint8_t angle = static_cast<uint8_t>(lv_arc_get_value(s_servo_arc));
+    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+        s_servo_angles[s_servo_channel - 1] = angle;
+        ShowServoAngle(angle);
+        RequestServoAngle(angle, false);
+    } else {
+        RequestServoAngle(angle, true);
+    }
+}
+
+void BuildServo() {
+    s_scr_servo = lv_obj_create(nullptr);
+    lv_obj_remove_style_all(s_scr_servo);
+    lv_obj_set_style_bg_color(s_scr_servo, lv_color_hex(kColBg), 0);
+    lv_obj_set_style_bg_opa(s_scr_servo, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_scr_servo, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* title = Label(s_scr_servo, "Servo control", kColServo, &lv_font_montserrat_20);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 12);
+
+    lv_obj_t* channel = Label(s_scr_servo, "Channel", kColMuted, &lv_font_montserrat_14);
+    lv_obj_set_pos(channel, kPad + 10, 56);
+    s_servo_select_label = MenuButton(s_scr_servo, kPad, 87, 82, 61,
+                                      "SS1", nullptr);
+    lv_obj_t* select_button = lv_obj_get_parent(s_servo_select_label);
+    lv_obj_add_flag(select_button, LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(select_button, OnServoPicker, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(select_button, OnServoPicker, LV_EVENT_PRESSING, nullptr);
+    lv_obj_add_event_cb(select_button, OnServoPicker, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(select_button, OnServoPicker, LV_EVENT_PRESS_LOST, nullptr);
+
+    s_servo_picker = Plain(s_scr_servo);
+    lv_obj_set_size(s_servo_picker, 84, 124);
+    lv_obj_set_pos(s_servo_picker, kPad - 1, 62);
+    lv_obj_set_style_radius(s_servo_picker, 12, 0);
+    lv_obj_set_style_bg_color(s_servo_picker, lv_color_hex(kColCard), 0);
+    lv_obj_set_style_bg_opa(s_servo_picker, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_servo_picker, 1, 0);
+    lv_obj_set_style_border_color(s_servo_picker, lv_color_hex(kColServo), 0);
+    lv_obj_t* picked = Plain(s_servo_picker);
+    lv_obj_set_size(picked, 76, 24);
+    lv_obj_align(picked, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_radius(picked, 8, 0);
+    lv_obj_set_style_bg_color(picked, lv_color_hex(kColServo), 0);
+    lv_obj_set_style_bg_opa(picked, LV_OPA_COVER, 0);
+    for (int i = 0; i < 5; ++i) {
+        s_servo_picker_rows[i] = Label(s_servo_picker, "", i == 2 ? kColBg : kColText,
+                                       &lv_font_montserrat_14);
+        lv_obj_set_width(s_servo_picker_rows[i], 76);
+        lv_obj_set_style_text_align(s_servo_picker_rows[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(s_servo_picker_rows[i], LV_ALIGN_CENTER, 0, (i - 2) * 24);
+    }
+    lv_obj_add_flag(s_servo_picker, LV_OBJ_FLAG_HIDDEN);
+
+    s_servo_arc = lv_arc_create(s_scr_servo);
+    lv_obj_set_size(s_servo_arc, 148, 148);
+    lv_obj_set_pos(s_servo_arc, 112, 42);
+    lv_arc_set_range(s_servo_arc, 0, 180);
+    lv_arc_set_rotation(s_servo_arc, 135);
+    lv_arc_set_bg_angles(s_servo_arc, 0, 270);
+    lv_arc_set_change_rate(s_servo_arc, 1440);
+    lv_arc_set_value(s_servo_arc, s_servo_angles[0]);
+    lv_obj_set_style_arc_color(s_servo_arc, lv_color_hex(kColCard), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_servo_arc, lv_color_hex(kColServo), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_servo_arc, lv_color_hex(kColText), LV_PART_KNOB);
+    lv_obj_add_event_cb(s_servo_arc, OnServoArc, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(s_servo_arc, OnServoArc, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(s_servo_arc, OnServoArc, LV_EVENT_PRESS_LOST, nullptr);
+
+    s_servo_angle_label = Label(s_scr_servo, "90", kColText, &lv_font_montserrat_28);
+    lv_obj_align_to(s_servo_angle_label, s_servo_arc, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_t* unit = Label(s_scr_servo, "deg", kColMuted, &lv_font_montserrat_14);
+    lv_obj_align_to(unit, s_servo_arc, LV_ALIGN_CENTER, 0, 18);
+
+    s_servo_status = Label(s_scr_servo, s_servo_request ? "Hold SS & slide" : "Servo unavailable",
+                           s_servo_request ? kColMuted : kColErr, &lv_font_montserrat_14);
+    lv_obj_set_size(s_servo_status, 84, 38);
+    lv_label_set_long_mode(s_servo_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(s_servo_status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(s_servo_status, kPad - 1, 159);
+
+    if (!s_servo_request) {
+        lv_obj_add_state(lv_obj_get_parent(s_servo_select_label), LV_STATE_DISABLED);
+        lv_obj_add_state(s_servo_arc, LV_STATE_DISABLED);
+    }
+
+    lv_obj_t* back = Label(s_scr_servo, "Swipe up to return", kColMuted, &lv_font_montserrat_14);
+    lv_obj_align(back, LV_ALIGN_BOTTOM_MID, 0, -28);
+    BuildPill(s_scr_servo);
+}
+
+void RefreshServoResult() {
+    if (!s_servo_status) return;
+    uint8_t channel;
+    uint8_t angle;
+    esp_err_t err;
+    taskENTER_CRITICAL(&s_servo_result_lock);
+    channel = s_servo_result_channel;
+    angle = s_servo_result_angle;
+    err = s_servo_result_error;
+    taskEXIT_CRITICAL(&s_servo_result_lock);
+    if (channel != s_servo_channel) return;
+    char caption[40];
+    if (err == ESP_OK) snprintf(caption, sizeof caption, "Sent %u deg", angle);
+    else {
+        s_servo_last_sent_channel = 0;
+        snprintf(caption, sizeof caption, "I2C write failed");
+    }
+    lv_label_set_text(s_servo_status, caption);
+    lv_obj_set_style_text_color(s_servo_status, lv_color_hex(err == ESP_OK ? kColOk : kColErr), 0);
+}
+
 // Apps
 void BuildApps() {
     s_scr_apps = lv_obj_create(nullptr);
@@ -867,8 +1091,8 @@ void BuildApps() {
     lv_obj_align(name, LV_ALIGN_LEFT_MID, kPad, 0);
 
     lv_obj_t* icon = Plain(s_scr_apps);
-    lv_obj_set_size(icon, 76, 76);
-    lv_obj_align(icon, LV_ALIGN_TOP_MID, -52, 62);
+    lv_obj_set_size(icon, 68, 68);
+    lv_obj_align(icon, LV_ALIGN_TOP_MID, -88, 64);
     lv_obj_set_style_radius(icon, 20, 0);
     lv_obj_set_style_bg_color(icon, lv_color_hex(kColCam), 0);
     lv_obj_set_style_bg_grad_color(icon, lv_color_hex(kColCam2), 0);
@@ -879,14 +1103,14 @@ void BuildApps() {
     DrawCameraGlyph(icon);
 
     lv_obj_t* cap = Label(s_scr_apps, "Camera", kColText, &lv_font_montserrat_14);
-    lv_obj_align(cap, LV_ALIGN_TOP_MID, -52, 148);
+    lv_obj_align(cap, LV_ALIGN_TOP_MID, -88, 143);
 
     lv_obj_t* hint = Label(s_scr_apps, "preview", kColMuted, &lv_font_montserrat_14);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, -52, 170);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, -88, 166);
 
     lv_obj_t* voice = Plain(s_scr_apps);
-    lv_obj_set_size(voice, 76, 76);
-    lv_obj_align(voice, LV_ALIGN_TOP_MID, 52, 62);
+    lv_obj_set_size(voice, 68, 68);
+    lv_obj_align(voice, LV_ALIGN_TOP_MID, 0, 64);
     lv_obj_set_style_radius(voice, 20, 0);
     lv_obj_set_style_bg_color(voice, lv_color_hex(kColVoice), 0);
     lv_obj_set_style_bg_opa(voice, LV_OPA_COVER, 0);
@@ -894,9 +1118,24 @@ void BuildApps() {
     lv_obj_add_event_cb(voice, OnVoiceIcon, LV_EVENT_CLICKED, nullptr);
     DrawVoiceGlyph(voice);
     lv_obj_t* voice_cap = Label(s_scr_apps, "Voice", kColText, &lv_font_montserrat_14);
-    lv_obj_align(voice_cap, LV_ALIGN_TOP_MID, 52, 148);
+    lv_obj_align(voice_cap, LV_ALIGN_TOP_MID, 0, 143);
     s_voice_hint = Label(s_scr_apps, "request", kColMuted, &lv_font_montserrat_14);
-    lv_obj_align(s_voice_hint, LV_ALIGN_TOP_MID, 52, 170);
+    lv_obj_align(s_voice_hint, LV_ALIGN_TOP_MID, 0, 166);
+
+    lv_obj_t* servo = Plain(s_scr_apps);
+    lv_obj_set_size(servo, 68, 68);
+    lv_obj_align(servo, LV_ALIGN_TOP_MID, 88, 64);
+    lv_obj_set_style_radius(servo, 20, 0);
+    lv_obj_set_style_bg_color(servo, lv_color_hex(kColServo), 0);
+    lv_obj_set_style_bg_opa(servo, LV_OPA_COVER, 0);
+    lv_obj_add_flag(servo, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(servo, OnServoIcon, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* angle = Label(servo, "90", kColBg, &lv_font_montserrat_28);
+    lv_obj_center(angle);
+    lv_obj_t* servo_cap = Label(s_scr_apps, "Servo", kColText, &lv_font_montserrat_14);
+    lv_obj_align(servo_cap, LV_ALIGN_TOP_MID, 88, 143);
+    lv_obj_t* servo_hint = Label(s_scr_apps, "SS1", kColMuted, &lv_font_montserrat_14);
+    lv_obj_align(servo_hint, LV_ALIGN_TOP_MID, 88, 166);
 
     BuildDots(s_scr_apps, s_dot_apps);
     BuildPill(s_scr_apps);
@@ -1079,6 +1318,7 @@ void ApplyMode(Mode want) {
 
     lv_obj_t* scr = want == Mode::kShade ? s_scr_shade
                   : want == Mode::kApps  ? s_scr_apps
+                  : want == Mode::kServo ? s_scr_servo
                   : want == Mode::kVoice ? s_scr_voice
                   : want == Mode::kAgents ? s_scr_agents
                   : want == Mode::kConversations ? s_scr_conversations
@@ -1108,6 +1348,7 @@ void ApplyMode(Mode want) {
     lv_obj_invalidate(lv_screen_active());
     ESP_LOGI(TAG, "screen -> %s", want == Mode::kShade ? "shade"
                                 : want == Mode::kApps  ? "apps"
+                                : want == Mode::kServo ? "servo"
                                 : want == Mode::kVoice ? "voice"
                                 : want == Mode::kAgents ? "agents"
                                 : want == Mode::kConversations ? "sessions" : "home");
@@ -1185,6 +1426,11 @@ void PollGestures() {
         return;
     }
 
+    // Keep a drag on the dial with LVGL. Only the top/bottom edge gestures own a
+    // press on this screen; the ordinary page-swipe recognizer would cancel it.
+    if (s_mode.load(std::memory_order_acquire) == Mode::kServo &&
+        !s_sw.from_top && !s_sw.from_bot) return;
+
     if (s_sw.fired) return;
 
     const int32_t dx = x - s_sw.x0;
@@ -1210,6 +1456,7 @@ void RenderTask(void*) {
     uint32_t seen_link  = 0;
     uint32_t seen_status = 0;
     uint32_t seen_platform = 0;
+    uint32_t seen_servo = 0;
     while (true) {
         if (s_touch) {
             (void)s_touch->Poll();
@@ -1233,6 +1480,8 @@ void RenderTask(void*) {
 
         const uint32_t platform_rev = s_platform_rev.load(std::memory_order_acquire);
         if (platform_rev != seen_platform) { seen_platform = platform_rev; ApplyPlatformResult(); }
+        const uint32_t servo_rev = s_servo_result_rev.load(std::memory_order_acquire);
+        if (servo_rev != seen_servo) { seen_servo = servo_rev; RefreshServoResult(); }
         if (s_delete_confirm_row >= 0 && esp_timer_get_time() > s_delete_confirm_until_us) {
             ResetDeleteConfirmation();
             if (s_mode.load() == Mode::kConversations) ShowConversationRows();
@@ -1260,11 +1509,14 @@ void RenderTask(void*) {
 
 }  // namespace
 
-esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio) {
+esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio,
+                ServoRequest servo_request, void* servo_ctx) {
     if (!lcd || !lcd->Ready()) return ESP_ERR_INVALID_STATE;
     s_lcd   = lcd;
     s_touch = (touch && touch->Ready()) ? touch : nullptr;
     s_audio = (audio && audio->Ready()) ? audio : nullptr;
+    s_servo_request = servo_request;
+    s_servo_ctx = servo_ctx;
 
     s_lcd_mux = xSemaphoreCreateMutex();
     if (!s_lcd_mux) return ESP_ERR_NO_MEM;
@@ -1299,6 +1551,7 @@ esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio) {
 
     BuildHome();
     BuildApps();
+    BuildServo();
     BuildVoice();
     BuildAgents();
     BuildConversations();
@@ -1349,6 +1602,15 @@ void SetLinkState(bool connected) {
     if (connected == s_connected.load(std::memory_order_acquire)) return;
     s_connected.store(connected, std::memory_order_release);
     s_link_rev.fetch_add(1, std::memory_order_release);
+}
+
+void SetServoResult(uint8_t channel, uint8_t angle, esp_err_t result) {
+    taskENTER_CRITICAL(&s_servo_result_lock);
+    s_servo_result_channel = channel;
+    s_servo_result_angle = angle;
+    s_servo_result_error = result;
+    taskEXIT_CRITICAL(&s_servo_result_lock);
+    s_servo_result_rev.fetch_add(1, std::memory_order_release);
 }
 
 void SetVoiceText(const char* utf8) {

@@ -45,7 +45,8 @@ public:
         RegisterCaptureEndpoint();  // platform -> snapshot (device-I/O actuator "camera0")
 
         if (kc_ui::Start(&lcd_, touch_ok_ ? &touch_ : nullptr,
-                         audio_ok_ ? &audio_ : nullptr) != ESP_OK) {
+                         audio_ok_ ? &audio_ : nullptr,
+                         servo_queue_ ? &KorvoCloudBoard::OnLocalServoCmd : nullptr, this) != ESP_OK) {
             ESP_LOGE(TAG, "UI start failed");
             return;
         }
@@ -96,6 +97,11 @@ public:
     void OnLinkState(bool connected) override { kc_ui::SetLinkState(connected); }
 
 private:
+    struct ServoCommand {
+        uint8_t channel;
+        uint8_t angle;
+    };
+
     static St7789LcdConfig MakeLcdConfig() {
         St7789LcdConfig c = {};
         c.spi_host     = DISPLAY_SPI_HOST;
@@ -201,7 +207,7 @@ private:
             ESP_LOGE(TAG, "servo I2C init failed: %s", esp_err_to_name(err));
             return;
         }
-        servo_queue_ = xQueueCreate(1, sizeof(uint8_t));
+        servo_queue_ = xQueueCreate(1, sizeof(ServoCommand));
         if (!servo_queue_ ||
             xTaskCreate(&KorvoCloudBoard::ServoTaskEntry, "servo8", 3072, this, 5, nullptr) != pdPASS) {
             ESP_LOGE(TAG, "servo task init failed");
@@ -237,18 +243,31 @@ private:
             ESP_LOGW(TAG, "servo1 angle out of range: %lu", static_cast<unsigned long>(angle));
             return;
         }
-        const uint8_t value = static_cast<uint8_t>(angle);
-        xQueueOverwrite(self->servo_queue_, &value);
+        if (!self->QueueServoAngle(1, static_cast<uint8_t>(angle))) {
+            ESP_LOGW(TAG, "servo1 queue unavailable");
+        }
+    }
+
+    bool QueueServoAngle(uint8_t channel, uint8_t angle) {
+        if (channel < 1 || channel > 8 || angle > 180 || !servo_queue_) return false;
+        const ServoCommand command{channel, angle};
+        return xQueueOverwrite(servo_queue_, &command) == pdPASS;
+    }
+
+    static bool OnLocalServoCmd(uint8_t channel, uint8_t angle, void* ctx) {
+        auto* self = static_cast<KorvoCloudBoard*>(ctx);
+        return self && self->QueueServoAngle(channel, angle);
     }
 
     static void ServoTaskEntry(void* arg) {
         auto* self = static_cast<KorvoCloudBoard*>(arg);
-        uint8_t angle = 0;
+        ServoCommand command = {};
         while (true) {
-            if (xQueueReceive(self->servo_queue_, &angle, portMAX_DELAY) != pdTRUE) continue;
-            const esp_err_t err = self->servo_.SetSs1Angle(angle);
-            if (err == ESP_OK) ESP_LOGI(TAG, "servo1 -> %u degrees", angle);
-            else ESP_LOGE(TAG, "servo1 write failed: %s", esp_err_to_name(err));
+            if (xQueueReceive(self->servo_queue_, &command, portMAX_DELAY) != pdTRUE) continue;
+            const esp_err_t err = self->servo_.SetAngle(command.channel, command.angle);
+            if (err == ESP_OK) ESP_LOGI(TAG, "servo%u -> %u degrees", command.channel, command.angle);
+            else ESP_LOGE(TAG, "servo%u write failed: %s", command.channel, esp_err_to_name(err));
+            kc_ui::SetServoResult(command.channel, command.angle, err);
         }
     }
 

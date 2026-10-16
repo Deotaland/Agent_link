@@ -41,9 +41,9 @@ esp_err_t KorvoCloudServo8::Init() {
     return ESP_OK;
 }
 
-esp_err_t KorvoCloudServo8::SetSs1Angle(uint8_t angle) {
-    if (!dev_ || angle > 180) return ESP_ERR_INVALID_ARG;
-    // HC32L110 firmware v2: [channel 0 for SS1][angle][reserved].
-    const uint8_t frame[3] = {0, angle, 0};
+esp_err_t KorvoCloudServo8::SetAngle(uint8_t channel, uint8_t angle) {
+    if (!dev_ || channel < 1 || channel > 8 || angle > 180) return ESP_ERR_INVALID_ARG;
+    // HC32L110 firmware v2: [channel 0..7 for SS1..SS8][angle][reserved].
+    const uint8_t frame[3] = {static_cast<uint8_t>(channel - 1), angle, 0};
     return i2c_master_transmit(dev_, frame, sizeof(frame), kTimeoutMs);
 }
