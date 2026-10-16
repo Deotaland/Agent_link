@@ -39,6 +39,9 @@ python tools/build_firmware.py --check
 
 默认复用 `firmware/build`，并行度为 2。成功后生成 `build/agent_link.bin`、`build/merged.bin` 和调试文件；不会自动烧录。带凭据的产物仅供本地使用。
 
+支持 ESP-IDF 5.5.x 和 6.1.x。激活所需环境后使用同一命令；切换 SDK 路径或版本时自动清理
+原构建缓存，并根据新 SDK 重新生成配置。两套环境不会共用生成的 CMake 配置和目标文件。
+
 ## 内存
 
 S3 方案使用 Octal PSRAM。BLE 主机缓冲放在 PSRAM，控制器和 DMA 仍由驱动分配内部 RAM；保留原缓冲数量。AI Passport 没有 PSRAM，继续使用 C3 的内部 RAM 和小缓冲配置。

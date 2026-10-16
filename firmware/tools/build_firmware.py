@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+from importlib.metadata import version as package_version
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "profiles/profiles.json"
 PRIVATE = ROOT / "sdkconfig.private"
 STATE = ROOT / ".firmware-profile.json"
-SCHEMA = 2
+SCHEMA = 3
 SETTING = re.compile(r"^(CONFIG_\w+)=(.*)$")
 UNSET = re.compile(r"^# (CONFIG_\w+) is not set$")
 PRIVATE_KEYS = {
@@ -26,6 +27,32 @@ PRIVATE_KEYS = {
     "CONFIG_AGENT_LINK_REALTIME_BASE_URL", "CONFIG_AGENT_LINK_REALTIME_SESSION_ID",
     "CONFIG_AGENT_LINK_REALTIME_USER_API_KEY",
 }
+
+
+def idf_context():
+    configured = os.environ.get("IDF_PATH")
+    if not configured:
+        return {}
+    path = Path(configured).resolve()
+    version_file = path / "tools/cmake/version.cmake"
+    if not version_file.is_file():
+        raise ValueError("IDF_PATH does not point to an ESP-IDF checkout")
+    text = version_file.read_text(encoding="utf-8")
+    version = tuple(int(re.search(rf"set\(IDF_VERSION_{part}\s+(\d+)\)", text)[1])
+                    for part in ("MAJOR", "MINOR", "PATCH"))
+    return {"path": path.as_posix(), "version": ".".join(map(str, version))}
+
+
+def supported_idf(version):
+    return tuple(map(int, version.split(".")[:2])) in {(5, 5), (6, 1)}
+
+
+def previous_build_context(build_dir):
+    description = build_dir / "project_description.json"
+    if description.is_file():
+        data = json.loads(description.read_text(encoding="utf-8"))
+        return data.get("idf_path"), data.get("target")
+    return None, None
 
 
 def settings(path):
@@ -132,6 +159,7 @@ def import_private(config, private=PRIVATE):
 
 def fingerprint(name, profile):
     digest = hashlib.sha256(f"{SCHEMA}:{name}".encode())
+    digest.update(json.dumps(idf_context(), sort_keys=True).encode())
     for path in [MANIFEST, *defaults_files(profile), PRIVATE]:
         digest.update(path.name.encode())
         digest.update(path.read_bytes() if path.exists() else b"")
@@ -183,6 +211,7 @@ def prepare_config(name, profile, config, reset=False):
         shutil.copy2(config, backup)
     config.write_text(f"{profile_symbol(name)}=y\n", encoding="utf-8")
     STATE.write_text(json.dumps({"schema": SCHEMA, "profile": name,
+                                 "idf": idf_context(),
                                  "fingerprint": fingerprint(name, profile)}, indent=2) + "\n",
                      encoding="utf-8")
     print(f"Applying firmware profile: {state.get('profile', 'unconfigured')} -> {name}.", flush=True)
@@ -239,23 +268,33 @@ def verify_merged(build_dir):
 
 
 def build(args, profile):
-    idf_path = Path(os.environ.get("IDF_PATH", ""))
+    context = idf_context()
+    idf_path = Path(context.get("path", ""))
     idf = idf_path / "tools/idf.py"
     if not idf.is_file() or not shutil.which("cmake"):
-        raise ValueError("Activate the ESP-IDF 5.5 environment before building")
-    version = subprocess.check_output([sys.executable, str(idf), "--version"], text=True)
-    if not re.search(r"ESP-IDF v5\.5(?:\.|\b)", version):
-        raise ValueError("This firmware requires ESP-IDF 5.5.x")
+        raise ValueError("Activate an ESP-IDF 5.5.x or 6.1.x environment before building")
+    if not supported_idf(context["version"]):
+        raise ValueError("This firmware supports ESP-IDF 5.5.x and 6.1.x")
+    print(f"Building with ESP-IDF {context['version']} ({idf_path})", flush=True)
 
     config = ROOT / "sdkconfig"
     build_dir = ROOT / "build"
+    if build_dir.resolve() != ROOT.resolve() / "build":
+        raise ValueError("The build directory must resolve inside the firmware checkout")
     check_private()
     old_target = settings(config).get("CONFIG_IDF_TARGET", "").strip('"')
+    old_idf, build_target = previous_build_context(build_dir)
+    framework_changed = bool(old_idf and Path(old_idf).resolve() != idf_path)
+    target_changed = bool((build_target or old_target) and
+                          (build_target or old_target) != profile["target"])
+    previous_idf = read_state().get("idf", {})
+    framework_changed = framework_changed or bool(previous_idf and previous_idf != context)
     env = dict(os.environ, IDF_TARGET=profile["target"])
     idf_command = [sys.executable, idf, "-B", build_dir]
-    if old_target and old_target != profile["target"] and build_dir.exists():
-        print("Target chip changed; clearing the existing build cache.", flush=True)
-        run([*idf_command, "fullclean"], env=dict(os.environ, IDF_TARGET=old_target))
+    if (target_changed or framework_changed) and build_dir.exists():
+        print("Target chip or ESP-IDF changed; clearing the existing build cache.", flush=True)
+        run([*idf_command, "fullclean"],
+            env=dict(os.environ, IDF_TARGET=build_target or old_target or profile["target"]))
     if not prepare_config(args.profile, profile, config, args.reset_config):
         validate(args.profile, profile, config)
 
@@ -266,7 +305,8 @@ def build(args, profile):
     if args.configure_only:
         return
     run(["cmake", "--build", build_dir, "--parallel", args.jobs], env=env)
-    run([sys.executable, "-m", "esptool", "--chip", profile["target"], "merge_bin",
+    merge_command = "merge-bin" if int(package_version("esptool").split(".")[0]) >= 5 else "merge_bin"
+    run([sys.executable, "-m", "esptool", "--chip", profile["target"], merge_command,
          "-o", "merged.bin", "@flash_args"], cwd=build_dir, env=env)
     verify_merged(build_dir)
     print(f"Built {args.profile}: build/agent_link.bin and build/merged.bin. No device flashed.")

@@ -41,6 +41,11 @@ else()
     set(srcs)
 endif()
 
+set(_json json)
+if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
+    set(_json cjson)
+endif()
+
 idf_component_register(
     SRCS ${srcs}
     INCLUDE_DIRS "include"
@@ -48,7 +53,7 @@ idf_component_register(
     REQUIRES esp_common
     PRIV_REQUIRES nvs_flash esp_wifi esp_event esp_netif esp_http_client esp_https_ota
                   app_update esp_app_format esp-tls esp_timer esp_partition esp_driver_gpio
-                  bt lwip mbedtls efuse json noise_core
+                  bt lwip mbedtls efuse ${_json} noise_core
                   minimp3   # TTS, empty without CONFIG_MUSE_TTS_MINIMAX
 )
 

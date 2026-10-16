@@ -19,7 +19,7 @@ python tools/build_firmware.py   # choose the firmware profile from the menu
 idf.py -p <port> flash monitor
 ```
 
-Requires an activated ESP-IDF v5.5.x environment (maintainers use v5.5.4). The build tool generates the configuration and restores managed dependencies; a fresh checkout needs no local config or test files. Full build notes, the capability model, and the board-porting guide are in [`firmware/README.md`](firmware/README.md).
+Requires an activated ESP-IDF v5.5.x or v6.1.x environment. The original v5.5.4 environment remains supported. The build tool generates the configuration and restores managed dependencies; a fresh checkout needs no local config or test files. Full build notes, the capability model, and the board-porting guide are in [`firmware/README.md`](firmware/README.md).
 
 ## License
 

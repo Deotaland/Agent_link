@@ -49,7 +49,7 @@ Do not add real credentials to source, defaults, examples, logs, or distributabl
 The platform user token in `sdkconfig` is embedded in the built image; use a device-scoped
 authorization method before distributing that configuration.
 
-This project builds with ESP-IDF 5.5. The board and transport are selected at build time; see the
+This project supports ESP-IDF 5.5.x and 6.1.x. The board and transport are selected at build time; see the
 [firmware profiles](../../profiles/README.md) for the supported combinations and build commands.
 
 ## Backend selection in another ESP-IDF project
@@ -65,3 +65,7 @@ The BLE API and wire protocol are unchanged. Selecting WiFi adds the platform, p
 and Opus clients; Muse also needs the repository's Muse components. Calls to an omitted backend
 return `ESP_ERR_NOT_SUPPORTED`. Without a backend selection, the component keeps its legacy
 multi-backend build; that requires the same companion components as before.
+
+For 6.x, JSON and MQTT come from the managed `espressif/cjson` and `espressif/mqtt` components.
+The 5.5 build keeps the IDF-provided components. OTA hashing uses PSA Crypto on 6.x and the
+existing mbedTLS SHA-256 API on 5.5; the OTA protocol and digest format stay the same.

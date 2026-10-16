@@ -78,7 +78,7 @@ esp_err_t Sh8501LkPanel::Init(const Sh8501LkConfig& cfg) {
     vendor.init_cmds_size = sizeof(kInitShortLk) / sizeof(kInitShortLk[0]);
 
     esp_lcd_panel_dev_config_t panel_cfg = {};
-    panel_cfg.reset_gpio_num = cfg_.pin_rst;
+    panel_cfg.reset_gpio_num = static_cast<gpio_num_t>(cfg_.pin_rst);
     panel_cfg.rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB;
     panel_cfg.bits_per_pixel = 16;
     panel_cfg.flags.reset_active_high = 0;   // reset is active low on this board

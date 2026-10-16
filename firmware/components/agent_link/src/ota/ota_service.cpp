@@ -71,7 +71,7 @@ extern "C" void agent_link_ota_abort(void) {}
 #include "freertos/idf_additions.h"   // xStreamBufferCreateWithCaps
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
-#include "mbedtls/sha256.h"
+#include "sha256.h"
 
 namespace agentlink {
 namespace ota {
@@ -108,7 +108,7 @@ char                   s_version[32] = "";
 const esp_partition_t* s_part = nullptr;
 esp_ota_handle_t       s_handle = 0;
 bool                   s_handle_open = false;
-mbedtls_sha256_context s_sha_ctx;
+Sha256                 s_sha_ctx;
 bool                   s_sha_open = false;
 uint32_t               s_last_progress_ms = 0;
 
@@ -188,7 +188,7 @@ void FailWith(uint16_t err, const char* reason) {
 // Release the session's flash resources. The caller must have moved the state out of
 // RECEIVING first, so FeedData() is already refusing bytes.
 void Cleanup() {
-    if (s_sha_open) { mbedtls_sha256_free(&s_sha_ctx); s_sha_open = false; }
+    if (s_sha_open) { s_sha_ctx.Reset(); s_sha_open = false; }
     if (s_handle_open) { esp_ota_abort(s_handle); s_handle_open = false; s_handle = 0; }
     s_part = nullptr;
     if (s_buf) xStreamBufferReset(s_buf);
@@ -266,8 +266,7 @@ void WorkerTask(void*) {
     }
     s_handle_open = true;
 
-    mbedtls_sha256_init(&s_sha_ctx);
-    if (mbedtls_sha256_starts(&s_sha_ctx, 0) != 0) {
+    if (!s_sha_ctx.Start()) {
         FailWith(kErrConfigFailed, "sha256 init");
         exit_worker();
         return;
@@ -311,7 +310,7 @@ void WorkerTask(void*) {
         }
         idle_ms = 0;
 
-        if (mbedtls_sha256_update(&s_sha_ctx, chunk, got) != 0) {
+        if (!s_sha_ctx.Update(chunk, got)) {
             FailWith(kErrConfigFailed, "sha256 update");
             ok = false;
             break;
@@ -342,7 +341,7 @@ void WorkerTask(void*) {
         PushProgress();
 
         uint8_t actual[32];
-        if (mbedtls_sha256_finish(&s_sha_ctx, actual) != 0) {
+        if (!s_sha_ctx.Finish(actual)) {
             FailWith(kErrConfigFailed, "sha256 finish");
         } else if (std::memcmp(actual, s_sha_expect, sizeof(actual)) != 0) {
             char want_hex[2 * 32 + 1], got_hex[2 * 32 + 1];

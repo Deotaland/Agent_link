@@ -13,3 +13,13 @@ dependencies:
   espressif/esp_audio_codec:
     version: "2.2.1"
     require: no
+  espressif/cjson:
+    version: "^1.7.19"
+    require: no
+    rules:
+      - if: "idf_version >=6.0"
+  espressif/mqtt:
+    version: "^1.0.0"
+    require: no
+    rules:
+      - if: "idf_version >=6.0"
