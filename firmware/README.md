@@ -8,7 +8,7 @@ board drivers, applications and supported firmware configurations.
 
 ## Build
 
-Use ESP-IDF 5.5.x (validated with 5.5.4) or 6.1.x. Activate one environment, then run from this directory:
+Use ESP-IDF 5.5.x (maintainers use 5.5.4). Activate its environment, then run from this directory:
 
 A fresh checkout needs no existing `build/`, `sdkconfig`, private configuration or test files.
 The build tool generates the selected configuration; ESP-IDF downloads the managed dependencies
@@ -30,16 +30,6 @@ voice. Only combinations listed by the tool are supported. ESP32-P4 is not adapt
 The tool reuses `build/`, runs two compiler jobs, and produces `agent_link.bin`, `merged.bin`,
 and matching debugging artifacts. It does not flash. Once configured, the IDE can continue to
 build the same profile.
-
-To change SDK versions, activate the other ESP-IDF environment and run the same build command.
-The tool detects the SDK checkout/version, clears the old `build/` cache and regenerates the
-profile configuration. Private settings remain in `sdkconfig.private`; neither SDK installation
-is modified. Before an IDE build after switching SDKs, run the tool once.
-The 5.5 build uses `dependencies.lock`; 6.1 uses `dependencies.idf6.lock` so the two
-component managers retain their own lock formats.
-
-Dual-version build validation covers `korvo-ble` (ESP32-S3). Other profiles have not
-yet completed individual 6.1 build and device validation.
 
 ```powershell
 python tools/build_firmware.py korvo-ble --configure-only

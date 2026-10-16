@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "cJSON.h"
+#include "cloud_credential.h"
 #include "device_identity.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -19,6 +20,8 @@ constexpr const char* TAG = "agent_link.platform";
 constexpr size_t kListBytes = 96 * 1024;
 constexpr size_t kSmallBytes = 8 * 1024;
 char s_base[160] = {};
+
+enum class ApiAuth { kUser, kDeviceOrUser };
 
 const char* UserToken() {
 #ifdef CONFIG_AGENT_LINK_PLATFORM_USER_TOKEN
@@ -83,10 +86,13 @@ esp_err_t HttpEvent(esp_http_client_event_t* event) {
 }
 
 esp_err_t Exchange(const char* operation, esp_http_client_method_t method, const char* path, const char* body,
-                   size_t capacity, cJSON** root_out, int* status_out) {
+                   size_t capacity, cJSON** root_out, int* status_out, ApiAuth auth) {
     if (root_out) *root_out = nullptr;
     if (status_out) *status_out = 0;
-    if (!cloud_platform_enabled() || !path || !root_out) return ESP_ERR_INVALID_STATE;
+    const char* device_key = cloud_cred_auth_key();
+    const bool use_device_key = auth == ApiAuth::kDeviceOrUser && device_key[0];
+    if (!s_base[0] || (!use_device_key && !UserToken()[0]) || !path || !root_out)
+        return ESP_ERR_INVALID_STATE;
 
     char url[512];
     const int url_len = snprintf(url, sizeof url, "%s%s", s_base, path);
@@ -107,11 +113,16 @@ esp_err_t Exchange(const char* operation, esp_http_client_method_t method, const
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) { free(buffer); return ESP_ERR_NO_MEM; }
 
-    char authorization[160];
-    snprintf(authorization, sizeof authorization, "Bearer %s", UserToken());
-    esp_err_t result = esp_http_client_set_header(client, "Authorization", authorization);
-    memset(authorization, 0, sizeof authorization);
-    if (result == ESP_OK) result = esp_http_client_set_header(client, "X-Token", UserToken());
+    esp_err_t result = ESP_OK;
+    if (use_device_key) {
+        result = esp_http_client_set_header(client, "X-Device-Auth-Key", device_key);
+    } else {
+        char authorization[160];
+        snprintf(authorization, sizeof authorization, "Bearer %s", UserToken());
+        result = esp_http_client_set_header(client, "Authorization", authorization);
+        memset(authorization, 0, sizeof authorization);
+        if (result == ESP_OK) result = esp_http_client_set_header(client, "X-Token", UserToken());
+    }
     if (result == ESP_OK && body) {
         result = esp_http_client_set_header(client, "Content-Type", "application/json");
         if (result == ESP_OK) result = esp_http_client_set_post_field(client, body, strlen(body));
@@ -156,7 +167,7 @@ void cloud_platform_set_base_url(const char* base_url) {
     while (len && s_base[len - 1] == '/') s_base[--len] = '\0';
 }
 
-bool cloud_platform_enabled(void) { return s_base[0] && UserToken()[0]; }
+bool cloud_platform_enabled(void) { return s_base[0] && (cloud_cred_is_bound() || UserToken()[0]); }
 
 extern "C" bool agent_link_platform_available(void) { return cloud_platform_enabled(); }
 
@@ -167,7 +178,8 @@ extern "C" esp_err_t agent_link_platform_agents(int page, agent_link_platform_ag
     char path[96];
     snprintf(path, sizeof path, "/api/agents?page=%d&page_size=20", page);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange("list agents", HTTP_METHOD_GET, path, nullptr, kListBytes, &root, nullptr);
+    esp_err_t result = Exchange("list agents", HTTP_METHOD_GET, path, nullptr, kListBytes, &root,
+                                nullptr, ApiAuth::kUser);
     if (result != ESP_OK) return result;
     const cJSON* data = Data(root);
     const cJSON* items = Items(data);
@@ -207,7 +219,8 @@ extern "C" esp_err_t agent_link_platform_bind_agent(int agent_id) {
     char path[160];
     snprintf(path, sizeof path, "/api/devices?keyword=%s&page=1&page_size=20", sn);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange("find device", HTTP_METHOD_GET, path, nullptr, kSmallBytes, &root, nullptr);
+    esp_err_t result = Exchange("find device", HTTP_METHOD_GET, path, nullptr, kSmallBytes, &root,
+                                nullptr, ApiAuth::kUser);
     if (result != ESP_OK) return result;
     int device_id = 0;
     int bound_agent_id = 0;
@@ -234,7 +247,8 @@ extern "C" esp_err_t agent_link_platform_bind_agent(int agent_id) {
     char body[64];
     snprintf(body, sizeof body, "{\"agent_id\":%d}", agent_id);
     root = nullptr;
-    result = Exchange("bind agent", HTTP_METHOD_POST, path, body, kSmallBytes, &root, nullptr);
+    result = Exchange("bind agent", HTTP_METHOD_POST, path, body, kSmallBytes, &root,
+                      nullptr, ApiAuth::kUser);
     cJSON_Delete(root);
     return result;
 }
@@ -247,7 +261,8 @@ extern "C" esp_err_t agent_link_platform_conversations(int agent_id, size_t offs
     char path[160];
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/conversations", agent_id);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange("list conversations", HTTP_METHOD_GET, path, nullptr, kListBytes, &root, nullptr);
+    esp_err_t result = Exchange("list conversations", HTTP_METHOD_GET, path, nullptr, kListBytes,
+                                &root, nullptr, ApiAuth::kDeviceOrUser);
     if (result != ESP_OK) return result;
     const cJSON* items = Items(Data(root));
     if (!cJSON_IsArray(items)) result = ESP_ERR_INVALID_RESPONSE;
@@ -274,7 +289,8 @@ extern "C" esp_err_t agent_link_platform_create_conversation(int agent_id, char*
     char path[160];
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/conversations", agent_id);
     cJSON* root = nullptr;
-    esp_err_t result = Exchange("create conversation", HTTP_METHOD_POST, path, nullptr, kSmallBytes, &root, nullptr);
+    esp_err_t result = Exchange("create conversation", HTTP_METHOD_POST, path, nullptr, kSmallBytes,
+                                &root, nullptr, ApiAuth::kDeviceOrUser);
     if (result != ESP_OK) return result;
     const cJSON* data = Data(root);
     const char* session = String(data, "conversation_id");
@@ -292,7 +308,8 @@ extern "C" esp_err_t agent_link_platform_delete_conversation(int agent_id,
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/conversations/%s",
              agent_id, conversation_id);
     cJSON* root = nullptr;
-    const esp_err_t result = Exchange("delete conversation", HTTP_METHOD_DELETE, path, nullptr, kSmallBytes, &root, nullptr);
+    const esp_err_t result = Exchange("delete conversation", HTTP_METHOD_DELETE, path, nullptr,
+                                      kSmallBytes, &root, nullptr, ApiAuth::kDeviceOrUser);
     cJSON_Delete(root);
     return result;
 }
@@ -313,7 +330,8 @@ esp_err_t cloud_platform_grant(int agent_id, const char* session_id, bool refres
 #endif
     cJSON* root = nullptr;
     esp_err_t result = Exchange(refresh ? "refresh voice grant" : "request voice grant",
-                                HTTP_METHOD_POST, path, body, kSmallBytes, &root, http_status);
+                                HTTP_METHOD_POST, path, body, kSmallBytes, &root, http_status,
+                                ApiAuth::kDeviceOrUser);
     if (result != ESP_OK) return result;
     const cJSON* data = Data(root);
     const cJSON* grant = Field(data, "grant");
@@ -345,6 +363,7 @@ void cloud_platform_end_grant(int agent_id, const char* session_id) {
     snprintf(path, sizeof path, "/api/agents/%d/actions/realtime_voice/realtime-grant/%s",
              agent_id, session_id);
     cJSON* root = nullptr;
-    (void)Exchange("end voice grant", HTTP_METHOD_DELETE, path, nullptr, kSmallBytes, &root, nullptr);
+    (void)Exchange("end voice grant", HTTP_METHOD_DELETE, path, nullptr, kSmallBytes, &root,
+                   nullptr, ApiAuth::kDeviceOrUser);
     cJSON_Delete(root);
 }

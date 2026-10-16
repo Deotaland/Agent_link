@@ -6,11 +6,18 @@ push-to-talk or text chat in this screen.
 
 ## Credentials and API calls
 
-The device's `auth_key` authenticates `/api/device-gateway/*` and obtains its MQTT token. It does
-not authorize the user-facing agent and conversation APIs. For on-device selection, the development
-build reads `CONFIG_AGENT_LINK_PLATFORM_USER_TOKEN` from private `sdkconfig` and sends it in both
-`Authorization: Bearer` and `X-Token`. Do not put this token in source, defaults, logs, or a shared
-firmware image. A distributable build needs a device-scoped way to authorize these calls.
+The device's `auth_key` authenticates `/api/device-gateway/*` and obtains its MQTT token. For
+voice conversation and grant requests, the firmware also sends this stored key in
+`X-Device-Auth-Key`. A captured successful platform request confirms this header for listing
+conversations and requesting a realtime grant. Other voice operations use the same header but
+still need device validation. The OpenAPI document does not describe this header.
+
+Agent listing and device-to-agent binding remain user operations. They use the optional
+`CONFIG_AGENT_LINK_PLATFORM_USER_TOKEN` from private `sdkconfig` in `Authorization: Bearer` and
+`X-Token`; voice requests fall back to it when no device key is stored. Do not put the user token
+in source, defaults, logs, or a shared firmware image. Without it, select or change the bound
+agent in the platform console; an agent and conversation already saved on the device can use the
+device key for voice.
 
 The touch-screen flow is:
 
@@ -83,7 +90,7 @@ These counters contain no audio or credentials.
 
 ## Other grant sources
 
-Without a platform user token, the backend may deliver a short-lived grant over the authenticated
-MQTT downlink. `CONFIG_AGENT_LINK_REALTIME_DIRECT` is a separate development path using a fixed
+The backend may also deliver a short-lived grant over the authenticated MQTT downlink.
+`CONFIG_AGENT_LINK_REALTIME_DIRECT` is a separate development path using a fixed
 Agent Stack session and a private User API Key. Both feed the same WebSocket worker; neither is the
 touch-screen conversation flow. Keep either credential in private `sdkconfig`.

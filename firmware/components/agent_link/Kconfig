@@ -71,9 +71,10 @@ config AGENT_LINK_PLATFORM_USER_TOKEN
     depends on AGENT_LINK_TRANSPORT_WIFI
     default ""
     help
-        Development credential for the platform's user APIs. Put it only in the
-        private sdkconfig, never in defaults or source. Firmware containing it
-        must remain private. Leave empty to use the existing MQTT grant flow.
+        Optional development credential for agent listing and device binding.
+        Bound devices use their stored auth_key for voice session APIs.
+        Put this token only in the private sdkconfig, never in defaults or
+        source. Firmware containing it must remain private.
 
 config AGENT_LINK_REALTIME_DIRECT
     bool "Request voice grants directly from Agent Stack"

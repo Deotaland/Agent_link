@@ -7,7 +7,7 @@ Agent Link 把嵌入式设备接入 Deotaland Agent 平台。可复用的 SDK �
 
 ## 构建
 
-支持 ESP-IDF 5.5.x（原环境为 5.5.4）和 6.1.x。激活其中一套环境后，在本目录运行：
+使用 ESP-IDF 5.5.x，当前维护环境为 5.5.4。激活环境后，在本目录运行：
 
 首次拉取不需要已有的 `build/`、`sdkconfig`、私有配置或测试文件。工具自动生成所选方案的配置，
 ESP-IDF 按仓库中的组件清单和 `dependencies.lock` 下载依赖，首次编译需联网。
@@ -26,13 +26,6 @@ python tools/build_firmware.py
 默认复用 `build/`，并行度为 2，生成 `agent_link.bin`、`merged.bin` 和对应调试文件，
 不会自动烧录。首次配置后，可以继续通过 IDE 编译同一方案。
 
-切换 SDK 时，激活另一套 ESP-IDF 环境后运行同一构建命令即可。工具识别 SDK 路径和版本，
-清理原 `build/` 缓存并重新生成所选配置，私有设置继续保存在 `sdkconfig.private`，
-不会修改两套 SDK 安装。切换后先运行工具一次，再使用 IDE 增量编译。
-5.5 使用 `dependencies.lock`，6.1 使用 `dependencies.idf6.lock`，避免两套组件管理器覆盖彼此的锁文件格式。
-
-双版本构建验证覆盖 `korvo-ble`（ESP32-S3）；其他方案尚未逐板完成 6.1 编译和实机验证。
-
 ```powershell
 python tools/build_firmware.py korvo-ble --configure-only
 python tools/build_firmware.py korvo-ble --reset-config
@@ -49,11 +42,11 @@ python tools/build_firmware.py --check
 
 ## 接入后端
 
-| 后端 | 连接方式 |
-| --- | --- |
-| BLE | 经 Deotaland 手机 App，GATT 传命令，L2CAP 传音频和图像 |
-| WiFi | 热点配网、平台激活、MQTT 命令、实时语音 |
-| Muse | Muse App 通过 BLE 配对，再通过 WiFi 连接 Muse 服务 |
+| 后端 | 连接方式                                             |
+| ---- | ---------------------------------------------------- |
+| BLE  | 经 Rorolee 手机 App，GATT 传命令，L2CAP 传音频和图像 |
+| WiFi | 热点配网、平台激活、MQTT 命令、实时语音              |
+| Muse | Muse App 通过 BLE 配对，再通过 WiFi 连接 Muse 服务   |
 
 SDK 通过 `agent_link_status_t` 提供连接状态，硬件回调接收 PCM 音频、文字或外设命令。
 SDK 支持多种后端，不代表每个应用都已经适配所有后端。
