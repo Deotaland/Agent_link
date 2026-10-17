@@ -67,14 +67,12 @@ config AGENT_LINK_KORVO_CLOUD_CJK
     select LV_FONT_SIMSUN_14_CJK
 
 config AGENT_LINK_PLATFORM_USER_TOKEN
-    string "Platform user token for on-device agent and voice session selection"
+    string
     depends on AGENT_LINK_TRANSPORT_WIFI
     default ""
     help
-        Optional development credential for agent listing and device binding.
-        Bound devices use their stored auth_key for voice session APIs.
-        Put this token only in the private sdkconfig, never in defaults or
-        source. Firmware containing it must remain private.
+        Legacy configuration compatibility only; platform requests do not read it.
+        Device APIs use the auth_key saved after activation.
 
 config AGENT_LINK_REALTIME_DIRECT
     bool "Request voice grants directly from Agent Stack"

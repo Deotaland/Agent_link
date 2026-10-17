@@ -1,49 +1,68 @@
 # WiFi realtime voice
 
-Korvo Cloud's Voice screen uses the selected agent and conversation. It opens the microphone when
-`session.ready` arrives and keeps it open until the user leaves Voice or ends the call. There is no
-push-to-talk or text chat in this screen.
+Korvo WiFi and StopWatch WiFi use the agent bound to the device in the platform console.
+The device lists, creates, selects and deletes that agent's conversations, and starts or ends
+realtime voice calls. Agent selection and binding take place in the console only.
+The microphone opens when `session.ready` arrives and stays open until the user ends the call
+or leaves Voice. These screens do not provide push-to-talk or text chat.
 
 ## Credentials and API calls
 
-The device's `auth_key` authenticates `/api/device-gateway/*` and obtains its MQTT token. For
-voice conversation and grant requests, the firmware also sends this stored key in
-`X-Device-Auth-Key`. A captured successful platform request confirms this header for listing
-conversations and requesting a realtime grant. Other voice operations use the same header but
-still need device validation. The OpenAPI document does not describe this header.
+After WiFi setup, the device displays a six-digit claim code. The user claims it in the
+platform console; `bind-status` returns `auth_key`, which the device persists in NVS.
+This is the device's only persistent platform credential. No account login token is required
+or sent. The legacy `CONFIG_AGENT_LINK_PLATFORM_USER_TOKEN` setting is hidden and ignored,
+so existing private configuration files remain readable without changing authentication.
 
-Agent listing and device-to-agent binding remain user operations. They use the optional
-`CONFIG_AGENT_LINK_PLATFORM_USER_TOKEN` from private `sdkconfig` in `Authorization: Bearer` and
-`X-Token`; voice requests fall back to it when no device key is stored. Do not put the user token
-in source, defaults, logs, or a shared firmware image. Without it, select or change the bound
-agent in the platform console; an agent and conversation already saved on the device can use the
-device key for voice.
+The existing `POST /api/device-gateway/auth` sends the device key and MAC address in its JSON
+body. Its `data.agent` contains the platform-bound agent's ID, name and capabilities. The SDK
+caches only this metadata for the current device key; it does not obtain it from Agent/device
+management APIs or trust the Agent ID saved in NVS as the current platform binding.
+`agent_link_platform_bound_agent()` reads the cache without blocking on network requests.
+Authentication refreshes every heartbeat interval (60 seconds). A platform rebind invalidates
+the previous conversation selection and ends its call; loss of binding or key also disables
+session operations. The old list/bind Agent functions return `ESP_ERR_NOT_SUPPORTED` without
+sending any HTTP requests.
 
-The touch-screen flow is:
+The device uses `X-Device-Auth-Key` for conversation and voice operations:
 
 | Action | Platform request |
 | --- | --- |
-| List voice agents | `GET /api/agents?page=…&page_size=20`; keep agents supporting `realtime_voice` |
-| Bind an agent | `GET /api/devices?keyword=<device SN>&page=1&page_size=20`, verify an exact SN match, then `POST /api/devices/{device_id}/bind-agent` |
-| List conversations | `GET /api/agents/{agent_id}/actions/realtime_voice/conversations` |
+| Read current platform binding | `POST /api/device-gateway/auth`; use `data.agent` |
+| List conversations | `GET /api/agents/{agent_id}/actions/realtime_voice/conversations?limit=20` and `cursor` for later pages |
 | Create a conversation | `POST` to the same conversations path |
 | Delete a conversation | `DELETE /api/agents/{agent_id}/actions/realtime_voice/conversations/{conversation_id}` |
 | Start a call | `POST /api/agents/{agent_id}/actions/realtime_voice/realtime-grant` with `session_id` and `audio_config` |
 | Recover a busy grant | On HTTP 409 only, `POST /api/agents/{agent_id}/actions/realtime_voice/realtime-refresh` with the same `session_id` |
 | End a call | `DELETE /api/agents/{agent_id}/actions/realtime_voice/realtime-grant/{session_id}` |
 
-The selected agent and conversation are saved in NVS. **Voice** connects the selection; **New
-session** creates and selects another conversation; **Settings** changes the selection. A deleted
-selected conversation is cleared from NVS. HTTPS calls run on a worker, outside LVGL callbacks.
+The selected conversation and its Agent context are saved in NVS. They are restored only if
+the authenticated platform binding still matches. **Sessions** opens the list; **New session**
+creates and selects another conversation. Deletion requires a second confirmation and clears
+the local selection if it was deleted. HTTPS calls run on a worker, outside LVGL callbacks.
+The SDK follows the server's `has_more` / `next_cursor` pagination; the UI shows the displayed
+range rather than claiming an exact total while later pages remain available.
 
-The grant returns a one-use WebSocket token. The worker connects over certificate-checked `wss://`
-using subprotocol `tidb-link.realtime.v1`, then sends `session.connect`. A reconnect requires a new
-grant; the old token is never reused. Application logs omit grant URLs, tokens, request and response
-bodies, device IDs, conversation IDs, and saved WiFi names.
+On 2026-10-17 real device-key requests confirmed gateway authentication and the bound Agent
+metadata, conversation listing, an existing conversation's voice grant, verified TLS/WSS with
+`tidb-link.realtime.v1`, `session.connect` / `session.ready`, and ending the test grant.
+Agent and device management listing returned business code 1005: those are account APIs and
+are intentionally absent from the device flow. Creating a conversation returned business
+code 1002 because the upstream returned HTTP 404 `agent_template_unavailable` /
+`Published Template unavailable.` That platform/template issue still prevents validating new
+sessions. Existing conversations were preserved; real deletion, audio upload/playback and
+physical-device behavior were not tested. Host API checks do not constitute device testing.
+
+The grant returns a one-use WebSocket token derived from device authentication. It does not
+require another manually configured credential. The worker connects over certificate-checked
+`wss://` using subprotocol `tidb-link.realtime.v1`, then sends `session.connect`. Reconnection
+requires a fresh grant. Logs omit grant URLs, tokens, request/response bodies, device IDs,
+conversation IDs and saved WiFi names. Nonzero business codes are rejected even on HTTP 200;
+only numeric error codes are logged.
 
 ## Audio path
 
-`cloud_platform.cc` owns the user API calls. `realtime_format.h` validates the negotiated audio.
+`cloud_platform.cc` owns the device-authenticated platform API calls. `realtime_format.h` validates the negotiated audio.
 `cloud_realtime.cc` owns grants, WebSocket I/O, and the encoder and decoder workers.
 `transport_wifi.cpp` exposes them to the SDK; the Korvo board owns mic,
 speaker, and UI. The component does not access the codec or display.

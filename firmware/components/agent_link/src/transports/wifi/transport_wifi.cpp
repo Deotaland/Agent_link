@@ -564,8 +564,7 @@ void Compose(const agent_cloud_status_t& c, agent_link_status_t* out) {
 
     case AGENT_CLOUD_NO_AGENT:
         say(AGENT_LINK_PHASE_BLOCKED, "No agent",
-            cloud_platform_enabled() ? "Open Voice and select an agent on this device."
-                                     : "Bound, but no agent is attached. Pick one in the console.");
+            "Bind an agent to this device in the platform console.");
         break;
 
     case AGENT_CLOUD_FAULT:

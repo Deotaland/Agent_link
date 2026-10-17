@@ -1,6 +1,7 @@
 // HTTP client for the platform's device-gateway endpoints. See cloud_api.h.
 
 #include "cloud_api.h"
+#include "cloud_platform.h"
 
 #include <cstdio>
 #include <cstring>
@@ -316,7 +317,12 @@ esp_err_t cloud_api_auth(const char* auth_key, const char* mac, const char* fw_v
     cJSON* root = nullptr;
     cJSON* data = nullptr;
     esp_err_t r = PostJson("/api/device-gateway/auth", body, &root, &data, err);
-    if (r != ESP_OK) return r;
+    if (r != ESP_OK) {
+        if (err && (err->code == CLOUD_API_NO_AGENT || err->code == CLOUD_API_KEY_REVOKED))
+            cloud_platform_set_bound_agent(nullptr);
+        return r;
+    }
+    cloud_platform_set_bound_agent(data);
 
     // Returned unparsed; see cloud_api_auth().
     if (agent_json && cap && cJSON_IsObject(data)) {

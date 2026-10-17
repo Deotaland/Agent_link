@@ -57,9 +57,10 @@
 | WWY-01-old | WOWNNY（老板子） | Deotaland（德奥塔） | [rorolee.com](https://www.rorolee.com) | Muse 语音助手，和 WWY-01 相同 | `WOWNNY_OLD_MUSE` | ESP32-S3 | Muse | 老版本 |
 | AI-PASSPORT | FoloToy AI Passport | FoloToy | [ai-passport.folotoy.cn](https://ai-passport.folotoy.cn) | 通过 Deotaland App 走 BLE 和智能体按键对讲：按住确定键说话，松开发送；回复从喇叭播放；屏幕颜色表示连接状态 | `FOLOTOY_AI_PASSPORT` | esp32c3 | BLE | 支持 |
 | C152 | M5Stack StopWatch | M5Stack | [资料](https://docs.m5stack.com/en/core/StopWatch) | 通过 Deotaland App 走 BLE 和智能体按键对讲：按住黄键说话，回复从喇叭播放；圆屏显示连接状态 | `M5STACK_STOPWATCH` | ESP32-S3 | BLE | 支持 |
+| C152 | M5Stack StopWatch | M5Stack | [资料](https://docs.m5stack.com/en/core/StopWatch) | WiFi 直连平台：热点配网、激活码认领；在平台绑定 Agent，设备查看、新建、选择或删除会话并进行实时语音 | `M5STACK_STOPWATCH_WIFI` | ESP32-S3 | WiFi | 支持 |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 开发板 | OpenJumper | [资料](https://www.openjumper.com/doc/esp32aiot-basicv2) | 摄像头画面显示在屏幕上；按键（或 App）拍照，照片通过 BLE 发给 App | `ESP32S3_GC2145_CAMERA` | ESP32-S3 | BLE | 支持 |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 开发板 | 酷世DIY（Kevincoooool） | [淘宝](https://item.taobao.com/item.htm?id=681702043224) | 触摸主屏，三个应用：摄像头预览、语音发给智能体、录音存到 TF 卡；通过 BLE 连 Deotaland App | `ESP32S3_KORVO` | ESP32-S3 | BLE | 支持 |
-| Korvo 2 V3 | ESP32S3 Korvo 2 V3 开发板 | 酷世DIY（Kevincoooool） | [淘宝](https://item.taobao.com/item.htm?id=681702043224) | WiFi 直连 Deotaland 平台：热点配网，然后在控制台输入 6 位激活码；第二页可以打开摄像头 | `ESP32S3_KORVO_CLOUD` | ESP32-S3 | WiFi | 支持 |
+| Korvo 2 V3 | ESP32S3 Korvo 2 V3 开发板 | 酷世DIY（Kevincoooool） | [淘宝](https://item.taobao.com/item.htm?id=681702043224) | WiFi 直连平台：热点配网、激活码认领；在平台绑定 Agent，设备查看、新建、选择或删除会话并进行实时语音；支持相机预览 | `ESP32S3_KORVO_CLOUD` | ESP32-S3 | WiFi | 支持 |
 | — | 接线示例：ESP32-S3 + ES8311（只用麦克风） | — | — | 最小实时语音转文字示例：按住按键，麦克风音频通过 BLE 发给 App | `ESP32S3_ES8311_ASR` | ESP32-S3 | BLE | 接线示例 |
 | — | 接线示例：ESP32-S3 + ES8311（扬声器和麦克风） | — | — | 最小语音示例：按住 BOOT 通过 BLE 和智能体对话，回答从扬声器播放 | `ESP32S3_ES8311_VOICE` | ESP32-S3 | BLE | 接线示例 |
 | ESP32-P4-WIFI6-Touch-LCD-7B | 微雪 ESP32-P4-WIFI6-Touch-LCD-7B | Waveshare（微雪） | [waveshare.com](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-7b.htm) | 只点亮屏幕，没有连接功能 | `ESP32P4_WAVESHARE` | ESP32-P4 | — | **未适配，不要烧** |

@@ -31,6 +31,10 @@ choice AGENT_LINK_FIRMWARE_SELECTION
         bool "m5stack-stopwatch-ble (BLE)"
         depends on IDF_TARGET_ESP32S3
 
+    config AGENT_LINK_PROFILE_M5STACK_STOPWATCH_WIFI
+        bool "m5stack-stopwatch-wifi (WIFI)"
+        depends on IDF_TARGET_ESP32S3
+
     config AGENT_LINK_PROFILE_GC2145_CAMERA_BLE
         bool "gc2145-camera-ble (BLE)"
         depends on IDF_TARGET_ESP32S3
@@ -65,6 +69,7 @@ config AGENT_LINK_FIRMWARE_PROFILE
     default "work-badge-ble" if AGENT_LINK_PROFILE_WORK_BADGE_BLE
     default "ai-passport-ble" if AGENT_LINK_PROFILE_AI_PASSPORT_BLE
     default "m5stack-stopwatch-ble" if AGENT_LINK_PROFILE_M5STACK_STOPWATCH_BLE
+    default "m5stack-stopwatch-wifi" if AGENT_LINK_PROFILE_M5STACK_STOPWATCH_WIFI
     default "gc2145-camera-ble" if AGENT_LINK_PROFILE_GC2145_CAMERA_BLE
     default "es8311-voice-ble" if AGENT_LINK_PROFILE_ES8311_VOICE_BLE
     default "es8311-asr-ble" if AGENT_LINK_PROFILE_ES8311_ASR_BLE

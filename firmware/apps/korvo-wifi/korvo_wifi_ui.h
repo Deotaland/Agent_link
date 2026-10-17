@@ -34,7 +34,6 @@ enum class Mode {
     kCamera,   // live preview; the preview task owns the panel here
     kServo,    // local servo selector and angle dial
     kVoice,    // continuous realtime voice for the selected session
-    kAgents,
     kConversations,
     kShade,    // pull-down detail panel
 };

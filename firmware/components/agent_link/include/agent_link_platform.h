@@ -21,8 +21,12 @@ typedef struct {
     char created_at[32];
 } agent_link_platform_conversation_t;
 
-// These calls perform HTTPS I/O. Call them from a worker, never from an LVGL callback.
+// These calls use the activated device auth_key and perform HTTPS I/O.
+// Call them from a worker, never from an LVGL callback.
 bool agent_link_platform_available(void);
+// Cached from device-gateway/auth; this does not fetch the account's agent list.
+esp_err_t agent_link_platform_bound_agent(agent_link_platform_agent_t* agent);
+// Legacy account-management APIs are unsupported on devices.
 esp_err_t agent_link_platform_agents(int page, agent_link_platform_agent_t* entries,
                                      size_t capacity, size_t* count, int* total);
 esp_err_t agent_link_platform_bind_agent(int agent_id);

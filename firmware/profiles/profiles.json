@@ -124,7 +124,7 @@
       "profiles/s3-ble.defaults",
       "profiles/m5stack-stopwatch-ble.defaults"
     ],
-    "app": "m5stack-stopwatch",
+    "app": "m5stack-stopwatch-ble",
     "hardware": "m5stack-stopwatch",
     "drivers": [
       "co5300_hal.c",
@@ -134,7 +134,33 @@
       "m5pm1.cc"
     ],
     "ui": "lvgl",
-    "hardware_sources": []
+    "hardware_sources": [
+      "m5stack_stopwatch_hardware.cc"
+    ]
+  },
+  "m5stack-stopwatch-wifi": {
+    "board": "m5stack-stopwatch",
+    "board_type": "M5STACK_STOPWATCH_WIFI",
+    "target": "esp32s3",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/lvgl.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/m5stack-stopwatch-wifi.defaults"
+    ],
+    "app": "m5stack-stopwatch-wifi",
+    "hardware": "m5stack-stopwatch",
+    "drivers": [
+      "co5300_hal.c",
+      "co5300_panel.cc",
+      "es8311_audio.cc",
+      "m5ioe1.cc",
+      "m5pm1.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": [
+      "m5stack_stopwatch_hardware.cc"
+    ]
   },
   "gc2145-camera-ble": {
     "board": "gc2145-camera",

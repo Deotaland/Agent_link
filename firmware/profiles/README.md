@@ -13,7 +13,9 @@ python tools/build_firmware.py
 | 方案 | 应用 | 接入后端 |
 | --- | --- | --- |
 | `korvo-ble` | 摄像头、语音、TF 卡录音 | Deotaland 手机 App |
-| `korvo-wifi` | 平台绑定、Agent 和会话选择、实时语音 | WiFi 直连平台 |
+| `korvo-wifi` | 平台激活、会话管理、实时语音 | WiFi 直连平台 |
+| `m5stack-stopwatch-ble` | 黄键按住对讲、圆屏状态 | Deotaland 手机 App |
+| `m5stack-stopwatch-wifi` | 配网激活、按键管理会话、实时语音 | WiFi 直连平台 |
 | `ai-passport-ble` | OK 键对讲、屏幕状态 | Deotaland 手机 App |
 | `rorolee-muse` / `wownny-muse` / `wownny-old-muse` | Muse 语音助手 | Muse App 和云端 |
 
@@ -56,6 +58,13 @@ S3 方案使用 Octal PSRAM。BLE 主机缓冲放在 PSRAM，控制器和 DMA �
 4. 构建并实机验收后再将组合标为支持。
 
 Korvo 的应用目录为 `apps/korvo-ble` 和 `apps/korvo-wifi`，硬件共用 `boards/korvo`。设备型号仍为 `KORVO` 和 `KORVO-CLOUD`，保持 OTA 和平台兼容。
+
+StopWatch 的应用分别在 `apps/m5stack-stopwatch-ble` 和 `apps/m5stack-stopwatch-wifi`，共用 `boards/m5stack-stopwatch` 的硬件初始化，型号均为 `M5-STOPWATCH`。
+WiFi 版连接 `M5StopWatch-XXXX` 热点配网并用激活码认领设备，在平台上绑定 Agent。主页短按黄键开始/结束实时通话，短按蓝键调音量；长按蓝键 1.5 秒后松开进入设置，选择已有会话或新建会话；菜单中蓝键下一项、黄键确认，长按黄键返回。删除会话需要再次确认。长按蓝键 6 秒清除平台绑定凭据及本地会话选择，WiFi 配网信息保留。通话时采用与 Korvo 相同的扬声器回声静音保护，不支持语音打断。触摸屏暂不启用。
+
+两块 WiFi 板的业务一致：Agent 只在平台选择和绑定，设备从认证响应 `data.agent` 取得当前绑定信息，每 60 秒刷新；换绑后停止旧通话并清除旧会话选择。设备只管理此 Agent 的会话列表、新建、选择、删除，以及开始/结束语音；删除保留二次确认。会话列表支持游标翻页。设备只使用激活下发的 `auth_key`，不需要用户登录令牌；未激活时先通过 6 位激活码认领。
+
+2026-10-17 实测：设备认证、读取绑定 Agent、会话列表、已有会话的语音授权、WSS/TLS 与 `session.ready`、结束授权均通过。Agent/设备列表是账户接口，设备不再调用。新建会话仍因上游发布模板不可用返回业务码 1002；真实删除、实机配网、录音播放及硬件交互尚未验证。
 
 `profiles.json` 中：
 

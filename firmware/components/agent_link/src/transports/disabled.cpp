@@ -38,6 +38,10 @@ extern "C" esp_err_t agent_transport_wifi_end_realtime(void) { return ESP_ERR_NO
 
 
 extern "C" bool agent_link_platform_available(void) { return false; }
+extern "C" esp_err_t agent_link_platform_bound_agent(agent_link_platform_agent_t* agent) {
+    if (agent) *agent = {};
+    return ESP_ERR_NOT_SUPPORTED;
+}
 extern "C" esp_err_t agent_link_platform_agents(int, agent_link_platform_agent_t*, size_t, size_t* count, int* total) {
     if (count) *count = 0;
     if (total) *total = 0;

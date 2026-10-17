@@ -4,8 +4,7 @@
 //   - hold the yellow key to talk: the mic goes up an AGENT_STREAM_VOICE stream until release;
 //   - spoken replies play on the speaker; what the agent sends to the screen is shown as the answer.
 //
-// Written against agent_link only, so the transport is a menuconfig choice: BLE (the Deotaland App)
-// or WiFi (hotspot setup, then an activation code typed into the console).
+// BLE application: pair through the Deotaland App, then hold yellow to talk.
 //
 // Keys: yellow = hold to talk (a press while the link is still being set up goes to
 // agent_link_confirm()); blue = volume in steps of 20, a beep at the new level; hold blue for
@@ -20,6 +19,7 @@
 #include "es8311_audio.h"
 #include "m5ioe1.h"
 #include "m5pm1.h"
+#include "m5stack_stopwatch_hardware.h"
 #include "watch_ui.h"
 
 #include <atomic>
@@ -89,10 +89,8 @@ int BatteryPercent(uint16_t mv) {
 class M5StopWatchBoard : public Application {
 public:
     M5StopWatchBoard() {
-        InitI2c();
-        InitPower();
-        InitExpander();
-        InitDisplay();
+        volume_ = LoadVolume();
+        hardware_.Init(volume_);
         InitAudio();
         InitHaptic();
         StartUi();
@@ -149,107 +147,8 @@ public:
 private:
     // ── Bring-up ──────────────────────────────────────────────────────────────────────────
 
-    void InitI2c() {
-        i2c_master_bus_config_t bus = {};
-        bus.i2c_port          = SYS_I2C_PORT;
-        bus.sda_io_num        = SYS_I2C_SDA;
-        bus.scl_io_num        = SYS_I2C_SCL;
-        bus.clk_source        = I2C_CLK_SRC_DEFAULT;
-        bus.glitch_ignore_cnt = 7;
-        bus.flags.enable_internal_pullup = true;
-        i2c_master_bus_handle_t handle = nullptr;
-        i2c_ok_ = i2c_new_master_bus(&bus, &handle) == ESP_OK;
-        if (!i2c_ok_) ESP_LOGE(TAG, "I2C bus failed: no screen, audio or battery");
-    }
-
-    void InitPower() {
-        if (!i2c_ok_) return;
-        if (pm1_.Init(SYS_I2C_PORT, PM1_ADDR) != ESP_OK) {
-            ESP_LOGW(TAG, "PMIC not found - battery shown as unknown");
-            return;
-        }
-        pm1_ok_ = true;
-        // ESP32 rail, RTC/IMU rail and charger on, as M5's own firmware leaves them.
-        (void)pm1_.EnablePower(M5Pm1::kPwrCharge | M5Pm1::kPwrDcdc | M5Pm1::kPwrLdo | M5Pm1::kPwrLed);
-        (void)pm1_.SetGpioInput(PM1_CHG_STAT_GPIO);
-    }
-
-    void InitExpander() {
-        if (!i2c_ok_) return;
-        if (ioe_.Init(SYS_I2C_PORT, IOE_ADDR) != ESP_OK) {
-            ESP_LOGE(TAG, "IO expander not found - no screen power, no audio");
-            return;
-        }
-        ioe_ok_ = true;
-        // The levels M5's own firmware sets at boot; audio power and the amp come on later.
-        (void)ioe_.SetOutput(IOE_MUX_CTR, true);
-        (void)ioe_.SetOutput(IOE_AUDIO_EN, false);
-        (void)ioe_.SetOutput(IOE_SPK_EN, false);
-        (void)ioe_.SetOutput(IOE_PANEL_PWR, true);
-        (void)ioe_.SetOutput(IOE_TP_RST, true);
-        (void)ioe_.SetOutput(IOE_PANEL_RST, true);
-        vTaskDelay(Ticks(10));
-        // Reset the panel and the touch controller together.
-        (void)ioe_.Write(IOE_PANEL_RST, false);
-        (void)ioe_.Write(IOE_TP_RST, false);
-        vTaskDelay(Ticks(10));
-        (void)ioe_.Write(IOE_PANEL_RST, true);
-        (void)ioe_.Write(IOE_TP_RST, true);
-        vTaskDelay(Ticks(20));
-    }
-
-    void InitDisplay() {
-        Co5300Config c = {};
-        c.bus         = Co5300Bus::kQspi;
-        c.rst_gpio    = -1;   // reset through the IO expander, above
-        c.width       = DISPLAY_WIDTH;
-        c.height      = DISPLAY_HEIGHT;
-        c.spi_host    = DISPLAY_SPI_HOST;
-        c.pin_sclk    = DISPLAY_SCLK_PIN;
-        c.pin_d0      = DISPLAY_D0_PIN;
-        c.pin_d1      = DISPLAY_D1_PIN;
-        c.pin_d2      = DISPLAY_D2_PIN;
-        c.pin_d3      = DISPLAY_D3_PIN;
-        c.pin_cs      = DISPLAY_CS_PIN;
-        c.pclk_hz     = DISPLAY_QSPI_CLK_HZ;
-        c.x_gap       = DISPLAY_X_GAP;
-        c.y_gap       = DISPLAY_Y_GAP;
-        c.bgr         = DISPLAY_BGR;
-        c.stripe_rows = DISPLAY_STRIPE_ROWS;
-        if (panel_.Init(c) != ESP_OK) {
-            ESP_LOGE(TAG, "display init failed");
-            return;
-        }
-        (void)panel_.SetBrightness(DISPLAY_BRIGHTNESS);
-    }
-
     void InitAudio() {
-        if (!ioe_ok_) return;   // the codec's supply is on the expander
-        (void)ioe_.Write(IOE_AUDIO_EN, true);
-        vTaskDelay(Ticks(20));  // supply up before the codec is spoken to
-
-        Es8311Config c = {};
-        c.i2c_port    = SYS_I2C_PORT;
-        c.pin_sda     = GPIO_NUM_NC;   // the board's bus
-        c.pin_scl     = GPIO_NUM_NC;
-        c.pin_mclk    = AUDIO_I2S_MCLK;
-        c.pin_bclk    = AUDIO_I2S_BCLK;
-        c.pin_ws      = AUDIO_I2S_WS;
-        c.pin_din     = AUDIO_I2S_DIN;
-        c.pin_dout    = AUDIO_I2S_DOUT;
-        c.pin_pa_en   = GPIO_NUM_NC;   // the amp is on the expander, switched by the play task
-        c.es8311_addr = ES8311_ADDR;
-        c.i2s_port    = AUDIO_I2S_PORT;
-        c.sample_rate = AUDIO_SAMPLE_RATE;
-        c.mic_gain    = AUDIO_MIC_GAIN;
-        volume_       = LoadVolume();
-        c.out_volume  = volume_;
-        if (codec_.Init(c) != ESP_OK) {
-            ESP_LOGE(TAG, "codec init failed");
-            return;
-        }
-        codec_ok_ = true;
-
+        if (!hardware_.codec_ok_) return;
         // Spoken replies arrive as fast as the link allows: 8 s of PCM16 in PSRAM.
         play_buf_ = xStreamBufferCreateWithCaps(AUDIO_PLAY_BUF_BYTES, 1, MALLOC_CAP_SPIRAM);
         if (!play_buf_) {
@@ -261,18 +160,18 @@ private:
     }
 
     void InitHaptic() {
-        if (!ioe_ok_) return;
-        (void)ioe_.SetPwm(MOTOR_PWM_CHANNEL, 0, false);
-        (void)ioe_.SetPwmFrequency(MOTOR_PWM_HZ);
-        (void)ioe_.SetOutput(IOE_MOTOR, false);
+        if (!hardware_.ioe_ok_) return;
+        (void)hardware_.ioe_.SetPwm(MOTOR_PWM_CHANNEL, 0, false);
+        (void)hardware_.ioe_.SetPwmFrequency(MOTOR_PWM_HZ);
+        (void)hardware_.ioe_.SetOutput(IOE_MOTOR, false);
         haptic_q_ = xQueueCreate(1, sizeof(uint32_t));
         if (!haptic_q_) return;
         xTaskCreate(&M5StopWatchBoard::HapticEntry, "sw_haptic", 2560, this, 4, nullptr);
     }
 
     void StartUi() {
-        if (!panel_.Ready()) { ESP_LOGE(TAG, "no display - running headless"); return; }
-        if (watch::Ui::Instance().Start(&panel_) != ESP_OK) ESP_LOGE(TAG, "UI start failed");
+        if (!hardware_.panel_.Ready()) { ESP_LOGE(TAG, "no display - running headless"); return; }
+        if (watch::Ui::Instance().Start(&hardware_.panel_) != ESP_OK) ESP_LOGE(TAG, "UI start failed");
     }
 
     void InitKeys() {
@@ -297,12 +196,12 @@ private:
         uint32_t ms = 0;
         while (true) {
             if (xQueueReceive(haptic_q_, &ms, portMAX_DELAY) != pdTRUE) continue;
-            (void)ioe_.SetPwm(MOTOR_PWM_CHANNEL, MOTOR_DUTY, true);
+            (void)hardware_.ioe_.SetPwm(MOTOR_PWM_CHANNEL, MOTOR_DUTY, true);
             // A new request while running restarts the timer.
             do {
                 if (ms > 2000) ms = 2000;
             } while (xQueueReceive(haptic_q_, &ms, Ticks(ms)) == pdTRUE);
-            (void)ioe_.SetPwm(MOTOR_PWM_CHANNEL, 0, false);
+            (void)hardware_.ioe_.SetPwm(MOTOR_PWM_CHANNEL, 0, false);
         }
     }
 
@@ -325,7 +224,7 @@ private:
     // One key, so the volume cycles: 20, 40 ... 100, then 20 again.
     void StepVolume() {
         volume_ = volume_ >= 100 ? kVolumeStep : (volume_ / kVolumeStep + 1) * kVolumeStep;
-        if (codec_ok_) (void)codec_.SetVolume(static_cast<uint8_t>(volume_));
+        if (hardware_.codec_ok_) (void)hardware_.codec_.SetVolume(static_cast<uint8_t>(volume_));
         nvs_handle_t h;
         if (nvs_open(kNvsNs, NVS_READWRITE, &h) == ESP_OK) {
             (void)nvs_set_i8(h, kNvsVol, static_cast<int8_t>(volume_));
@@ -354,8 +253,8 @@ private:
     // ── Talking ───────────────────────────────────────────────────────────────────────────
 
     bool StartTalking() {
-        if (!codec_ok_) { watch::Ui::Instance().Toast("No microphone on this boot", 2000); return false; }
-        if (codec_.StartMic() != ESP_OK) { ESP_LOGE(TAG, "mic start failed"); return false; }
+        if (!hardware_.codec_ok_) { watch::Ui::Instance().Toast("No microphone on this boot", 2000); return false; }
+        if (hardware_.codec_.StartMic() != ESP_OK) { ESP_LOGE(TAG, "mic start failed"); return false; }
         // Barge-in: drop the rest of the previous answer and play nothing while the mic is open.
         talking_.store(true, std::memory_order_release);
         if (play_buf_) {
@@ -365,7 +264,7 @@ private:
         if (agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &voice_) != ESP_OK) {
             ESP_LOGW(TAG, "voice stream would not open");
             talking_.store(false, std::memory_order_release);
-            codec_.StopMic();
+            hardware_.codec_.StopMic();
             watch::Ui::Instance().Toast("Can't talk right now", 2000);
             return false;
         }
@@ -378,7 +277,7 @@ private:
     void StopTalking(bool send) {
         agent_link_stream_close(voice_, send);
         voice_ = nullptr;
-        codec_.StopMic();
+        hardware_.codec_.StopMic();
         talking_.store(false, std::memory_order_release);
         watch::Ui::Instance().SetListening(false);
         if (send) {
@@ -394,7 +293,7 @@ private:
     int PumpMic() {
         static int16_t buf[AUDIO_SAMPLE_RATE / 50];   // key task only
         size_t got = 0;
-        if (codec_.ReadPcm(buf, sizeof(buf) / sizeof(buf[0]), &got) != ESP_OK || got == 0) return 0;
+        if (hardware_.codec_.ReadPcm(buf, sizeof(buf) / sizeof(buf[0]), &got) != ESP_OK || got == 0) return 0;
         (void)agent_link_stream_write(voice_, buf, got * sizeof(int16_t));
         double sum = 0;
         for (size_t i = 0; i < got; ++i) sum += static_cast<double>(buf[i]) * buf[i];
@@ -501,17 +400,17 @@ private:
                                                   amp ? Ticks(kAmpIdleMs) : portMAX_DELAY);
             if (n < sizeof(int16_t)) {
                 if (amp) {
-                    (void)ioe_.Write(IOE_SPK_EN, false);
+                    (void)hardware_.ioe_.Write(IOE_SPK_EN, false);
                     amp = false;
                 }
                 continue;
             }
             if (!amp) {
-                (void)ioe_.Write(IOE_SPK_EN, true);
+                (void)hardware_.ioe_.Write(IOE_SPK_EN, true);
                 amp = true;
                 vTaskDelay(Ticks(20));   // let the amp come up before the first samples
             }
-            codec_.WritePcm(buf, n / sizeof(int16_t));
+            hardware_.codec_.WritePcm(buf, n / sizeof(int16_t));
         }
     }
 
@@ -524,8 +423,8 @@ private:
             bool chg = false;
             uint16_t mv = 0;
             bool stat = true;
-            if (pm1_ok_ && pm1_.BatteryMv(&mv) == ESP_OK && mv > 0) pct = BatteryPercent(mv);
-            if (pm1_ok_ && pm1_.ReadGpio(PM1_CHG_STAT_GPIO, &stat) == ESP_OK) chg = !stat;
+            if (hardware_.pm1_ok_ && hardware_.pm1_.BatteryMv(&mv) == ESP_OK && mv > 0) pct = BatteryPercent(mv);
+            if (hardware_.pm1_ok_ && hardware_.pm1_.ReadGpio(PM1_CHG_STAT_GPIO, &stat) == ESP_OK) chg = !stat;
             batt_pct_.store(pct, std::memory_order_release);
             charging_.store(chg, std::memory_order_release);
             watch::Ui::Instance().SetBattery(pct, chg);
@@ -533,14 +432,7 @@ private:
         }
     }
 
-    M5Pm1                 pm1_;
-    M5Ioe1                ioe_;
-    Co5300Panel           panel_;
-    Es8311Codec           codec_;
-    bool                  i2c_ok_   = false;
-    bool                  pm1_ok_   = false;
-    bool                  ioe_ok_   = false;
-    bool                  codec_ok_ = false;
+    M5StopWatchHardware    hardware_;
     int                   volume_   = AUDIO_DEFAULT_VOLUME;
     QueueHandle_t         haptic_q_ = nullptr;
     StreamBufferHandle_t  play_buf_ = nullptr;

@@ -57,7 +57,7 @@ constexpr uint32_t kTokenFreshS = 60;
 // Session task notification bits.
 constexpr uint32_t kNotifyMqttRefused = 1u << 0;
 
-// Agent config returned by auth (not parsed yet).
+// Agent config returned by auth; the bound-agent snapshot is parsed before copying.
 constexpr size_t kAgentJsonCap = 2048;
 
 cloud_session_config_t s_cfg  = {};
@@ -326,6 +326,7 @@ enum class Leave {
 // kept, across network drops too. The link stays CONNECTED: MQTT carries nothing yet.
 Leave StayOnline() {
     int64_t next_beat = esp_timer_get_time() + static_cast<int64_t>(kHeartbeatMs) * 1000;
+    int64_t next_auth = next_beat;
     Leave   why;
     for (;;) {
         if (!s_run)                 { why = Leave::kStopped;   break; }
@@ -360,6 +361,20 @@ Leave StayOnline() {
                 if (HandleRevoked(hb)) { why = Leave::kKeyGone; break; }
                 // Anything else: stay online and retry on the next beat.
                 ESP_LOGW(TAG, "heartbeat failed (code=%d) — staying online", hb.code);
+            }
+        }
+
+        if (now >= next_auth) {
+            next_auth = now + static_cast<int64_t>(kHeartbeatMs) * 1000;
+            cloud_api_err_t refreshed = {};
+            if (cloud_api_auth(cloud_cred_auth_key(), StaMac(), agent_link_ota_running_version(),
+                               s_agent_json, kAgentJsonCap, &refreshed) != ESP_OK) {
+                if (HandleRevoked(refreshed)) { why = Leave::kKeyGone; break; }
+                if (refreshed.code == CLOUD_API_NO_AGENT) {
+                    Publish(AGENT_CLOUD_NO_AGENT, &refreshed);
+                    why = Leave::kNoAgent;
+                    break;
+                }
             }
         }
 
