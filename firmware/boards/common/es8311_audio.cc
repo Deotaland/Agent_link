@@ -209,8 +209,9 @@ esp_err_t Es8311Codec::WritePcm(const int16_t* data, size_t frames) {
 }
 
 esp_err_t Es8311Codec::SetVolume(uint8_t vol) {
-    cfg_.out_volume = (vol > 100) ? 100 : vol;
-    if (dev_open_) (void)esp_codec_dev_set_out_vol(codec_dev_, cfg_.out_volume);
+    const uint8_t next = (vol > 100) ? 100 : vol;
+    if (dev_open_ && esp_codec_dev_set_out_vol(codec_dev_, next) != ESP_CODEC_DEV_OK) return ESP_FAIL;
+    cfg_.out_volume = next;
     return ESP_OK;
 }
 

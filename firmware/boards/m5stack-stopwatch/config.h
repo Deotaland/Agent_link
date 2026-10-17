@@ -60,12 +60,12 @@
 #define AUDIO_I2S_DIN           GPIO_NUM_16   // from the codec's ASDOUT: mic
 #define AUDIO_SAMPLE_RATE       16000
 #define AUDIO_MIC_GAIN          30
-#define AUDIO_DEFAULT_VOLUME    60            // 0-100; the blue key steps it by 20
+#define AUDIO_DEFAULT_VOLUME    60            // 0-100; WiFi keys step by 5, BLE blue key steps by 20
 #define AUDIO_PLAY_BUF_BYTES    (256 * 1024)  // 8 s of reply, in PSRAM
 
 // ── Keys: active low, 10k pull-ups on the board ──────────────────────────────
-#define KEY_TALK_PIN            GPIO_NUM_2    // yellow (KEY1): hold to talk
-#define KEY_VOLUME_PIN          GPIO_NUM_1    // blue (KEY2): volume; hold to forget the pairing
+#define KEY_TALK_PIN            GPIO_NUM_2    // yellow (KEY1): BLE hold to talk, WiFi volume down
+#define KEY_VOLUME_PIN          GPIO_NUM_1    // blue (KEY2): WiFi volume up; BLE volume/reset pairing
 #define FORGET_HOLD_MS          6000
 
 // ── Platform, for the WiFi link (BLE ignores it) ─────────────────────────────

@@ -15,7 +15,7 @@ python tools/build_firmware.py
 | `korvo-ble` | 摄像头、语音、TF 卡录音 | Deotaland 手机 App |
 | `korvo-wifi` | 平台激活、会话管理、实时语音 | WiFi 直连平台 |
 | `m5stack-stopwatch-ble` | 黄键按住对讲、圆屏状态 | Deotaland 手机 App |
-| `m5stack-stopwatch-wifi` | 配网激活、按键管理会话、实时语音 | WiFi 直连平台 |
+| `m5stack-stopwatch-wifi` | 配网激活、触摸管理会话、实时语音 | WiFi 直连平台 |
 | `ai-passport-ble` | OK 键对讲、屏幕状态 | Deotaland 手机 App |
 | `rorolee-muse` / `wownny-muse` / `wownny-old-muse` | Muse 语音助手 | Muse App 和云端 |
 
@@ -60,7 +60,7 @@ S3 方案使用 Octal PSRAM。BLE 主机缓冲放在 PSRAM，控制器和 DMA �
 Korvo 的应用目录为 `apps/korvo-ble` 和 `apps/korvo-wifi`，硬件共用 `boards/korvo`。设备型号仍为 `KORVO` 和 `KORVO-CLOUD`，保持 OTA 和平台兼容。
 
 StopWatch 的应用分别在 `apps/m5stack-stopwatch-ble` 和 `apps/m5stack-stopwatch-wifi`，共用 `boards/m5stack-stopwatch` 的硬件初始化，型号均为 `M5-STOPWATCH`。
-WiFi 版连接 `M5StopWatch-XXXX` 热点配网并用激活码认领设备，在平台上绑定 Agent。主页短按黄键开始/结束实时通话，短按蓝键调音量；长按蓝键 1.5 秒后松开进入设置，选择已有会话或新建会话；菜单中蓝键下一项、黄键确认，长按黄键返回。删除会话需要再次确认。长按蓝键 6 秒清除平台绑定凭据及本地会话选择，WiFi 配网信息保留。通话时采用与 Korvo 相同的扬声器回声静音保护，不支持语音打断。触摸屏暂不启用。
+WiFi 版连接 `M5StopWatch-XXXX` 热点配网并用激活码认领设备，在平台上绑定 Agent。触摸主页的 Start/End call、Sessions、Settings 操作通话和会话；回复区可上下滑动。会话每页显示三条，Prev/Next 翻页，点选后返回主页；Settings 可新建或删除当前会话。删除和 Reset device activation 均需再次确认，重置保留 WiFi，重新激活前需在平台解绑。黄键减音量、蓝键加音量，每次 5%，范围 0–100，长按连续调节；独立电源键保持原有功能。通话时采用与 Korvo 相同的扬声器回声静音保护，不支持语音打断。空闲约 30 秒降低亮度，首次触摸唤醒后再次点击操作。触摸错误和跨页点击会被取消；网络请求期间锁定操作，物理音量键仍可使用。
 
 两块 WiFi 板的业务一致：Agent 只在平台选择和绑定，设备从认证响应 `data.agent` 取得当前绑定信息，每 60 秒刷新；换绑后停止旧通话并清除旧会话选择。设备只管理此 Agent 的会话列表、新建、选择、删除，以及开始/结束语音；删除保留二次确认。会话列表支持游标翻页。设备只使用激活下发的 `auth_key`，不需要用户登录令牌；未激活时先通过 6 位激活码认领。
 
@@ -76,3 +76,11 @@ WiFi 版连接 `M5StopWatch-XXXX` 热点配网并用激活码认领设备，在�
 
 CMake 在载入 ESP-IDF 前读取方案，依赖收集阶段也能得到同一份信息，组件依赖不再依据尚未载入的 Kconfig 判断。
 托管依赖的版本仍由 Component Manager 锁定；底层库的间接依赖由 ESP-IDF 决定。
+
+StopWatch WiFi 硬件对照：M5 官方 UserDemo 提交 `83de653c0be4e51e82079bee2386b90fb0538a25`。
+CST820 使用 0x15、100 kHz，从 0x00 读取 7 字节并按 down/contact/up 解码；不套用 CST816 的休眠寄存器。
+坐标不交换、不翻转；显示 RAM 的 x-gap=6 不加到触摸坐标。触摸复位低 10 ms、高后等待 50 ms。
+IO 扩展支持 0x4F/0x6F，关闭 I2C 休眠并有界检查屏幕供电。WiFi 播放同时控制 IOE10 与 GPIO14，
+切换时先释放 GPIO14，兼容可选连线；音量使用官方 codec-dev 默认曲线。
+只有主机和构建验证，尚无 StopWatch 实机触摸、配网、录放音或功耗验收；不保证首次烧录的硬件结果。
+主机回归：`python tests/test_stopwatch_controls.py`；平台 API 回归见 `tests/test_platform_api.py`。

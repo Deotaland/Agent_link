@@ -6,6 +6,19 @@ realtime voice calls. Agent selection and binding take place in the console only
 The microphone opens when `session.ready` arrives and stays open until the user ends the call
 or leaves Voice. These screens do not provide push-to-talk or text chat.
 
+## StopWatch WiFi controls
+
+The round CST820 touchscreen provides Start/End call, Sessions and Settings. The reply area
+scrolls by touch. Sessions shows three rows with previous/next navigation; Settings creates
+a conversation, deletes the selected conversation, or resets activation. Delete and reset
+require separate confirmation. Reset keeps WiFi; platform unbinding is still required before
+reactivation. Yellow decreases volume, blue increases it in 5% steps (hold to repeat, 0–100).
+The independent power key keeps its hardware function. Idle dimming consumes the wake touch.
+Touch frames lost to I2C errors cancel the gesture; view IDs reject stale menu events.
+Platform requests run on the controller task and disable touch actions until acknowledged;
+volume keys run independently. Start call opens the mic only after session.ready.
+There is no StopWatch device available for physical acceptance; host tests are not device tests.
+
 ## Credentials and API calls
 
 After WiFi setup, the device displays a six-digit claim code. The user claims it in the

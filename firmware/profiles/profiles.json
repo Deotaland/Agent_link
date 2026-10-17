@@ -153,6 +153,7 @@
     "drivers": [
       "co5300_hal.c",
       "co5300_panel.cc",
+      "cst820_touch.cc",
       "es8311_audio.cc",
       "m5ioe1.cc",
       "m5pm1.cc"

@@ -8,6 +8,7 @@
 class M5StopWatchHardware {
 public:
     void Init(int volume);
+    esp_err_t SetSpeakerEnabled(bool enabled);
 
     M5Pm1 pm1_;
     M5Ioe1 ioe_;

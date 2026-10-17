@@ -12,6 +12,7 @@ namespace { constexpr const char* TAG = "StopWatch.audio"; }
 esp_err_t WatchWifiAudio::Init(M5StopWatchHardware* hardware) {
     if (!hardware || !hardware->codec_ok_) return ESP_ERR_INVALID_STATE;
     hardware_ = hardware;
+    if (hardware_->SetSpeakerEnabled(false) != ESP_OK) return ESP_FAIL;
     buffer_ = xStreamBufferCreateWithCaps(AUDIO_PLAY_BUF_BYTES, 1, MALLOC_CAP_SPIRAM);
     if (!buffer_) return ESP_ERR_NO_MEM;
     if (xTaskCreate(PlayEntry, "sw_wifi_play", 4096, this, 5, &play_task_) != pdPASS ||
@@ -56,7 +57,7 @@ void WatchWifiAudio::PlayLoop() {
         const size_t available = xStreamBufferBytesAvailable(buffer_);
         if (!gate.Ready(available, finished_.load(), esp_timer_get_time() / 1000)) {
             if (amp && echo_.Drained(esp_timer_get_time())) {
-                (void)hardware_->ioe_.Write(IOE_SPK_EN, false); amp = false;
+                if (hardware_->SetSpeakerEnabled(false) == ESP_OK) amp = false;
             }
             if (finished_.load() && !available) gate.Reset();
             vTaskDelay(1);
@@ -65,7 +66,11 @@ void WatchWifiAudio::PlayLoop() {
         const size_t bytes = xStreamBufferReceive(buffer_, pcm, sizeof pcm, 0);
         if (generation != generation_.load() || bytes < sizeof(int16_t)) continue;
         if (!amp) {
-            (void)hardware_->ioe_.Write(IOE_SPK_EN, true); amp = true;
+            if (hardware_->SetSpeakerEnabled(true) != ESP_OK) {
+                ESP_LOGE(TAG, "speaker enable failed");
+                vTaskDelay(pdMS_TO_TICKS(100)); continue;
+            }
+            amp = true;
             vTaskDelay(pdMS_TO_TICKS(20));
         }
         if (generation != generation_.load()) continue;

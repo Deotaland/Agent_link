@@ -73,9 +73,16 @@ esp_err_t M5Ioe1::Init(i2c_port_t port, uint8_t addr, uint32_t scl_hz) {
 
     // 100 kHz, wake on a falling edge, internal pull-ups on, never sleep.
     const uint8_t cfg[2] = {kRegI2cCfg, 0x00};
+    // The official board firmware sends this twice to cover the wake transition.
     r = i2c_master_transmit(dev_, cfg, sizeof cfg, kTimeoutMs);
     esp_rom_delay_us(kGapUs);
-    if (r != ESP_OK) ESP_LOGW(TAG, "could not turn I2C sleep off: %s", esp_err_to_name(r));
+    const esp_err_t retry = i2c_master_transmit(dev_, cfg, sizeof cfg, kTimeoutMs);
+    esp_rom_delay_us(kGapUs);
+    if (r != ESP_OK && retry != ESP_OK) {
+        ESP_LOGE(TAG, "could not turn I2C sleep off: %s", esp_err_to_name(retry));
+        i2c_master_bus_rm_device(dev_); dev_ = nullptr;
+        return retry;
+    }
 
     ESP_LOGI(TAG, "M5IOE1 at 0x%02x (uid %04x, fw %02x)", addr, uid, rev);
     return ESP_OK;

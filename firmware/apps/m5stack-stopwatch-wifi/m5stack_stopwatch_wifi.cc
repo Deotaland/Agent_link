@@ -20,25 +20,8 @@
 
 namespace {
 constexpr const char* TAG = "StopWatch.wifi";
-enum class KeyAction { kSelect, kNext, kSettings, kBack };
-struct KeyEvent { KeyAction action; int64_t at; };
-struct Key {
-    gpio_num_t pin;
-    bool down = false;
-    int stable = 0;
-    int64_t since = 0;
-    int Poll(int64_t now) {
-        const bool pressed = gpio_get_level(pin) == 0;
-        if (pressed == down) { stable = 0; return 0; }
-        if (++stable < 2) return 0;
-        stable = 0; down = pressed;
-        if (down) since = now;
-        return down ? 1 : -1;
-    }
-};
-enum class Page { kHome, kSettings, kSessions, kDelete };
-enum class Action { kSessions, kNew, kDelete, kBack, kSession,
-                    kSessionPrev, kSessionNext, kConfirmDelete };
+enum class Page { kHome, kSettings, kSessions, kDelete, kReset };
+enum class Action { kSessions, kNew, kDelete, kReset, kBack, kSession, kConfirmDelete, kConfirmReset };
 struct Item { Action action; int value; char text[112]; };
 }  // namespace
 
@@ -47,10 +30,15 @@ public:
     M5StopWatchWifi() {
         (void)nvs_flash_init();
         LoadSelection();
-        hardware_.Init(volume_);
+        hardware_.Init(volume_.load());
+        watch_wifi::SetVolume(volume_.load());
+        if (hardware_.ioe_ok_ && touch_.Init(SYS_I2C_PORT, DISPLAY_WIDTH, DISPLAY_HEIGHT) != ESP_OK)
+            ESP_LOGE(TAG, "CST820 unavailable");
         if (audio_.Init(&hardware_) != ESP_OK) ESP_LOGE(TAG, "audio unavailable");
-        if (watch_wifi::StartUi(&hardware_.panel_) != ESP_OK) ESP_LOGE(TAG, "display unavailable");
-        events_ = xQueueCreate(8, sizeof(KeyEvent));
+        events_ = xQueueCreate(8, sizeof(watch_wifi::Input));
+        if (watch_wifi::StartUi(&hardware_.panel_, &touch_, OnTouch, this) != ESP_OK)
+            ESP_LOGE(TAG, "display unavailable");
+        if (!touch_.Ready()) watch_wifi::Toast("Touch unavailable - restart", 30000);
         haptics_ = xQueueCreate(1, sizeof(uint32_t));
         if (hardware_.ioe_ok_) {
             (void)hardware_.ioe_.SetPwm(MOTOR_PWM_CHANNEL, 0, false);
@@ -117,7 +105,6 @@ private:
     }
 
     void SaveSelection() {
-        if (reset_.load()) return;
         nvs_handle_t handle;
         if (nvs_open("sw_wifi", NVS_READWRITE, &handle) != ESP_OK) return;
         esp_err_t error = nvs_set_i32(handle, "agent", agent_);
@@ -141,8 +128,10 @@ private:
             }
             if (explain) watch_wifi::Toast(result == ESP_ERR_NOT_FOUND ?
                 "Bind an agent in platform console" : "Waiting for platform authentication", 4000);
+            voice_supported_ = false;
             return false;
         }
+        voice_supported_ = bound.voice_supported;
         const bool changed = agent_ != bound.id;
         if (changed) {
             if (agent_) { EndCall(); Clear(Page::kHome); }
@@ -163,24 +152,26 @@ private:
     }
 
     bool Error(esp_err_t error) {
-        if (error == ESP_OK && !reset_.load()) return false;
-        if (!reset_.load()) {
-            char message[96];
-            snprintf(message, sizeof message, "Request failed: %s", esp_err_to_name(error));
-            watch_wifi::Toast(message, 5000);
-        }
+        if (error == ESP_OK) return false;
+        char message[96];
+        snprintf(message, sizeof message, "Request failed: %s", esp_err_to_name(error));
+        ESP_LOGW(TAG, "%s", message);
+        snprintf(error_message_, sizeof error_message_, "%s", message);
+        watch_wifi::Toast(message, 5000);
+        watch_wifi::SetAnswer(message);
         return true;
     }
 
     void Busy(const char* message) {
+        error_message_[0] = '\0';
         watch_wifi::Screen screen = {};
-        screen.menu = true;
+        screen.menu = true; screen.busy = true; screen.view = ++view_;
         snprintf(screen.title, sizeof screen.title, "%s", message);
         snprintf(screen.detail, sizeof screen.detail, "Please wait...");
         watch_wifi::SetScreen(screen);
     }
 
-    void Clear(Page page) { page_ = page; count_ = 0; cursor_ = 0; }
+    void Clear(Page page) { page_ = page; count_ = 0; cursor_ = 0; ++view_; error_message_[0] = '\0'; }
     void Add(Action action, const char* text, int value = 0) {
         if (count_ >= sizeof items_ / sizeof items_[0]) return;
         Item& item = items_[count_++]; item.action = action; item.value = value;
@@ -191,23 +182,30 @@ private:
         Add(Action::kSessions, "Choose conversation");
         Add(Action::kNew, "New conversation");
         Add(Action::kDelete, "Delete selected conversation");
-        Add(Action::kBack, "Back to voice");
+        Add(Action::kReset, "Reset device activation");
     }
     void Sessions(size_t offset = 0) {
-        if (!SyncBoundAgent(true)) return;
+        (void)SyncBoundAgent(true);
+        if (!agent_) return;
+        EndCall();
         Busy("Loading conversations");
         size_t count = 0, total = 0;
-        if (Error(agent_link_platform_conversations(agent_, offset, sessions_, 3, &count, &total))) return;
-        session_offset_ = offset; Clear(Page::kSessions);
+        agent_link_platform_conversation_t fetched[3] = {};
+        if (Error(agent_link_platform_conversations(agent_, offset, fetched, 3, &count, &total))) return;
+        // One bounded retry if a remotely deleted page no longer exists.
+        if (!count && offset) {
+            offset = total ? ((total - 1) / 3) * 3 : 0;
+            if (Error(agent_link_platform_conversations(agent_, offset, fetched, 3, &count, &total))) return;
+        }
+        memcpy(sessions_, fetched, sizeof sessions_);
+        session_offset_ = offset; session_total_ = total; Clear(Page::kSessions);
         for (size_t i = 0; i < count; ++i)
             Add(Action::kSession, sessions_[i].name[0] ? sessions_[i].name : sessions_[i].id, static_cast<int>(i));
-        Add(Action::kNew, "New conversation");
-        if (offset) Add(Action::kSessionPrev, "Previous page");
-        if (offset + count < total) Add(Action::kSessionNext, "Next page");
-        Add(Action::kBack, "Back");
+
     }
     void NewSession() {
-        if (!SyncBoundAgent(true)) return;
+        (void)SyncBoundAgent(true);
+        if (!agent_) return;
         Busy("Creating conversation");
         char created[sizeof session_] = {};
         if (Error(agent_link_platform_create_conversation(agent_, created, sizeof created))) return;
@@ -215,10 +213,10 @@ private:
         snprintf(session_, sizeof session_, "%s", created);
         snprintf(session_name_, sizeof session_name_, "New conversation");
         SaveSelection(); Clear(Page::kHome);
-        watch_wifi::SetAnswer("Conversation created. Press yellow to start talking.");
+        watch_wifi::SetAnswer("Conversation created. Tap Start call to talk.");
     }
 
-    void Select() {
+    void Select(int row = -1) {
         if (page_ == Page::kHome) {
             if (call_) { EndCall(); return; }
             if (!audio_.Ready()) { watch_wifi::Toast("Audio unavailable - restart"); return; }
@@ -231,8 +229,8 @@ private:
             call_ = true; attempts_ = 0; last_attempt_ = 0;
             return;
         }
-        if (!count_) return;
-        const Item item = items_[cursor_];
+        if (row < 0 || row >= 3 || cursor_ + row >= count_) return;
+        const Item item = items_[cursor_ + row];
         switch (item.action) {
         case Action::kSessions: Sessions(); break;
         case Action::kNew: NewSession(); break;
@@ -241,6 +239,25 @@ private:
             Clear(Page::kDelete);
             Add(Action::kBack, "Cancel");
             Add(Action::kConfirmDelete, "Confirm delete");
+            break;
+        case Action::kReset:
+            Clear(Page::kReset);
+            Add(Action::kBack, "Cancel");
+            Add(Action::kConfirmReset, "Confirm reset activation");
+            break;
+        case Action::kConfirmReset:
+            Busy("Resetting activation");
+            EndCall();
+            if (!Error(agent_link_forget())) {
+                agent_ = saved_agent_ = 0; voice_supported_ = false;
+                session_[0] = agent_name_[0] = session_name_[0] = '\0';
+                nvs_handle_t handle;
+                if (nvs_open("sw_wifi", NVS_READWRITE, &handle) == ESP_OK) {
+                    (void)nvs_erase_all(handle); (void)nvs_commit(handle); nvs_close(handle);
+                }
+                Clear(Page::kHome); watch_wifi::SetAnswer("");
+                watch_wifi::Toast("Activate again in console", 5000);
+            }
             break;
         case Action::kConfirmDelete:
             Busy("Deleting conversation");
@@ -252,10 +269,8 @@ private:
             snprintf(session_, sizeof session_, "%s", sessions_[item.value].id);
             snprintf(session_name_, sizeof session_name_, "%s", sessions_[item.value].name);
             SaveSelection(); Clear(Page::kHome);
-            watch_wifi::SetAnswer("Press yellow to start a realtime call.");
+            watch_wifi::SetAnswer("Tap Start call to start a realtime call.");
             break;
-        case Action::kSessionPrev: Sessions(session_offset_ >= 3 ? session_offset_ - 3 : 0); break;
-        case Action::kSessionNext: Sessions(session_offset_ + 3); break;
         case Action::kBack: Back(); break;
         }
     }
@@ -264,18 +279,6 @@ private:
         if (page_ == Page::kSettings || page_ == Page::kHome) { EndCall(); Clear(Page::kHome); }
         else Settings();
     }
-    void StepVolume() {
-        volume_ = volume_ >= 100 ? 20 : (volume_ / 20 + 1) * 20;
-        if (hardware_.codec_ok_) (void)hardware_.codec_.SetVolume(volume_);
-        nvs_handle_t handle;
-        if (nvs_open("voice", NVS_READWRITE, &handle) == ESP_OK) {
-            (void)nvs_set_i8(handle, "vol", static_cast<int8_t>(volume_));
-            (void)nvs_commit(handle); nvs_close(handle);
-        }
-        char message[40]; snprintf(message, sizeof message, "Volume %d%%", volume_);
-        watch_wifi::Toast(message);
-    }
-
     void TickCall() {
         if (!call_) return;
         const int64_t now = esp_timer_get_time();
@@ -286,7 +289,7 @@ private:
             return;
         }
         if (active_ || (requested_at_ && now - requested_at_ > 30000000)) {
-            EndCall(); watch_wifi::Toast("Call ended - press yellow to retry", 5000); return;
+            EndCall(); watch_wifi::Toast("Call ended - tap Start call to retry", 5000); return;
         }
         if (requested_at_ || now - last_attempt_ < 1000000) return;
         last_attempt_ = now;
@@ -300,25 +303,39 @@ private:
 
     void Publish() {
         watch_wifi::Screen screen = {};
-        screen.menu = page_ != Page::kHome;
+        screen.view = view_;
+        screen.menu = page_ != Page::kHome; screen.calling = call_;
+        const agent_state_t state = agent_link_state();
+        screen.can_sessions = agent_ > 0 && (state == AGENT_STATE_CONNECTED || state == AGENT_STATE_READY);
+        screen.can_call = voice_supported_ && audio_.Ready() &&
+                          (state == AGENT_STATE_CONNECTED || state == AGENT_STATE_READY);
         const char* title = page_ == Page::kSettings ? "Voice settings" :
-                            page_ == Page::kSessions ? "Conversations" : page_ == Page::kDelete ? "Delete conversation?" :
+                            page_ == Page::kSessions ? "Conversations" :
+                            page_ == Page::kDelete ? "Delete conversation?" :
+                            page_ == Page::kReset ? "Reset activation?" :
                             active_ ? "Listening / speaking" : call_ ? "Connecting voice..." : "Realtime voice";
         snprintf(screen.title, sizeof screen.title, "%s", title);
         if (page_ == Page::kDelete)
             snprintf(screen.detail, sizeof screen.detail, "%s", session_name_[0] ? session_name_ : session_);
-        else snprintf(screen.detail, sizeof screen.detail, "%s / %s", agent_name_[0] ? agent_name_ : "No agent",
+        else if (page_ == Page::kReset)
+            snprintf(screen.detail, sizeof screen.detail, "Keeps WiFi. Unbind in console before activating again.");
+        else if (page_ == Page::kSessions && !count_)
+            snprintf(screen.detail, sizeof screen.detail, "No conversations. Back > New conversation.");
+        else snprintf(screen.detail, sizeof screen.detail, "%s / %s", agent_name_[0] ? agent_name_ : "Bind agent in console",
                       session_name_[0] ? session_name_ : session_[0] ? session_ : "No conversation");
+        if (error_message_[0]) snprintf(screen.detail, sizeof screen.detail, "%s", error_message_);
         if (screen.menu) {
-            const size_t start = (cursor_ / 3) * 3;
-            screen.selected = cursor_ % 3;
-            for (size_t i = 0; i < 3 && start + i < count_; ++i)
-                snprintf(screen.rows[i], sizeof screen.rows[i], "%s", items_[start + i].text);
+            for (size_t i = 0; i < 3 && cursor_ + i < count_; ++i)
+                snprintf(screen.rows[i], sizeof screen.rows[i], "%s", items_[cursor_ + i].text);
+            screen.previous = page_ == Page::kSessions ? session_offset_ > 0 : cursor_ > 0;
+            screen.next = page_ == Page::kSessions ? session_offset_ + count_ < session_total_ : cursor_ + 3 < count_;
+            if (page_ == Page::kSessions && session_total_)
+                snprintf(screen.footer, sizeof screen.footer, "%u-%u / %u", static_cast<unsigned>(session_offset_ + 1),
+                         static_cast<unsigned>(session_offset_ + count_), static_cast<unsigned>(session_total_));
+            else if (page_ == Page::kSettings)
+                snprintf(screen.footer, sizeof screen.footer, "Page %u / %u", static_cast<unsigned>(cursor_ / 3 + 1),
+                         static_cast<unsigned>((count_ + 2) / 3));
         }
-        snprintf(screen.footer, sizeof screen.footer, "%s", screen.menu ?
-                 "BLUE: next   YELLOW: select\nHold YELLOW: back" :
-                 call_ ? "YELLOW: end call   BLUE: volume\nHold BLUE: settings" :
-                         "YELLOW: start   BLUE: volume\nHold BLUE: settings");
         watch_wifi::SetScreen(screen);
     }
 
@@ -326,26 +343,29 @@ private:
         int64_t battery_at = 0;
         while (true) {
             (void)SyncBoundAgent();
-            if (reset_.load()) {
-                EndCall();
-                agent_ = 0; session_[0] = agent_name_[0] = session_name_[0] = '\0';
-                nvs_handle_t handle;
-                if (nvs_open("sw_wifi", NVS_READWRITE, &handle) == ESP_OK) {
-                    (void)nvs_erase_all(handle); (void)nvs_commit(handle); nvs_close(handle);
-                }
-                Clear(Page::kHome); xQueueReset(events_); reset_.store(false);
-            }
-            KeyEvent event;
+            watch_wifi::Input event;
             if (xQueueReceive(events_, &event, pdMS_TO_TICKS(100)) == pdTRUE &&
-                esp_timer_get_time() - event.at < 500000) {
+                watch_wifi::CurrentInput(event, view_, esp_timer_get_time())) {
+                error_message_[0] = '\0';
+                ++view_;  // acknowledge accepted input even when an API guard declines it
                 switch (event.action) {
-                case KeyAction::kSelect: Select(); break;
-                case KeyAction::kNext:
-                    if (page_ == Page::kHome) StepVolume();
-                    else if (count_) cursor_ = (cursor_ + 1) % count_;
+                case watch_wifi::TouchAction::kCall:
+                    if (page_ == Page::kHome) Select();
                     break;
-                case KeyAction::kSettings: Settings(); break;
-                case KeyAction::kBack: Back(); break;
+                case watch_wifi::TouchAction::kSessions: Sessions(); break;
+                case watch_wifi::TouchAction::kSettings: Settings(); break;
+                case watch_wifi::TouchAction::kRow:
+                    if (page_ != Page::kHome) Select(event.row);
+                    break;
+                case watch_wifi::TouchAction::kBack: Back(); break;
+                case watch_wifi::TouchAction::kPrevious:
+                    if (page_ == Page::kSessions && session_offset_) Sessions(session_offset_ >= 3 ? session_offset_ - 3 : 0);
+                    else if (cursor_ >= 3) cursor_ -= 3;
+                    break;
+                case watch_wifi::TouchAction::kNext:
+                    if (page_ == Page::kSessions && session_offset_ + count_ < session_total_) Sessions(session_offset_ + 3);
+                    else if (cursor_ + 3 < count_) cursor_ += 3;
+                    break;
                 }
             }
             TickCall(); Publish();
@@ -364,42 +384,42 @@ private:
         }
     }
 
-    void Post(KeyAction action) {
-        const KeyEvent event{action, esp_timer_get_time()};
-        if (xQueueSend(events_, &event, 0) != pdTRUE) watch_wifi::Toast("Busy - try again");
+    static bool OnTouch(const watch_wifi::Input& input, void* context) {
+        auto* self = static_cast<M5StopWatchWifi*>(context);
+        watch_wifi::Wake();
+        if (self->events_ && xQueueSend(self->events_, &input, 0) == pdTRUE) return true;
+        watch_wifi::Toast("Busy - try again"); return false;
     }
     void KeyLoop() {
-        Key yellow{KEY_TALK_PIN}, blue{KEY_VOLUME_PIN};
-        bool back = false, forgot = false;
-        int countdown = -1;
+        watch_wifi::VolumeKey yellow, blue;
+        bool dirty = false;
+        int64_t changed_at = 0;
         while (true) {
             const int64_t now = esp_timer_get_time();
-            const int y = yellow.Poll(now);
-            if (y == 1) { watch_wifi::Wake(); back = false; }
-            if (y == -1 && !back) Post(KeyAction::kSelect);
-            if (yellow.down && !back && now - yellow.since >= 1200000) {
-                Post(KeyAction::kBack); back = true;
-            }
-            const int b = blue.Poll(now);
-            if (b == 1) { watch_wifi::Wake(); forgot = false; countdown = -1; }
-            const int64_t held = (now - blue.since) / 1000;
-            if (b == -1 && !forgot) Post(held >= 1500 ? KeyAction::kSettings : KeyAction::kNext);
-            if (blue.down && !forgot && held >= 1500) {
-                if (held >= FORGET_HOLD_MS) {
-                    reset_.store(true); forgot = true;
-                    audio_.Stop(); Vibrate(200);
-                    watch_wifi::SetAnswer("");
-                    watch_wifi::Toast("Resetting - activate again", 10000);
-                    (void)agent_link_forget();
-                } else {
-                    const int left = (FORGET_HOLD_MS - held + 999) / 1000;
-                    if (left != countdown) {
-                        countdown = left;
-                        char message[80];
-                        snprintf(message, sizeof message, "Release: settings / reset in %d", left);
-                        watch_wifi::Toast(message, 1500);
-                    }
+            const bool y_down = gpio_get_level(KEY_TALK_PIN) == 0;
+            const bool b_down = gpio_get_level(KEY_VOLUME_PIN) == 0;
+            const bool y = yellow.Poll(y_down, now), b = blue.Poll(b_down, now);
+            if (y || b) watch_wifi::Wake();
+            if (!(y_down && b_down) && (y || b)) {
+                const int before = volume_.load();
+                const int next = watch_wifi::AdjustVolume(before, y ? -1 : 1);
+                if (next != before && hardware_.codec_ok_) {
+                    if (hardware_.codec_.SetVolume(next) == ESP_OK) {
+                        volume_.store(next); watch_wifi::SetVolume(next);
+                        dirty = true; changed_at = now;
+                    } else watch_wifi::Toast("Volume change failed");
                 }
+            }
+            // One write after release, including holds, avoids wearing NVS on every repeat.
+            if (dirty && !yellow.Down() && !blue.Down() && now - changed_at >= 500000) {
+                nvs_handle_t handle;
+                if (nvs_open("voice", NVS_READWRITE, &handle) == ESP_OK) {
+                    esp_err_t error = nvs_set_i8(handle, "vol", static_cast<int8_t>(volume_.load()));
+                    if (error == ESP_OK) error = nvs_commit(handle);
+                    nvs_close(handle);
+                    if (error != ESP_OK) watch_wifi::Toast("Volume was not saved");
+                } else watch_wifi::Toast("Volume was not saved");
+                dirty = false;
             }
             vTaskDelay(pdMS_TO_TICKS(20));
         }
@@ -421,16 +441,20 @@ private:
 
     M5StopWatchHardware hardware_;
     WatchWifiAudio audio_;
+    Cst820Touch touch_;
     QueueHandle_t events_ = nullptr, haptics_ = nullptr;
     std::atomic<int> battery_{-1};
-    std::atomic<bool> charging_{false}, reset_{false};
-    int volume_ = AUDIO_DEFAULT_VOLUME;
+    std::atomic<bool> charging_{false};
+    std::atomic<int> volume_{AUDIO_DEFAULT_VOLUME};
+    uint32_t view_ = 1;
+    bool voice_supported_ = false;
     Page page_ = Page::kHome;
     Item items_[8] = {};
-    size_t count_ = 0, cursor_ = 0, session_offset_ = 0;
+    size_t count_ = 0, cursor_ = 0, session_offset_ = 0, session_total_ = 0;
     agent_link_platform_conversation_t sessions_[3] = {};
     int32_t agent_ = 0, saved_agent_ = 0;
     char agent_name_[80] = {}, session_[80] = {}, session_name_[96] = {};
+    char error_message_[96] = {};
     bool call_ = false, active_ = false;
     int attempts_ = 0;
     int64_t requested_at_ = 0, last_attempt_ = 0;
