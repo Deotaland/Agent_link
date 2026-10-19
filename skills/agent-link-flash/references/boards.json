@@ -40,9 +40,9 @@
         "use": "电子工牌：通过 BLE 由 App 填写的名片",
         "notes": "引脚来自量产板，只用到屏幕、电量计和 App 连接。"
       },
+      "profile": "work-badge-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_WORK_BADGE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_WORK_BADGE_BLE=y"
       ]
     },
     {
@@ -81,9 +81,9 @@
         "use": "Muse 语音助手：按住 BOOT 说话，回答以文字显示",
         "notes": "按住 VOL- 6 秒清除 Muse 配对。显示中文需要往 anim_pack 烧字库（boards/rorolee-muse/font/README.md）。"
       },
+      "profile": "rorolee-muse",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ROROLEE_MUSE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_MUSE=y"
+        "CONFIG_AGENT_LINK_PROFILE_ROROLEE_MUSE=y"
       ]
     },
     {
@@ -122,9 +122,9 @@
         "use": "Agent Link 参考固件：通过 BLE 连 Deotaland App，按键和智能体对话",
         "notes": null
       },
+      "profile": "rorolee-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ROROLEE_S3=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_ROROLEE_BLE=y"
       ]
     },
     {
@@ -164,9 +164,9 @@
         "use": "Muse 语音助手：按住 BOOT 说话；固件里填了 MiniMax key 时会念出回答",
         "notes": "量产板。屏幕启动后日志只从 USB 输出（GPIO43 即 UART0 TX，用作屏幕复位）。"
       },
+      "profile": "wownny-muse",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_WOWNNY_MUSE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_MUSE=y"
+        "CONFIG_AGENT_LINK_PROFILE_WOWNNY_MUSE=y"
       ]
     },
     {
@@ -208,9 +208,9 @@
         "use": "Muse 语音助手，和 WWY-01 相同",
         "notes": "早期硬件版本，音量键和 WWY-01 是反的。"
       },
+      "profile": "wownny-old-muse",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_WOWNNY_OLD_MUSE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_MUSE=y"
+        "CONFIG_AGENT_LINK_PROFILE_WOWNNY_OLD_MUSE=y"
       ]
     },
     {
@@ -244,7 +244,7 @@
       "ble_name": "AIPassport",
       "fw_model": "AI-PASSPORT",
       "status": "supported",
-      "notes": "First Agent Link board on ESP32-C3. Build with idf.py set-target esp32c3. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
+      "notes": "ESP32-C3 profile: ai-passport-ble; build with tools/build_firmware.py. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
       "zh": {
         "product": "FoloToy AI Passport",
         "vendor": "FoloToy",
@@ -254,9 +254,9 @@
         "use": "通过 Deotaland App 走 BLE 和智能体按键对讲：按住确定键说话，松开发送；回复从喇叭播放；屏幕颜色表示连接状态",
         "notes": "Agent Link 首个 ESP32-C3 板型。用 idf.py set-target esp32c3 编译。分区表是 partitions_esp32c3.csv（8 MB，双 OTA）。串口是 USB Serial/JTAG——UART0 TX 与背光 GPIO21 冲突。引脚与 FoloToy ai-passport 的 bsp_pins.h 一致。"
       },
+      "profile": "ai-passport-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_FOLOTOY_AI_PASSPORT=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_AI_PASSPORT_BLE=y"
       ]
     },
     {
@@ -298,9 +298,9 @@
         "use": "通过 Deotaland App 走 BLE 和智能体按键对讲：按住黄键说话，回复从喇叭播放；圆屏显示连接状态",
         "notes": "使用 m5stack-stopwatch-ble。按住黄键说话，短按蓝键调音量，长按蓝键 6 秒重置配对。暂不使用触摸屏。"
       },
+      "profile": "m5stack-stopwatch-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_M5STACK_STOPWATCH=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_M5STACK_STOPWATCH_BLE=y"
       ]
     },
     {
@@ -342,9 +342,9 @@
         "use": "WiFi 直连平台：热点配网、激活码认领；在平台绑定 Agent，设备查看、新建、选择或删除会话并进行实时语音",
         "notes": "使用 m5stack-stopwatch-wifi。热点 M5StopWatch-XXXX。触摸开始/结束通话、会话和设置，长回复可滑动阅读；设置提供新建、删除会话及重置激活，删除和重置需再次确认。黄键减音量、蓝键加音量（长按连续调节，0–100）；独立电源键保留硬件行为。Agent 只在平台绑定。支持 CST820 触摸和 IOE 0x4F/0x6F。暂无 StopWatch 实物，仍待实机验收。"
       },
+      "profile": "m5stack-stopwatch-wifi",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_M5STACK_STOPWATCH_WIFI=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_WIFI=y"
+        "CONFIG_AGENT_LINK_PROFILE_M5STACK_STOPWATCH_WIFI=y"
       ]
     },
     {
@@ -380,8 +380,9 @@
         "use": "离线板级演示：六色屏、喇叭、录音回放、按键、震动、LED、电量；不接平台",
         "notes": "仅编译验证，待实机验收；需要支持 esp32s31 的 ESP-IDF 6.1。未启用摄像头、触摸和 TF 卡。彩色屏仅全刷。"
       },
+      "profile": "paper-s31-offline",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_PAPER_S31=y"
+        "CONFIG_AGENT_LINK_PROFILE_PAPER_S31_OFFLINE=y"
       ]
     },
     {
@@ -417,9 +418,9 @@
         "use": "WiFi 平台设备：热点配网、六位激活码、MQTT 控制、会话选择和 PCM16 实时语音；3.6 寸六色屏显示状态",
         "notes": "产品 ID 16，芯片类型 esp32-s31。仅构建验证，待实机和平台验收。语音使用 PCM16；屏幕仅支持 ASCII 字符。"
       },
+      "profile": "paper-s31-wifi",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_PAPER_S31_WIFI=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_WIFI=y"
+        "CONFIG_AGENT_LINK_PROFILE_PAPER_S31_WIFI=y"
       ]
     },
     {
@@ -461,9 +462,9 @@
         "use": "摄像头画面显示在屏幕上；按键（或 App）拍照，照片通过 BLE 发给 App",
         "notes": null
       },
+      "profile": "gc2145-camera-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_GC2145_CAMERA=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_GC2145_CAMERA_BLE=y"
       ]
     },
     {
@@ -511,9 +512,9 @@
         "use": "触摸主屏，三个应用：摄像头预览、语音发给智能体、录音存到 TF 卡；通过 BLE 连 Deotaland App",
         "notes": "和乐鑫官方 ESP32-S3-Korvo-2 V3 引脚兼容，但屏幕代码是按这块板的 240x280 ST7789 写的；乐鑫官方 Korvo-2 的屏幕板不同，屏幕可能不亮。"
       },
+      "profile": "korvo-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_KORVO=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_KORVO_BLE=y"
       ]
     },
     {
@@ -562,9 +563,9 @@
         "use": "WiFi 直连平台：热点配网、激活码认领；在平台绑定 Agent，设备查看、新建、选择或删除会话并进行实时语音；支持相机预览",
         "notes": "平台地址编进了固件（config.h 的 CLOUD_BASE_URL、CLOUD_PRODUCT_ID），平台迁到 deotaland.ai 后要重新编译。 Agent 只在平台绑定，删除会话需再次确认。"
       },
+      "profile": "korvo-wifi",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_KORVO_CLOUD=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_WIFI=y"
+        "CONFIG_AGENT_LINK_PROFILE_KORVO_WIFI=y"
       ]
     },
     {
@@ -599,9 +600,9 @@
         "use": "最小实时语音转文字示例：按住按键，麦克风音频通过 BLE 发给 App",
         "notes": "说话键在 GPIO8，高电平有效。烧录前按 boards/es8311-asr/config.h 核对用户的接线。"
       },
+      "profile": "es8311-asr-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_ES8311_ASR=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_ES8311_ASR_BLE=y"
       ]
     },
     {
@@ -635,9 +636,9 @@
         "use": "最小语音示例：按住 BOOT 通过 BLE 和智能体对话，回答从扬声器播放",
         "notes": "烧录前按 boards/es8311-voice/config.h 核对用户的接线。"
       },
+      "profile": "es8311-voice-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_ES8311_VOICE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_ES8311_VOICE_BLE=y"
       ]
     },
     {
@@ -680,9 +681,8 @@
         "use": "只点亮屏幕，没有连接功能",
         "notes": "屏幕代码目前驱动的还是 CO5300 466x466 AMOLED，不是这块板的 7 寸屏，烧上去屏幕不亮。先不要给用户烧。"
       },
-      "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32P4_WAVESHARE=y"
-      ]
+      "profile": null,
+      "sdkconfig": []
     }
   ]
 }

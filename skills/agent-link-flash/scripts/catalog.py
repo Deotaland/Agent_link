@@ -48,6 +48,9 @@ def _check_entry(b, where):
 def load_config_dir(boards_dir):
     """(entries, problems) read from every boards_dir/*/config.json."""
     entries, problems = [], []
+    manifest = Path(boards_dir).parent / "profiles" / "profiles.json"
+    profiles = json.loads(manifest.read_text(encoding="utf-8")) if manifest.is_file() else {}
+    by_type = {p["board_type"]: name for name, p in profiles.items()}
     for cfg in sorted(Path(boards_dir).glob("*/config.json")):
         name = cfg.parent.name
         try:
@@ -69,12 +72,13 @@ def load_config_dir(boards_dir):
             if found:
                 problems += found
                 continue
-            sdkconfig = [f"CONFIG_BOARD_TYPE_{b['board_type']}=y"]
-            if b["transport"] != "NONE":
-                sdkconfig.append(f"CONFIG_AGENT_LINK_TRANSPORT_{b['transport']}=y")
+            profile = by_type.get(b["board_type"])
+            if not profile and b["status"] != "not-adapted":
+                problems.append(f"{where}: no firmware profile for {b['board_type']}")
+            sdkconfig = [f"CONFIG_AGENT_LINK_PROFILE_{profile.upper().replace('-', '_')}=y"] if profile else []
             entries.append({"board_type": b["board_type"], "dir": name, "target": data.get("target"),
                             **{k: v for k, v in b.items() if k != "board_type"},
-                            "sdkconfig": sdkconfig})
+                            "profile": profile, "sdkconfig": sdkconfig})
     return entries, problems
 
 

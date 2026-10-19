@@ -1,45 +1,31 @@
 ---
 name: agent-link-debug
-description: Diagnose a Deotaland Agent Link device from its serial log and symptoms - no serial port, failed flashing, boot loops, dark screen, link stuck on BLE/WiFi/Muse, crashes with backtraces. Use when something goes wrong after flashing or at runtime. Read-only unless the user asks for a fix.
+description: Diagnose Agent Link flashing or runtime problems from board identity, serial logs and symptoms, including boot loops, dark screens, link failures and crashes. Analyze first and wait for the user's choice before implementing a fix.
 ---
-
-**English** | [简体中文](SKILL.zh-CN.md)
 
 # Diagnose an Agent Link device
 
-Read-only unless the user asks for a fix. The symptom table is in AGENTS.md, "Troubleshooting".
+Read `AGENTS.md`. Identify the board, firmware profile and reported boot model;
+use the flash skill's `scripts/find_board.py` when the user only knows its name.
+Collect the symptom and a bounded serial log. Keep credentials and identifiers
+out of shared output. Opening a port may reset the device.
 
-## 1. Collect
+| Symptom | Inspect |
+| --- | --- |
+| No port or failed connection | Cable, catalog USB connector, BOOT/reset and port ownership |
+| Old firmware after flashing | Selected OTA slot; compare package otadata and build metadata |
+| Boot loop or black screen | Board revision, detected chip, flash/PSRAM config and panel driver |
+| WiFi blocked | Network, compiled URL, activation and platform Agent binding |
+| Muse offline | Pairing state and device network access to Muse |
+| No speech | Negotiated format, audio queues, codec state; Muse TTS key/error when relevant |
+| Crash | Full backtrace and the ELF from the exact flashed build |
 
-- **What the user sees**, and which board it is: run `agent-link-flash`'s `scripts/find_board.py` with whatever they know.
-- **What is running:** the boot log lines `board = …, model = …, fw = …` and `init: … transport=…`.
-- **The serial log:** use `idf.py -p PORT monitor`, which decodes backtraces when `build/agent_link.elf` matches the flashed image, or any serial terminal at 115200.
-  - Opening the port can reset the device; ask first if that matters.
-  - On WOWNNY (WWY-01) the log continues on the USB port only once the screen starts.
-- **Link status:** lines starting `[link]` carry it: the title and hint the device shows. Quote them to the user.
+Decode only with a matching ELF and the target's toolchain. C3 and S31 use
+RISC-V tools; do not use the S3 Xtensa decoder for them. Without a matching ELF,
+state that source locations cannot be verified.
 
-## 2. Usual causes
-
-| Symptom | Check |
-|---|---|
-| No port, or can't connect | Data cable, download mode (hold BOOT and replug), the right port (Korvo: left USB-C), something else holding the port |
-| Old firmware still runs after flashing | `otadata` points to `ota_1` after an OTA update: write `ota_data_initial.bin` at `0xe000` or erase that region |
-| Boot loop right after flashing | Wrong board type or target; a different PSRAM/flash size than the board needs (16 MB flash, octal PSRAM) |
-| Screen dark | Wrong build for the board (WOWNNY: try the other revision); boards marked `not-adapted` |
-| WiFi: "Platform error", "Reconnecting", "Already bound", "No agent" | Network, platform reachable, binding state in the console |
-| Muse never online | Network access to Meta's servers (blocked from mainland China without a network-wide proxy) |
-| `muse_tts: no speech: HTTP …` | MiniMax key or quota; the text after the status is MiniMax's answer |
-| `Guru Meditation` / backtrace | Decode with the matching ELF only: `xtensa-esp32s3-elf-addr2line -pfiaC -e build/agent_link.elf <addresses>` |
-| Build: `CONFIG_…` missing | `idf.py reconfigure` after Kconfig changes |
-
-With no ELF matching the flashed image, say so: don't guess source lines.
-
-## 3. Report
-
-Report:
-- what the log shows, quoting the lines;
-- the likely cause, and how sure you are;
-- the fix you propose;
-- what you couldn't check.
-
-Change code, rebuild or flash only after the user agrees.
+Report confirmed log evidence, likely causes and uncertainty. Offer the feasible
+fixes with tradeoffs and a recommendation; one feasible fix still needs the
+user's confirmation. Wait for their choice before changing code/configuration,
+building a trial fix, flashing or erasing. Put an approved fix in production
+source; tests are supporting verification.

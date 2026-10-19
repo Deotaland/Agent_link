@@ -19,7 +19,7 @@
             "ble_name": "AIPassport",
             "fw_model": "AI-PASSPORT",
             "status": "supported",
-            "notes": "First Agent Link board on ESP32-C3. Build with idf.py set-target esp32c3. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
+            "notes": "ESP32-C3 profile: ai-passport-ble; build with tools/build_firmware.py. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
             "zh": {
                 "product": "FoloToy AI Passport",
                 "vendor": "FoloToy",

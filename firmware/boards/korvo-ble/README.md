@@ -1,20 +1,26 @@
 # Korvo BLE
 
-方案：`korvo-ble`。应用位于 `apps/korvo-ble`，入口为 `korvo_ble.cc`，语音与录音在 `korvo_ble_audio.cc`，界面在 `korvo_ble_ui.cc`。共用硬件初始化在 `boards/korvo`。设备型号和蓝牙名称仍为 `KORVO`。
+Profile: `korvo-ble`. The application lives in `apps/korvo-ble/`; shared hardware
+initialization is in `boards/korvo/`. The device model and BLE name are `KORVO`.
+It provides camera preview, agent voice and WAV recording to the TF card.
+Use the catalog's left USB-C connector for flashing.
 
-## 录音
+From `firmware/`:
 
-- 启动后扫描录音目录，从现有最大 `rec-NNNN.wav` 编号继续；识别大小写不同的同类文件名。
-- 文件以独占创建方式打开，已有文件不会被覆盖；扫描后出现同名文件则换下一个编号。
-- 目录扫描失败时停用录音，语音对话仍可使用。
-- 录音格式及协议保持原样。意外断电造成的 WAV 尾部和文件头恢复不在本次修复范围。
+```sh
+python tools/build_firmware.py korvo-ble --jobs 2
+```
 
-## 本次日志检查
+## Recording
 
-用户已验证功能正常。日志确认 8 MB PSRAM 正常、BLE 启动成功、ASR 上传及语音回复结束，没有重启或内存分配失败。
+Startup scans the recording directory and continues after the highest
+`rec-NNNN.wav` number, including case variants. Files are created exclusively;
+a collision advances to another number. A scan failure disables recording but
+leaves agent voice available. Recovery of a WAV interrupted by power loss is
+not implemented.
 
-仍需观察：
+## Log checks
 
-- 首次 BLE 连接在加密完成前断开，随后连接成功。仅凭设备日志不能确定 App 断开的原因。
-- `EV-EOF-OVF` 及 `FB-SIZE` 表示一次摄像头事件积压和短帧；驱动丢弃不完整帧。频繁出现时需单独分析调度与摄像头 DMA。
-- 麦克风再次启动时重复停用已停用的 I2S 通道，之后打开成功。本次保留共享音频驱动，启停问题需单独处理。
+A short camera frame or `EV-EOF-OVF` means an incomplete capture was dropped.
+Frequent occurrences need camera/DMA scheduling analysis. A disconnect before
+BLE encryption needs the corresponding app log to identify its cause.

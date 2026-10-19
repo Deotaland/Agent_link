@@ -94,7 +94,8 @@ def describe(entries):
         lines.append(f"  - {e['board_type']} [{e['status']}] {e['use']}")
         lines.append(f"      firmware/boards/{e['dir']}, target {e['target']}, link {e['transport']},"
                      f" boot log model = {e['fw_model']}")
-        lines.append(f"      sdkconfig: {'  '.join(e['sdkconfig'])}")
+        if e.get("profile"):
+            lines.append(f"      build from firmware/: python tools/build_firmware.py {e['profile']} --jobs 2")
         if e.get("ble_name"):
             lines.append(f"      shows up as: {e['ble_name']}")
         if e.get("notes"):
