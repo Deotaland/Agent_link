@@ -13,6 +13,7 @@ import sys
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--idf-path', type=Path, default=os.environ.get('IDF_PATH'))
+parser.add_argument('--pcm', action='store_true', help='verify the PCM16-only S31 grant path')
 args = parser.parse_args()
 if not args.idf_path:
     parser.error('provide an existing ESP-IDF path for its cJSON dependency')
@@ -26,6 +27,7 @@ includes = [root / 'tests/platform_api_stubs', root / 'components/agent_link/inc
 sources = [root / 'tests/platform_api_auth_test.cc',
            root / 'components/agent_link/src/transports/wifi/cloud/cloud_platform.cc']
 environment = os.environ.copy()
+defines = ['CONFIG_AGENT_LINK_REALTIME_OPUS=0'] if args.pcm else []
 if os.name == 'nt':
     vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
     installation = subprocess.check_output([str(vswhere), '-latest', '-products', '*',
@@ -45,10 +47,12 @@ if os.name == 'nt':
                     str(json_dir / 'cJSON.c'), '/Fo' + str(build / 'cJSON.obj')], env=environment, cwd=build, check=True)
     binary = build / 'platform_api_auth_test.exe'
     subprocess.run([compiler, '/nologo', '/std:c++17', '/EHsc', '/W4', '/D_CRT_SECURE_NO_WARNINGS',
+                    *['/D' + value for value in defines],
                     *['/I' + str(p) for p in includes], *map(str, sources), str(build / 'cJSON.obj'),
                     '/Fo' + build.as_posix() + '/', '/Fe' + str(binary)], env=environment, cwd=build, check=True)
 else:
     binary = build / 'platform_api_auth_test'
     subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', *['-I' + str(p) for p in includes],
+                    *['-D' + value for value in defines],
                     *map(str, sources), str(json_dir / 'cJSON.c'), '-o', str(binary)], cwd=build, check=True)
 subprocess.run([str(binary)], check=True)

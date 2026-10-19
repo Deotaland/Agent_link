@@ -2,6 +2,14 @@ menu "Agent Link Device"
 
 rsource "Kconfig.profiles"
 
+config BOARD_TYPE_PAPER_S31
+    bool
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-offline"
+
+config BOARD_TYPE_PAPER_S31_WIFI
+    bool
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-wifi"
+
 config BOARD_TYPE_ROROLEE_S3
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "rorolee-ble"
@@ -120,6 +128,7 @@ config AGENT_LINK_TRANSPORT_BLE
 
 config AGENT_LINK_TRANSPORT_WIFI
     bool
+    default y if BOARD_TYPE_PAPER_S31_WIFI
     default y if BOARD_TYPE_ESP32S3_KORVO_CLOUD
     default y if BOARD_TYPE_M5STACK_STOPWATCH_WIFI
 

@@ -13,6 +13,8 @@ dependencies:
   espressif/esp_audio_codec:
     version: "2.2.1"
     require: no
+    rules:
+      - if: "target != esp32s31"
   espressif/cjson:
     version: "^1.7.19"
     require: no

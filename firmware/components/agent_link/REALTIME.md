@@ -8,6 +8,13 @@ or leaves Voice. These screens do not provide push-to-talk or text chat.
 
 ## StopWatch WiFi controls
 
+The `paper-s31-wifi` profile uses product 16 (`esp32-s31`) with the same device-key
+authentication and conversation APIs. BOOT starts/ends a call; hold it for one second
+to choose a conversation. Its 3.6-inch six-color display coalesces updates on a separate
+worker. It requests PCM16 in both directions because esp_audio_codec 2.2.1 has no S31
+library; the existing SDK PCM converter handles 24 kHz replies. Physical-device and
+live-platform acceptance are still pending. See `boards/paper-s31/README.md` for controls.
+
 The round CST820 touchscreen provides Start/End call, Sessions and Settings. The reply area
 scrolls by touch. Sessions shows three rows with previous/next navigation; Settings creates
 a conversation, deletes the selected conversation, or resets activation. Delete and reset

@@ -22,7 +22,7 @@ PROFILES = ROOT / "firmware" / "profiles" / "profiles.json"
 DOCS = {"en": ROOT / "AGENTS.md", "zh": ROOT / "AGENTS.zh-CN.md"}
 BEGIN, END = "<!-- boards:begin -->", "<!-- boards:end -->"
 
-CHIP = {"esp32s3": "ESP32-S3", "esp32p4": "ESP32-P4"}
+CHIP = {"esp32s3": "ESP32-S3", "esp32p4": "ESP32-P4", "esp32s31": "ESP32-S31"}
 LINK = {"BLE": "BLE", "WIFI": "WiFi", "MUSE": "Muse", "NONE": "—"}
 STATUS = {
     "en": {"supported": "supported", "legacy": "old revision", "example": "wiring example",

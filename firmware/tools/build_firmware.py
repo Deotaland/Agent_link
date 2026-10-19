@@ -85,8 +85,10 @@ def expected_settings(profile):
 
 
 def identity(profile):
-    return {f"CONFIG_BOARD_TYPE_{profile['board_type']}",
-            f"CONFIG_AGENT_LINK_TRANSPORT_{profile['backend']}"}
+    keys = {f"CONFIG_BOARD_TYPE_{profile['board_type']}"}
+    if profile["backend"] != "NONE":
+        keys.add(f"CONFIG_AGENT_LINK_TRANSPORT_{profile['backend']}")
+    return keys
 
 
 def profile_symbol(name):
@@ -275,6 +277,9 @@ def build(args, profile):
         raise ValueError("Activate an ESP-IDF 5.5.x or 6.1.x environment before building")
     if not supported_idf(context["version"]):
         raise ValueError("This firmware supports ESP-IDF 5.5.x and 6.1.x")
+    if not (idf_path / "components/soc" / profile["target"]).is_dir():
+        raise ValueError(f"ESP-IDF {context['version']} does not support {profile['target']}; "
+                         "activate an SDK with support for this chip before building")
     print(f"Building with ESP-IDF {context['version']} ({idf_path})", flush=True)
 
     config = ROOT / "sdkconfig"

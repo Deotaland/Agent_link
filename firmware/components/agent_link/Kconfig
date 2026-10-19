@@ -90,6 +90,7 @@ config AGENT_LINK_REALTIME_BASE_URL
 config AGENT_LINK_REALTIME_OPUS
     bool "Use Opus for realtime voice"
     depends on AGENT_LINK_TRANSPORT_WIFI
+    depends on !IDF_TARGET_ESP32S31
     select FREERTOS_TASK_CREATE_ALLOW_EXT_MEM if SPIRAM
     default y
     help

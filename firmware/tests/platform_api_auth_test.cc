@@ -8,6 +8,7 @@
 #include "cloud_platform.h"
 #include "cloud_credential.h"
 #include "esp_http_client.h"
+#include "sdkconfig.h"
 
 #define CHECK(value) do { if (!(value)) { std::fprintf(stderr, "FAIL at line %d\n", __LINE__); std::exit(1); } } while (false)
 struct Expected {
@@ -49,6 +50,20 @@ esp_err_t esp_http_client_perform(TestHttp* client) {
     CHECK(client->headers["X-Device-Auth-Key"] == device_key);
     CHECK(client->headers.count("Authorization") == 0 && client->headers.count("X-Token") == 0);
     if (!next.body.empty()) CHECK(client->body == next.body);
+    if (next.method == HTTP_METHOD_POST &&
+        (next.path.find("realtime-grant") != std::string::npos ||
+         next.path.find("realtime-refresh") != std::string::npos)) {
+        cJSON* body = cJSON_Parse(client->body.c_str());
+        const cJSON* config = cJSON_GetObjectItemCaseSensitive(body, "audio_config");
+        const cJSON* input = cJSON_GetObjectItemCaseSensitive(config, "input");
+        const cJSON* output = cJSON_GetObjectItemCaseSensitive(config, "output");
+        const char* encoding = CONFIG_AGENT_LINK_REALTIME_OPUS ? "opus" : "pcm16";
+        CHECK(std::strcmp(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(input, "encoding")), encoding) == 0);
+        CHECK(std::strcmp(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(output, "encoding")), encoding) == 0);
+        CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(input, "sampleRate")) == 16000);
+        CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(output, "sampleRate")) == 24000);
+        cJSON_Delete(body);
+    }
     client->status = next.status;
     // Split network deliveries so response assembly is exercised too.
     for (size_t i = 0; i < next.response.size(); i += 17) {
@@ -112,11 +127,16 @@ int main() {
            R"({"data":{"items":[{"conversation_id":"previous"},{"conversation_id":"owned-session","name":"Test"}]}})");
     CHECK(agent_link_platform_conversations(7, 1, sessions, 3, &count, &total) == ESP_OK);
     CHECK(count == 1 && total == 2 && std::strcmp(sessions[0].id, session) == 0);
+#if CONFIG_AGENT_LINK_REALTIME_OPUS
     const char* grant = R"({"data":{"grant":{"websocket_url":"wss://voice.example.test/socket","connect_token":"test-one-use-token","audio_config":{"input":{"encoding":"opus","sampleRate":16000,"channels":1,"packetDurationMs":20},"output":{"encoding":"opus","sampleRate":24000,"channels":1,"packetDurationMs":20}}}}})";
+#else
+    const char* grant = R"({"data":{"grant":{"websocket_url":"wss://voice.example.test/socket","connect_token":"test-one-use-token","audio_config":{"input":{"encoding":"pcm16","sampleRate":16000,"channels":1},"output":{"encoding":"pcm16","sampleRate":24000,"channels":1}}}}})";
+#endif
     Expect(HTTP_METHOD_POST, "/api/agents/7/actions/realtime_voice/realtime-grant", grant);
     CHECK(cloud_platform_grant(7, session, false, url, sizeof url, token, sizeof token,
                                &audio, &http_status) == ESP_OK);
-    CHECK(http_status == 200 && audio.input_opus && audio.output_opus);
+    CHECK(http_status == 200 && audio.input_opus == !!CONFIG_AGENT_LINK_REALTIME_OPUS &&
+          audio.output_opus == !!CONFIG_AGENT_LINK_REALTIME_OPUS);
     Expect(HTTP_METHOD_POST, "/api/agents/7/actions/realtime_voice/realtime-refresh", grant);
     CHECK(cloud_platform_grant(7, session, true, url, sizeof url, token, sizeof token,
                                &audio, &http_status) == ESP_OK);
@@ -124,7 +144,7 @@ int main() {
     cloud_platform_end_grant(7, session);
     Expect(HTTP_METHOD_DELETE, "/api/agents/7/actions/realtime_voice/conversations/owned-session", "", "", 204);
     CHECK(agent_link_platform_delete_conversation(7, session) == ESP_OK);
-    std::puts("PASS: conversation lifecycle, Opus grant/refresh and cancellation use device authentication");
+    std::puts("PASS: conversation lifecycle, negotiated audio grant/refresh and cancellation use device authentication");
 
     const size_t allocations_before = allocations;
     device_key = "rotated-test-device-key";

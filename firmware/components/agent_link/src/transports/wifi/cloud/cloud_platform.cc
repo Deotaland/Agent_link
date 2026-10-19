@@ -314,7 +314,8 @@ esp_err_t cloud_platform_grant(int agent_id, const char* session_id, bool refres
     snprintf(body, sizeof body, "{\"session_id\":\"%s\",\"audio_config\":%s}", session_id,
              agentlink::realtime::kOpusAudioConfig);
 #else
-    snprintf(body, sizeof body, "{\"session_id\":\"%s\"}", session_id);
+    snprintf(body, sizeof body, "{\"session_id\":\"%s\",\"audio_config\":%s}", session_id,
+             agentlink::realtime::kPcmAudioConfig);
 #endif
     cJSON* root = nullptr;
     esp_err_t result = Exchange(refresh ? "refresh voice grant" : "request voice grant",

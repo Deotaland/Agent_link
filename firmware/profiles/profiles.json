@@ -287,5 +287,43 @@
     ],
     "ui": "lvgl",
     "hardware_sources": []
+  },
+  "paper-s31-offline": {
+    "board": "paper-s31",
+    "board_type": "PAPER_S31",
+    "target": "esp32s31",
+    "backend": "NONE",
+    "defaults": [
+      "profiles/paper-s31-offline.defaults"
+    ],
+    "app": "paper-s31",
+    "hardware": "paper-s31",
+    "drivers": [],
+    "ui": "none",
+    "hardware_sources": [
+      "epd.c",
+      "i2c_bus.c",
+      "paper_audio.c",
+      "paper_hardware.c"
+    ]
+  },
+  "paper-s31-wifi": {
+    "board": "paper-s31",
+    "board_type": "PAPER_S31_WIFI",
+    "target": "esp32s31",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/paper-s31-wifi.defaults"
+    ],
+    "app": "paper-s31-wifi",
+    "hardware": "paper-s31",
+    "drivers": [],
+    "ui": "none",
+    "hardware_sources": [
+      "epd.c",
+      "i2c_bus.c",
+      "paper_audio.c",
+      "paper_hardware.c"
+    ]
   }
 }

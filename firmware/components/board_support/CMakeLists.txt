@@ -38,6 +38,9 @@ endif()
 if("ws2812_led.cc" IN_LIST _hardware_sources)
     list(APPEND _requires esp_driver_rmt)
 endif()
+if("paper_audio.c" IN_LIST _hardware_sources)
+    list(APPEND _requires esp_codec_dev)
+endif()
 idf_component_register(SRCS ${_sources}
     INCLUDE_DIRS "${FIRMWARE_ROOT}/boards/common" "${FIRMWARE_ROOT}/boards/${PROFILE_hardware}"
     PRIV_INCLUDE_DIRS "${FIRMWARE_ROOT}/boards/${PROFILE_board}"

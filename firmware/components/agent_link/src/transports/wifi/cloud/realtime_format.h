@@ -15,6 +15,10 @@ inline constexpr char kOpusAudioConfig[] =
     R"({"input":{"encoding":"opus","sampleRate":16000,"channels":1,"packetDurationMs":20},)"
     R"("output":{"encoding":"opus","sampleRate":24000,"channels":1,"packetDurationMs":20,"bitrate":24000}})";
 
+inline constexpr char kPcmAudioConfig[] =
+    R"({"input":{"encoding":"pcm16","sampleRate":16000,"channels":1},)"
+    R"("output":{"encoding":"pcm16","sampleRate":24000,"channels":1}})";
+
 inline const cJSON* AudioSettings(const cJSON* body, unsigned depth = 0) {
     if (!cJSON_IsObject(body) || depth > 3) return nullptr;
     for (const char* key : {"audio_config", "audio"}) {

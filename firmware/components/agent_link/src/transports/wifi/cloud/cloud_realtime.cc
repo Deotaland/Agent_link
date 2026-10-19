@@ -1044,7 +1044,7 @@ void Worker(void*) {
 #if CONFIG_AGENT_LINK_REALTIME_DIRECT
         if (grant.direct && granted) EndDirectSession();
 #endif
-        memset(&grant, 0, sizeof grant);
+        grant = {};
     }
     s_task.store(nullptr, std::memory_order_release);
     vTaskDelete(nullptr);
@@ -1130,7 +1130,7 @@ esp_err_t cloud_realtime_offer(const char* websocket_url, const char* connect_to
     snprintf(grant.url, sizeof grant.url, "%s", websocket_url);
     snprintf(grant.token, sizeof grant.token, "%s", connect_token);
     const esp_err_t result = QueueGrant(&grant);
-    memset(&grant, 0, sizeof grant);
+    grant = {};
     return result;
 }
 

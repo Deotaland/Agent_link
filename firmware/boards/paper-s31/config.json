@@ -1,0 +1,71 @@
+{
+  "manufacturer": "mozhifang",
+  "type": "paper-s31",
+  "target": "esp32s31",
+  "boards": [
+    {
+      "board_type": "PAPER_S31",
+      "model": "paper V2",
+      "product": "Mozhifang paper V2 (3.6-inch six-color e-paper)",
+      "vendor": "Mozhifang",
+      "buy": [],
+      "docs": [],
+      "aliases": [
+        "paper-s31",
+        "paper V2",
+        "ESP32-S31",
+        "S31"
+      ],
+      "hardware": "ESP32-S31NRV16, ES8389, Waveshare 3.6-inch e-Paper (E), BQ27220, PCF85063, SC7A20",
+      "identify": "paper V2 board; 3.6-inch 400x600 six-color display on U1 (50 pins), H1 BS0 grounded",
+      "flash_port": "Type-C USB Serial/JTAG on GPIO33/34; hold BOOT (GPIO61) while connecting for download mode",
+      "use": "Offline board demo: six-color screen, speaker tone, microphone record/playback, keys, motor, LED and battery; no platform connection",
+      "transport": "NONE",
+      "ble_name": null,
+      "fw_model": "PAPER-S31",
+      "status": "supported",
+      "notes": "Build verification only; hardware acceptance pending. Requires ESP-IDF 6.1 with esp32s31 support. Camera, touch and SD are not initialized. Color panels use full refresh only.",
+      "zh": {
+        "product": "墨之坊 paper V2（3.6 寸六色墨水屏）",
+        "vendor": "墨之坊",
+        "hardware": "ESP32-S31NRV16、ES8389、3.6 寸六色墨水屏、BQ27220、PCF85063、SC7A20",
+        "identify": "paper V2；3.6 寸 400×600 六色屏接 U1（50 针），H1 的 BS0 接 GND",
+        "flash_port": "Type-C USB Serial/JTAG（GPIO33/34）；按住 BOOT（GPIO61）接入进入下载模式",
+        "use": "离线板级演示：六色屏、喇叭、录音回放、按键、震动、LED、电量；不接平台",
+        "notes": "仅编译验证，待实机验收；需要支持 esp32s31 的 ESP-IDF 6.1。未启用摄像头、触摸和 TF 卡。彩色屏仅全刷。"
+      }
+    },
+    {
+      "board_type": "PAPER_S31_WIFI",
+      "model": "paper V2",
+      "product": "Mozhifang paper V2 (3.6-inch six-color e-paper)",
+      "vendor": "Mozhifang",
+      "buy": [],
+      "docs": [],
+      "aliases": [
+        "paper-s31",
+        "paper V2",
+        "ESP32-S31",
+        "S31"
+      ],
+      "hardware": "ESP32-S31NRV16, ES8389, Waveshare 3.6-inch e-Paper (E), BQ27220, PCF85063, SC7A20",
+      "identify": "paper V2 board; 3.6-inch 400x600 six-color display on U1 (50 pins), H1 BS0 grounded",
+      "flash_port": "Type-C USB Serial/JTAG on GPIO33/34; hold BOOT (GPIO61) while connecting for download mode",
+      "use": "WiFi platform device: hotspot setup, six-digit activation, MQTT control, conversation selection and PCM16 realtime voice; status on the 3.6-inch six-color display",
+      "transport": "WIFI",
+      "ble_name": null,
+      "fw_model": "PAPER-S31",
+      "status": "supported",
+      "notes": "Product ID 16, chip_type esp32-s31. Build verification only; hardware and live platform acceptance pending. PCM16 voice; no Opus library for S31. ASCII text rendering only.",
+      "zh": {
+        "product": "墨之坊 paper V2（3.6 寸六色墨水屏）",
+        "vendor": "墨之坊",
+        "hardware": "ESP32-S31NRV16、ES8389、3.6 寸六色墨水屏、BQ27220、PCF85063、SC7A20",
+        "identify": "paper V2；3.6 寸 400×600 六色屏接 U1（50 针），H1 的 BS0 接 GND",
+        "flash_port": "Type-C USB Serial/JTAG（GPIO33/34）；按住 BOOT（GPIO61）接入进入下载模式",
+        "use": "WiFi 平台设备：热点配网、六位激活码、MQTT 控制、会话选择和 PCM16 实时语音；3.6 寸六色屏显示状态",
+        "notes": "产品 ID 16，芯片类型 esp32-s31。仅构建验证，待实机和平台验收。语音使用 PCM16；屏幕仅支持 ASCII 字符。"
+      }
+    }
+  ]
+}

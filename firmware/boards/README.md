@@ -42,6 +42,14 @@ for existing external ports.
 
 ## Adding hardware or a firmware profile
 
+The `paper-s31-wifi` profile connects the Mozhifang paper V2 to the platform as
+product 16, using hotspot setup, activation, MQTT and PCM16 realtime voice. Its
+3.6-inch six-color screen runs on a separate worker; BOOT controls calls and sessions.
+The `paper-s31-offline` profile brings up the same board with a 3.6-inch
+400x600 six-color display, ES8389 audio, keys, motor and battery readings. It runs
+without a transport and requires ESP-IDF 6.1 with ESP32-S31 support. See
+[paper-s31](paper-s31/README.md) for wiring and the BOOT demo sequence.
+
 1. Add `boards/<board>/config.h` and `config.json`; use a current entry as the catalog template.
    The catalog records chip, model, vendor, identification, flash port, capabilities and supported link.
 2. Put the application in `apps/<app>/`. Add reusable drivers to `boards/common/`, hardware-specific

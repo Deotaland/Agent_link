@@ -1,6 +1,10 @@
 # The firmware passes its fixed backend before IDF expands component requirements.
 # External SDK consumers without a profile retain the legacy multi-backend build.
 set(_backend "$ENV{AGENT_LINK_BUILD_BACKEND}")
+if(_backend STREQUAL "NONE")
+    idf_component_register()
+    return()
+endif()
 if(NOT _backend STREQUAL "" AND NOT _backend MATCHES "^(BLE|WIFI|MUSE)$")
     message(FATAL_ERROR "AGENT_LINK_BUILD_BACKEND must be BLE, WIFI or MUSE")
 endif()
@@ -22,7 +26,10 @@ if(_backend STREQUAL "BLE" OR _backend STREQUAL "")
 endif()
 if(_backend STREQUAL "WIFI" OR _backend STREQUAL "")
     list(APPEND _requires esp_wifi esp_netif esp_event esp_http_server lwip esp_http_client
-                          ${_json} mqtt tcp_transport esp_audio_codec)
+                          ${_json} mqtt tcp_transport)
+    if(NOT IDF_TARGET STREQUAL "esp32s31")
+        list(APPEND _requires esp_audio_codec)
+    endif()
     if(NOT (CONFIG_IDF_TARGET_ESP32C3 AND CONFIG_AGENT_LINK_TRANSPORT_BLE))
         set(_wifi 1)
         list(APPEND _sources src/transports/wifi/transport_wifi.cpp src/transports/wifi/wifi_provision.cpp
