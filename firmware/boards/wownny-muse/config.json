@@ -1,5 +1,43 @@
 {
     "manufacturer": "deotaland",
     "type": "wownny-muse",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "WOWNNY_MUSE",
+            "model": "WWY-01",
+            "product": "WOWNNY",
+            "vendor": "Deotaland",
+            "buy": ["https://www.rorolee.com"],
+            "docs": [],
+            "aliases": ["WOWNNY", "wownny-muse", "Deotaland", "rorolee.com", "round display"],
+            "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; GC9D01 160x160 round TFT; ES8311 + ES7210 audio; BQ27220 fuel gauge; vibration motor",
+            "identify": "Round screen, about 100 px of it visible through the case; three buttons: BOOT, VOL+, VOL-",
+            "flash_port": "USB-C (the chip's own USB). Download mode: hold BOOT while plugging in.",
+            "use": "Muse voice assistant: hold BOOT to talk; answers are spoken when the build has a MiniMax key",
+            "transport": "MUSE",
+            "ble_name": "MuseGadget-XXXXXX",
+            "fw_model": "WWY-01",
+            "status": "supported",
+            "notes": "Production board. Once the screen starts the log continues on USB only (GPIO43, UART0 TX, is the display reset)."
+        },
+        {
+            "board_type": "WOWNNY_OLD_MUSE",
+            "model": "WWY-01-old",
+            "product": "WOWNNY (old board)",
+            "vendor": "Deotaland",
+            "buy": ["https://www.rorolee.com"],
+            "docs": [],
+            "aliases": ["WOWNNY", "wownny-muse", "Deotaland", "rorolee.com", "round display", "old board", "old revision"],
+            "hardware": "Same parts as WWY-01 on an earlier PCB: different display pins, display powered from GPIO46, no 32 kHz crystal",
+            "identify": "Looks like WWY-01. Its screen stays dark for about a second at boot. If unsure, flash WWY-01 first; if the screen stays dark, flash this one.",
+            "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
+            "use": "Muse voice assistant, same as WWY-01",
+            "transport": "MUSE",
+            "ble_name": "MuseGadget-XXXXXX",
+            "fw_model": "WWY-01-old",
+            "status": "legacy",
+            "notes": "Early hardware revision. The volume keys are swapped compared to WWY-01."
+        }
+    ]
 }

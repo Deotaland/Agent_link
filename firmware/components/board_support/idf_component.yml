@@ -1,0 +1,14 @@
+dependencies:
+  espressif/esp_codec_dev:
+    version: "^1.5.0"
+    require: no
+  espressif/esp32-camera:
+    version: "^2.0.4"
+    require: no
+    rules:
+      - if: "target == esp32s3"
+  espressif/esp_lcd_co5300:
+    version: "^2.1.0"
+    require: no
+    rules:
+      - if: "target in [esp32p4, esp32s3]"

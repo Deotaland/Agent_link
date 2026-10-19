@@ -4,38 +4,42 @@
 
 #include "agent_link.h"
 #include "agent_link_ota.h"
-#include "board.h"
+#include "application.h"
 
 namespace {
 constexpr const char* TAG = "agent_link.app";
 
-void on_audio_out(const uint8_t* pcm16, size_t bytes, void*) { Board::GetInstance().PlayAudio(pcm16, bytes); }
-void on_audio_end(void*) { Board::GetInstance().AudioEnd(); }
-void on_show_text(const char* utf8, void*) { Board::GetInstance().ShowText(utf8); }
-void on_haptic(uint32_t duration_ms, void*) { Board::GetInstance().Vibrate(duration_ms); }
-void on_led(uint32_t rgb, void*) { Board::GetInstance().SetLed(rgb); }
-void on_listen(bool start, uint32_t max_ms, void*) { Board::GetInstance().OnListen(start, max_ms); }
+void on_audio_out(const uint8_t* pcm16, size_t bytes, void*) { Application::GetInstance().PlayAudio(pcm16, bytes); }
+void on_audio_end(void*) { Application::GetInstance().AudioEnd(); }
+void on_audio_reset(void*) { Application::GetInstance().AudioReset(); }
+bool on_voice_reply(uint32_t session_id, uint8_t status, void*) {
+    return Application::GetInstance().OnVoiceReply(session_id, status);
+}
+void on_show_text(const char* utf8, void*) { Application::GetInstance().ShowText(utf8); }
+void on_haptic(uint32_t duration_ms, void*) { Application::GetInstance().Vibrate(duration_ms); }
+void on_led(uint32_t rgb, void*) { Application::GetInstance().SetLed(rgb); }
+void on_listen(bool start, uint32_t max_ms, void*) { Application::GetInstance().OnListen(start, max_ms); }
 bool on_command(uint16_t cmd, const uint8_t* payload, size_t len,
                 uint8_t* resp, size_t resp_cap, size_t* resp_len, void*) {
-    return Board::GetInstance().OnCommand(cmd, payload, len, resp, resp_cap, resp_len);
+    return Application::GetInstance().OnCommand(cmd, payload, len, resp, resp_cap, resp_len);
 }
 
 void on_status(const agent_link_status_t* st, void*) {
     if (!st) return;
-    ESP_LOGI(TAG, "[link] %s: %s", st->title, st->hint);
-    Board::GetInstance().OnLinkStatus(*st);
+    ESP_LOGI(TAG, "[link] %s (phase=%d)", st->title, static_cast<int>(st->phase));
+    Application::GetInstance().OnLinkStatus(*st);
 }
 
 void on_state(agent_state_t state, void*) {
     ESP_LOGI(TAG, "[state] %s",
              state == AGENT_STATE_READY     ? "READY" :
              state == AGENT_STATE_CONNECTED ? "CONNECTED" : "DISCONNECTED");
-    Board::GetInstance().OnLinkState(state != AGENT_STATE_DISCONNECTED);
+    Application::GetInstance().OnLinkState(state != AGENT_STATE_DISCONNECTED);
 }
 }  // namespace
 
 extern "C" void app_main(void) {
-    Board& board = Board::GetInstance();
+    Application& board = Application::GetInstance();
     ESP_LOGI(TAG, "board = %s, model = %s, fw = %s, caps = 0x%04x", board.Name(), board.Model(),
              agent_link_ota_running_version(), static_cast<unsigned>(board.Capabilities()));
 
@@ -43,9 +47,11 @@ extern "C" void app_main(void) {
     agent_output_cb_t out = {};
     out.on_audio_out = on_audio_out;
     out.on_audio_end = on_audio_end;
+    out.on_audio_reset = on_audio_reset;
+    out.on_voice_reply = on_voice_reply;
     out.on_show_text = on_show_text;
-    out.on_haptic    = on_haptic;
-    out.on_led       = on_led;
+    out.on_haptic    = (board.Capabilities() & AGENT_CAP_HAPTIC) ? on_haptic : nullptr;
+    out.on_led       = (board.Capabilities() & AGENT_CAP_LED) ? on_led : nullptr;
     out.on_listen    = on_listen;   // App-initiated listen (0x3C/0x3D); no-op on boards without a mic
     out.on_command   = on_command;  // board-claimed control commands; consulted before the SDK's 1001
 

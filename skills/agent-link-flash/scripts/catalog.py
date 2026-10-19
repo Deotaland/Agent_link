@@ -1,0 +1,95 @@
+"""Board catalog: one entry per board type, from firmware/boards/*/config.json.
+
+Used by find_board.py next to this file and by tools/board_catalog.py in the repository. Outside a
+checkout (a skill installed on its own) the copy in ../references/boards.json is used instead.
+"""
+import json
+import re
+from pathlib import Path
+
+TRANSPORTS = ("BLE", "WIFI", "MUSE", "NONE")
+STATUSES = ("supported", "legacy", "example", "not-adapted")
+REQUIRED = ("board_type", "model", "product", "vendor", "buy", "docs", "aliases", "hardware",
+            "identify", "flash_port", "use", "transport", "ble_name", "fw_model", "status",
+            "notes")
+BUNDLED = Path(__file__).resolve().parent.parent / "references" / "boards.json"
+
+
+def find_boards_dir(start):
+    """firmware/boards of the checkout containing `start`, or None."""
+    start = Path(start).resolve()
+    for d in (start, *start.parents):
+        boards = d / "firmware" / "boards"
+        if boards.is_dir() and any(boards.glob("*/config.json")):
+            return boards
+    return None
+
+
+def _check_entry(b, where):
+    problems = [f"{where}: missing {k}" for k in REQUIRED if k not in b]
+    if problems:
+        return problems
+    if b["transport"] not in TRANSPORTS:
+        problems.append(f"{where}: transport must be one of {', '.join(TRANSPORTS)}")
+    if b["status"] not in STATUSES:
+        problems.append(f"{where}: status must be one of {', '.join(STATUSES)}")
+    if not b["model"] and b["status"] != "example":
+        problems.append(f"{where}: model is required unless status is example")
+    for k in ("buy", "docs", "aliases"):
+        if not isinstance(b[k], list):
+            problems.append(f"{where}: {k} must be a list")
+    if "zh" in b:
+        problems.append(f"{where}: remove translated fields; catalog metadata is English only")
+    if re.search(r"[\u3400-\u9fff\uf900-\ufaff]", json.dumps(b, ensure_ascii=False)):
+        problems.append(f"{where}: catalog text and aliases must use English")
+    return problems
+
+
+def load_config_dir(boards_dir):
+    """(entries, problems) read from every boards_dir/*/config.json."""
+    entries, problems = [], []
+    manifest = Path(boards_dir).parent / "profiles" / "profiles.json"
+    profiles = json.loads(manifest.read_text(encoding="utf-8")) if manifest.is_file() else {}
+    by_type = {p["board_type"]: name for name, p in profiles.items()}
+    for cfg in sorted(Path(boards_dir).glob("*/config.json")):
+        name = cfg.parent.name
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            problems.append(f"{name}/config.json: {e}")
+            continue
+        if data.get("type") != name:
+            problems.append(f"{name}/config.json: type is {data.get('type')!r}, expected {name!r}")
+        if not isinstance(data.get("target"), str) or not data["target"]:
+            problems.append(f"{name}/config.json: target missing")
+        boards = data.get("boards")
+        if not isinstance(boards, list) or not boards:
+            problems.append(f"{name}/config.json: needs a non-empty \"boards\" list")
+            continue
+        for i, b in enumerate(boards):
+            where = f"{name}/config.json boards[{i}]"
+            found = _check_entry(b, where) if isinstance(b, dict) else [f"{where}: not an object"]
+            if found:
+                problems += found
+                continue
+            profile = by_type.get(b["board_type"])
+            if not profile and b["status"] != "not-adapted":
+                problems.append(f"{where}: no firmware profile for {b['board_type']}")
+            sdkconfig = [f"CONFIG_AGENT_LINK_PROFILE_{profile.upper().replace('-', '_')}=y"] if profile else []
+            entries.append({"board_type": b["board_type"], "dir": name, "target": data.get("target"),
+                            **{k: v for k, v in b.items() if k != "board_type"},
+                            "profile": profile, "sdkconfig": sdkconfig})
+    return entries, problems
+
+
+def load(start=None):
+    """(entries, source, problems): the checkout's config.json files when inside a checkout and
+    they are valid, else the bundled copy (problems then says why the checkout was not used)."""
+    problems = []
+    boards = find_boards_dir(start or Path(__file__).parent)
+    if boards:
+        entries, problems = load_config_dir(boards)
+        if not problems:
+            return entries, str(boards), []
+    data = json.loads(BUNDLED.read_text(encoding="utf-8"))
+    return data["boards"], str(BUNDLED), problems

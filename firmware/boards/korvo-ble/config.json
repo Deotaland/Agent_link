@@ -1,0 +1,25 @@
+{
+    "manufacturer": "espressif",
+    "type": "korvo-ble",
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ESP32S3_KORVO",
+            "model": "Korvo 2 V3",
+            "product": "ESP32S3 Korvo 2 V3 development board",
+            "vendor": "KSDIY (Kevincoooool)",
+            "buy": ["https://item.taobao.com/item.htm?id=681702043224"],
+            "docs": ["https://github.com/Kevincoooool/esp-idf-docs"],
+            "aliases": ["Korvo", "Korvo 2", "Korvo-2", "Korvo2", "ESP32-S3-Korvo-2", "ESP32S3 Korvo", "Korvo S3", "KSDIY", "Kevincoooool", "681702043224"],
+            "hardware": "ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM); 1.69-inch 240x280 ST7789 touch LCD (CST816); ES8311 + ES7210 audio; 24-pin DVP camera connector (this firmware drives a GC2145); TF card slot",
+            "identify": "Two USB-C ports; 1.69-inch touch screen; camera on a 24-pin ribbon connector; six ADC buttons",
+            "flash_port": "Left USB-C (CH9102F USB-UART, automatic download). The right USB-C is the chip's own USB, not for flashing.",
+            "use": "Touch home screen with three apps: camera preview, voice to the agent, WAV recording to the TF card; links over BLE with the Deotaland App",
+            "transport": "BLE",
+            "ble_name": "KORVO",
+            "fw_model": "KORVO",
+            "status": "supported",
+            "notes": "Pin-compatible with Espressif's ESP32-S3-Korvo-2 V3, but the screen code is for this board's 240x280 ST7789. Espressif's own Korvo-2 uses a different LCD board, so the screen may not work there."
+        }
+    ]
+}

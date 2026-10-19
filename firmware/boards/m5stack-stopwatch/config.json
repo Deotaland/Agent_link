@@ -1,0 +1,65 @@
+{
+    "manufacturer": "m5stack",
+    "type": "m5stack-stopwatch",
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "M5STACK_STOPWATCH",
+            "model": "C152",
+            "product": "M5Stack StopWatch",
+            "vendor": "M5Stack",
+            "buy": [],
+            "docs": [
+                "https://docs.m5stack.com/en/core/StopWatch"
+            ],
+            "aliases": [
+                "StopWatch",
+                "Stop Watch",
+                "M5StopWatch",
+                "M5 StopWatch",
+                "M5Stack StopWatch",
+                "M5Stack",
+                "C152",
+                "m5stack-stopwatch"
+            ],
+            "hardware": "ESP32-S3R8 (8 MB PSRAM), 16 MB flash; 1.75-inch 466x466 round AMOLED (CO5300, QSPI) with CST820 touch; ES8311 codec, MEMS mic, AW8737A 1 W speaker amp; two keys and a power key; vibration motor; M5PM1 power management with a 450 mAh battery; M5IOE1 IO expander; BMI270 IMU; RX8130CE RTC",
+            "identify": "52 x 52 mm round watch body with a 1.75-inch round touch screen; a yellow and a blue key plus a power key; USB-C; lanyard hole, magnetic back",
+            "flash_port": "USB-C (the ESP32-S3's own USB). If no port shows up: plug in USB, hold the power key about 2 s until the green LED lights, release.",
+            "use": "Push-to-talk with the agent through the Deotaland App over BLE: hold the yellow key, replies play on the speaker; link status on the round screen",
+            "transport": "BLE",
+            "ble_name": "M5StopWatch",
+            "fw_model": "M5-STOPWATCH",
+            "status": "supported",
+            "notes": "Use m5stack-stopwatch-ble. Hold yellow to talk; tap blue for volume, hold blue for 6 seconds to reset pairing. The touch panel is not used."
+        },
+        {
+            "board_type": "M5STACK_STOPWATCH_WIFI",
+            "model": "C152",
+            "product": "M5Stack StopWatch",
+            "vendor": "M5Stack",
+            "buy": [],
+            "docs": [
+                "https://docs.m5stack.com/en/core/StopWatch"
+            ],
+            "aliases": [
+                "StopWatch",
+                "Stop Watch",
+                "M5StopWatch",
+                "M5 StopWatch",
+                "M5Stack StopWatch",
+                "M5Stack",
+                "C152",
+                "m5stack-stopwatch"
+            ],
+            "hardware": "ESP32-S3R8 (8 MB PSRAM), 16 MB flash; 1.75-inch 466x466 round AMOLED (CO5300, QSPI) with CST820 touch; ES8311 codec, MEMS mic, AW8737A 1 W speaker amp; two keys and a power key; vibration motor; M5PM1 power management with a 450 mAh battery; M5IOE1 IO expander; BMI270 IMU; RX8130CE RTC",
+            "identify": "52 x 52 mm round watch body with a 1.75-inch round touch screen; a yellow and a blue key plus a power key; USB-C; lanyard hole, magnetic back",
+            "flash_port": "USB-C (the ESP32-S3's own USB). If no port shows up: plug in USB, hold the power key about 2 s until the green LED lights, release.",
+            "use": "WiFi platform voice: hotspot setup and activation code; bind the agent in the console, then list, create, select or delete conversations and start a realtime call",
+            "transport": "WIFI",
+            "ble_name": null,
+            "fw_model": "M5-STOPWATCH",
+            "status": "supported",
+            "notes": "Use m5stack-stopwatch-wifi. Hotspot M5StopWatch-XXXX. Touch Start/End call, Sessions and Settings; swipe long replies. Settings offers new/delete conversation and reset activation, with confirmation for delete/reset. Yellow reduces volume, blue increases it (hold to repeat, 0-100). The independent power key retains hardware behavior. Agent binding is managed in the console only. CST820 touch and IOE 0x4F/0x6F supported. No StopWatch hardware is available: device acceptance remains pending."
+        }
+    ]
+}

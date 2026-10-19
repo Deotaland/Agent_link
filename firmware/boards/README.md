@@ -1,138 +1,146 @@
-# Boards
+# Add a board
 
-A board is a set of hardware (codec, screen, buttons, motor, sensors) plus the capabilities it declares. The shared app ([`../main/app_main.cpp`](../main/app_main.cpp)) and the [`agent_link`](../components/agent_link/) SDK depend only on the abstract [`Board`](../main/board.h) interface, not on any particular board or chip, so adding or swapping a board leaves both untouched.
+A port has three parts: hardware under `boards/`, an application under `apps/`,
+and a profile under `profiles/`. BLE and WiFi use the same application callbacks;
+the SDK owns provisioning, authentication and transport protocols.
 
-## A board is three files
+## Choose a starting point
 
-Copy `boards/rorolee-s3/` as a starting point:
+| Need | Read first |
+| --- | --- |
+| Small BLE voice device | `apps/es8311-voice/` and `profiles/es8311-voice-ble.defaults` |
+| BLE camera | `apps/gc2145-camera/` |
+| BLE/WiFi on shared hardware | `boards/m5stack-stopwatch/` and its two applications |
+| WiFi voice and conversations | `apps/m5stack-stopwatch-wifi/` |
+| C3 without PSRAM | `boards/ai-passport/` and `profiles/ai-passport-ble.defaults` |
 
-```
-boards/rorolee-s3/
-├── config.h        pins and feature macros (GPIO_NUM_*, resolution, I2C addresses)
-├── config.json     manufacturer/type/target metadata (which chip -> which `idf.py set-target`)
-└── rorolee_s3.cc   the board class: subclass Board, implement capabilities, end with DECLARE_BOARD(...)
-```
+Confirm the chip, flash/PSRAM size, panel and codec, GPIO assignments, power
+controls, button polarity and USB connector before copying a port. Use its
+schematic; similar product names do not guarantee the same wiring.
 
-`config.json` carries `manufacturer`, `type`, and `target` (the chip, e.g. `esp32s3`) — informational metadata; it tells you which `idf.py set-target` to run and isn't parsed by the build. Actual sdkconfig requirements go in two places (see "Adding a board" below): settings every board on a chip needs (flash size, PSRAM on/off, PSRAM mode/speed if the whole board family shares one module — every ESP32-S3 board here does, Octal @ 80MHz) in `sdkconfig.defaults.<target>`; settings only _this specific_ board needs, where the wanted value is itself a member of a Kconfig `choice` (an external RTC crystal on rorolee-s3/tem-monitor/work-badge but not the others, say), patched directly into `sdkconfig` by the top of [`../CMakeLists.txt`](../CMakeLists.txt) — plain Kconfig `select` cannot force those (kconfiglib ignores `select`/`imply` aimed at a choice member), so don't reach for it there.
+## 1. Hardware
 
-## The Board interface
+Create `boards/my-board/config.h` for pins and product settings. Put board-specific
+initialization and drivers beside it. Reuse drivers from `boards/common/` by
+passing pins and bus handles. Initialize shared buses once, then attach devices.
+Do not put BLE/WiFi branches or protocol code in hardware drivers.
 
-`Board` (in [`../main/board.h`](../main/board.h)) is capability-level, not driver-level. `Name()` and `Capabilities()` are required; the rest are optional overrides that default to no-ops.
+Create `config.json` using an existing catalog entry as the schema. Set the
+outer `type` to the directory name and `target` to the IDF chip name. Each item in
+`boards` describes one firmware variant: unique `board_type`, model, product,
+vendor, aliases, identification details, USB port, use, transport, BLE name,
+`fw_model`, status and notes. All catalog fields and aliases use English;
+do not add translated copies.
 
-| Method                                   | Direction       | Override when the board has                                                                                                                   |
-| ---------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Name()`                                 | —               | required: display and BLE advertising name                                                                                                    |
-| `Capabilities()`                         | —               | required: bitwise OR of the `AGENT_CAP_*` bits you support                                                                                    |
-| `Model()`                                | —               | a hardware model string the App checks before pushing an OTA (default: `Name()`)                                                              |
-| `OnLinkState(connected)`                 | —               | something to show or shut down when the link comes and goes                                                                                   |
-| `OnLinkStatus(st)`                       | —               | a screen: draw `st.title` / `st.hint` (and `st.code` while pairing) — the SDK writes the words, identically shaped on BLE and WiFi. See below |
-| `Platform()`                             | —               | always, if the board might ever ship on WiFi: which platform product this hardware is. Ignored on BLE, so returning it costs nothing          |
-| `PlayAudio(pcm16, bytes)` / `AudioEnd()` | Agent to device | a speaker                                                                                                                                     |
-| `ShowText(utf8)`                         | Agent to device | a screen                                                                                                                                      |
-| `Vibrate(ms)`                            | Agent to device | a motor                                                                                                                                       |
-| `SetLed(rgb)`                            | Agent to device | a controllable LED (the SDK synthesises a `led0` endpoint for it)                                                                             |
-| `OnListen(start, max_ms)`                | Agent to device | a mic the App can switch on (commands 0x3C/0x3D) — open an `AGENT_STREAM_AUDIO` stream from it                                                |
-| `GetBatteryLevel()` / `IsCharging()`     | device to Agent | a fuel gauge                                                                                                                                  |
+Use distinct board types for BLE and WiFi variants. `fw_model` must match the
+application's `Model()` exactly. Preserve existing model strings when migrating
+an installed product; OTA validates them.
 
-Set a capability bit only when you implement its method; anything you leave out keeps the base no-op.
+## 2. Application
 
-### One board, every transport
+Create `apps/my-board-ble/my_board.cc`. Derive from
+[Application](../apps/common/application.h), initialize hardware and register one
+implementation:
 
-Nothing in the `Board` interface depends on which transport the build selects (`menuconfig` → Agent Link Device → Transport backend: BLE, WiFi or Muse). A board written against it builds and runs on each of them unchanged — `korvo-cloud/` and `rorolee-muse/` are the worked examples.
+```cpp
+#include "application.h"
+#include "config.h"
 
-The one place the transports genuinely differ is how the device gets connected: over BLE a user opens the App; over WiFi they join a hotspot, then type an activation code into the console; as a Muse gadget they add it in the Muse app and press the device's button to confirm. The SDK folds all of them into one status, `agent_link_status_t`, delivered through `OnLinkStatus()`:
+class MyBoard : public Application {
+public:
+    MyBoard() { /* Initialize hardware and workers. */ }
+    const char* Name() const override { return "MyBoard"; }
+    const char* Model() const override { return "MY-BOARD"; }
+    uint32_t Capabilities() const override { return 0; }
+};
 
-| `st.phase`   | BLE                       | WiFi                                                                  | Muse                                                              |
-| ------------ | ------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `SETUP`      | advertising: open the app | captive portal up: join the `<Name>-XXXX` hotspot                     | add `MuseGadget-XXXXXX` in the Muse app / press to confirm        |
-| `CONNECTING` | App connected, pairing    | joining WiFi / signing in / platform unreachable, retrying            | pairing, joining the WiFi from the app, reaching the Muse, retrying |
-| `PAIRING`    | —                         | activation code in `st.code`, seconds left in `st.expires_s`          | —                                                                 |
-| `BLOCKED`    | —                         | the platform refused: already bound, no agent attached, gateway error | WiFi or Muse sign-in failed                                       |
-| `CONNECTED`  | —                         | authenticated, heartbeat running, no data plane yet                   | —                                                                 |
-| `READY`      | App subscribed            | (once the WiFi data plane exists)                                     | registered with the Muse; `st.title` is the Muse's name          |
-
-`st.title` and `st.hint` are already written for the situation in English. A board that draws them gets correct instructions on every transport and never learns which it is on. Switch on `st.phase` only to choose layout and colour, or to replace the wording.
-
-A Muse gadget's voice stream (`AGENT_STREAM_VOICE`) becomes a voice note to the Muse, and the Muse's answer comes back through `ShowText()`, so a push-to-talk board needs nothing Muse-specific. See `components/muse_gadget/README.md`.
-
-More calls that work the same everywhere:
-
-- `agent_link_device_id()` — the device's identity, a UUIDv4 — one value on both transports: the `uuid` the App reads from 0x01 over BLE is the `device_sn` the platform lists over WiFi. For a settings or support screen.
-- `agent_link_forget()` — a board's factory reset: BLE erases its bonds, WiFi drops its platform credential. The identity above is kept, so the platform still recognises the unit afterwards.
-- `agent_link_confirm()` — forward a press of the main button here while the link is not READY. A transport that pairs only after a press on the device (Muse) takes it as the confirmation; everywhere else it does nothing.
-- `agent_link_state()` — still the data-plane gate: open a stream only when it is `AGENT_STATE_READY`.
-
-`Model()` is worth a second look: it is the string an incoming OTA image must claim, so the App
-cannot flash a build for other hardware onto this board. **Boards that share a PCB must return the
-same value** — `rorolee-s3` and `work-badge` both return `"RRL-01"`, which is also the model the
-mass-produced unit reports, and that is what lets the App upgrade an existing product straight to
-agent_link firmware.
-
-## What goes in `<board>.cc`
-
-Three kinds of thing:
-
-1. **Hardware bring-up**, in the constructor. Use the public registry components (`esp_codec_dev`, `esp_lcd_*`, `esp_driver_i2c`, `LEDC`) or the shared drivers in [`common/`](common/). Keep pin numbers in `config.h`.
-2. **Capability methods.** Override the ones your hardware supports and set the matching `AGENT_CAP_*` bits in `Capabilities()`.
-3. **Board-specific logic.** For example, a task that reads a sensor and reports it through the device-I/O API:
-
-   ```c
-   agent_link_io_desc_t t = { .id = "temp0", .dir = AGENT_IO_IN, .kind = "temperature",
-                              .value = AGENT_VAL_F32, .unit = "C" };
-   agent_link_register_io(&t, NULL, NULL);          // once, before agent_link_start()
-   ...
-   float c = read_sensor();
-   agent_link_push_reading("temp0", &c, sizeof c);  // periodically
-   ```
-
-   `#include "agent_link.h"` and call `agent_link_push_*` directly. Actuators register a callback with `agent_link_register_io` and act when the Agent drives them. See `boards/tem-monitor/` for a worked example. If a board grows, add more `.cc`/`.h` files in its directory; they are compiled automatically.
-
-> The device stays thin. What the Agent says and how it decides live in the cloud, not on the device, so a board is usually hardware plus a little glue rather than a full dialog state machine.
-
-## Adding a board
-
-Say `my-board` on an ESP32-C6:
-
-1. Copy a directory: `cp -r boards/rorolee-s3 boards/my-board`.
-2. Edit `config.h` with your pins.
-3. Edit `config.json`: set `"target": "esp32c6"` (metadata only, for humans deciding `idf.py set-target`).
-4. Edit the `.cc`: rename the class, set `Name()` and `Capabilities()`, implement your methods, and end with `DECLARE_BOARD(MyBoard);`. Override `Model()` if the board shares a PCB with another one (see above). Nothing is needed for OTA — the SDK handles App-driven firmware upgrades for every board; register a callback only if you want to draw progress
-5. Register it in three places:
-   - add `config BOARD_TYPE_MY_BOARD` to the `choice BOARD_TYPE` in [`../main/Kconfig.projbuild`](../main/Kconfig.projbuild). `select` there works for a plain bool the board needs (`work-badge` selects the two extra `LV_FONT_MONTSERRAT_*` sizes its UI draws with), but **not** for a value that is a member of a Kconfig `choice` — see the next bullet;
-   - add `elseif(CONFIG_BOARD_TYPE_MY_BOARD) set(BOARD_DIR "my-board")` to the board-select chain in [`../main/CMakeLists.txt`](../main/CMakeLists.txt). If the board needs a value that only _this_ board wants and that value is itself a member of a Kconfig `choice` (an external RTC crystal, a non-default console, ...), also add `BOARD_TYPE_MY_BOARD` (and its wanted `CONFIG_..._SRC=y`-style lines) to the per-board tables at the top of the repo-root [`../CMakeLists.txt`](../CMakeLists.txt) — plain Kconfig `select` on a choice member silently does nothing (kconfiglib: "select/imply has no effect on choice symbols"; verified against this project's own tree), so the values are patched directly into `sdkconfig` before Kconfig reads it instead. This reruns on every configure, so it self-corrects after switching `Board Type` in menuconfig, no manual `sdkconfig` editing needed. If instead the whole chip family shares the value (like PSRAM mode/speed for every ESP32-S3 board here), put it in `sdkconfig.defaults.<target>` instead — see the last bullet below.
-   - If you use peripherals beyond what is already required, add their driver components (`esp_driver_i2c`, `esp_lcd`, `esp_codec_dev`) to the **unconditional** `REQUIRES` in `main/CMakeLists.txt` — or, for a managed component, to `main/idf_component.yml` (with a `rules:` target gate if it only exists on one chip). **Do not wrap a `REQUIRES` entry in `if(CONFIG_BOARD_TYPE_...)`:** ESP-IDF collects REQUIRES in an early-expansion pass that runs the file in script mode with no sdkconfig loaded, so every `CONFIG_*` is empty there and the entry is silently dropped. `SRCS` is not affected — it is re-evaluated in the normal pass, which is why the board-select chain above works.
-   - If the board is on a chip target that isn't built yet (a new `esp32c6`, say), add a `sdkconfig.defaults.<target>` at the repo root for whatever _every_ board on that chip needs (flash size, PSRAM on/off, ...) — ESP-IDF merges it automatically on `idf.py set-target <target>`, the same way [`../sdkconfig.defaults.esp32p4`](../sdkconfig.defaults.esp32p4) already does for the P4 board. Plain `select` in `main/Kconfig.projbuild` is still the right tool for a board-specific value that is a plain bool, not a choice member (not common so far in this repo).
-
-Then build:
-
-```bash
-idf.py set-target esp32c6
-idf.py menuconfig        # Agent Link Device -> Board Type -> My Board
-idf.py build flash
+DECLARE_APPLICATION(MyBoard);
 ```
 
-`../main/app_main.cpp` and `../main/board.h` do not change; they bind to the abstract `Board` and pick up the selected board automatically.
+Add capabilities only as their handlers work:
 
-## Boards in this repo
+| Function | Application/API |
+| --- | --- |
+| Speaker output | `PlayAudio`, `AudioEnd`, `AudioReset`; queue PCM16 mono at 16 kHz |
+| Microphone request | `OnListen`; capture on a worker |
+| Button voice input | `agent_link_stream_open/write/close` with `AGENT_STREAM_VOICE` |
+| Text, motor, LED | `ShowText`, `Vibrate`, `SetLed` |
+| Link status | `OnLinkStatus`; copy `title`, `hint` and activation `code` |
+| Sensor/actuator | Register endpoints with `agent_link_register_io` |
+| Battery | `GetBatteryLevel`, `IsCharging` |
 
-The Board Type menu currently offers:
+Copy callback data before returning and queue slow work. The NimBLE host stack
+is 6 KB. Stream APIs can block; use them on a capture worker. Before starting a
+capture, check `agent_link_state() == AGENT_STATE_READY` and handle stream errors.
+Constructors run before SDK initialization; defer operations that require a link.
 
-| Directory            | Target   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| -------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rorolee-s3/`        | ESP32-S3 | Reference board: SH8501 AMOLED (factory short-code bring-up), ES8311/ES7210 codec, push-to-talk mic, BQ27220 fuel gauge, external 32kHz crystal                                                                                                                                                                                                                                                                                                                                                    |
-| `tem-monitor/`       | ESP32-S3 | Sensor board: SPA06 pressure/temperature and SHT30 temperature/humidity over I2C; a worked example of the device-I/O path; external 32kHz crystal                                                                                                                                                                                                                                                                                                                                                  |
-| `es8311-voice/`      | ESP32-S3 | Minimal example: one ES8311 codec doing full-duplex speaker + mic                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `es8311-asr/`        | ESP32-S3 | Minimal example: one ES8311 codec, mic-only, streams PCM to the App for live ASR                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `gc2145-camera/`     | ESP32-S3 | GC2145 DVP camera live preview on an ST7789 240x240 LCD                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `korvo/`             | ESP32-S3 | Korvo (ESP32-S3-Korvo-2 V3 pinout): swipeable LVGL home screen on a CST816 touch ST7789 240x280 driven rotated 90° CCW, with three apps — live GC2145 preview, ES8311/ES7210 voice up the Agent's ASR channel, and WAV recording to the TF card                                                                                                                                                                                                                                                    |
-| `korvo-cloud/`       | ESP32-S3 | Same PCB as `korvo/`, built for the **WiFi channel**: the home screen is the link status — join the hotspot, the activation code to type into the console, online — and the camera is launched from an icon on the second page. No TF card (WiFi and TLS want that internal RAM). Written only against `agent_link_status_t`, so it also builds and runs on BLE, where the same screen says "open the app". Deliberately does **not** share `korvo`'s `Model()` — see the note in `korvo_cloud.cc` |
-| `work-badge/`        | ESP32-S3 | Electronic staff badge on the **mass-production** board (pins from the shipping firmware; factory short code SH8501 panel): an LVGL name card the App fills in ([README](work-badge/README.md))                                                                                                                                                                                                                                                                                                    |
-| `rorolee-muse/`      | ESP32-S3 | The rorolee-s3 PCB with an LVGL screen: link status, hold BOOT to talk, the answer as text; VOL+/VOL- volume, hold VOL- 6 s to forget the pairing. Built for **Transport backend = Muse**, where it is a Muse gadget set up from the Muse app, but written against `agent_link_status_t` only, so it builds and runs on BLE and WiFi too |
-| `wownny-muse/`       | ESP32-S3 | WOWNNY (the rorolee PCB with a GC9D01 160x160 round TFT, PA on GPIO3): same features as `rorolee-muse/`, with a round-screen UI that has no text outside the settings menu (battery, avatar, a small indicator). Two board types share this directory, `config.h` has the differences: `WOWNNY_MUSE` is WWY-01 (backlight on GPIO46, 32 kHz crystal), `WOWNNY_OLD_MUSE` is WWY-01-old (panel on GPIO4-7/15 powered from GPIO46, no crystal, volume keys swapped). `Model()` returns `WWY-01` / `WWY-01-old`, so neither takes the other's (or rorolee's) OTA image |
-| `esp32p4-waveshare/` | ESP32-P4 | Waveshare board with a CO5300 466x466 AMOLED                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+For **BLE**, the phone app supplies the platform connection. Start with the
+voice example and adapt its pins, input polarity and buffering.
 
-Drivers used by more than one board live in [`common/`](common/)
+For **WiFi**, also implement `Platform()` with a static `agent_platform_t`
+containing the real platform URL, registered product ID and chip type. Do not
+copy another product's ID. The SDK handles hotspot setup and activation; display
+`OnLinkStatus` output or provide another way to read the code. Use
+`agent_link_platform_bound_agent()` and the conversation/call APIs from
+[agent_link_platform.h](../components/agent_link/include/agent_link_platform.h).
+Select and bind Agents in the platform console. Microphone upload starts after
+`session.ready`. Follow the [realtime guide](../components/agent_link/REALTIME.md)
+for formats, worker ownership and playback buffering.
 
-## Reference
+## 3. Profile and build registration
 
-The layout (`boards/<board>/{config.h, config.json, <board>.cc}`, a Kconfig board choice, and a `target` in `config.json`) follows [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32). The difference is that agent_link owns networking and transport, so `Board` here describes only local hardware and does not split into `WifiBoard` / `Ml307Board` the way xiaozhi does; it exposes capability-level operations instead of driver types.
+For `my-board-ble` on ESP32-S3, add these together:
+
+1. In `main/Kconfig.profiles`, add `AGENT_LINK_PROFILE_MY_BOARD_BLE` to the choice
+   with `depends on IDF_TARGET_ESP32S3`, and map it to `"my-board-ble"` in
+   `AGENT_LINK_FIRMWARE_PROFILE`.
+2. In `main/Kconfig.projbuild`, add `BOARD_TYPE_MY_BOARD_BLE` with a default for
+   that profile. Add it to the defaults selecting `AGENT_LINK_TRANSPORT_BLE`.
+   WiFi profiles select `AGENT_LINK_TRANSPORT_WIFI` instead.
+3. Create `profiles/my-board-ble.defaults` with
+   `CONFIG_AGENT_LINK_PROFILE_MY_BOARD_BLE=y` and hardware-specific settings.
+4. Add an entry to `profiles/profiles.json`:
+
+```json
+"my-board-ble": {
+  "board": "my-board",
+  "board_type": "MY_BOARD_BLE",
+  "target": "esp32s3",
+  "backend": "BLE",
+  "defaults": ["profiles/ble.defaults", "profiles/s3-ble.defaults", "profiles/my-board-ble.defaults"],
+  "app": "my-board-ble",
+  "hardware": "my-board",
+  "hardware_sources": [],
+  "drivers": [],
+  "ui": "none"
+}
+```
+
+List hardware `.c`/`.cc` files in `hardware_sources` and common drivers in
+`drivers`; application sources are collected from the selected app directory.
+Add `profiles/lvgl.defaults` and `ui: "lvgl"` only if needed. The S3 fragments
+assume PSRAM: adapt defaults to the actual memory instead of copying them to a
+board without PSRAM. For WiFi on S3, use `profiles/s3-network.defaults` in place
+of the BLE fragments and set product identity in the application config.
+
+If a new driver needs a component, add its dependency selection in
+`components/board_support/CMakeLists.txt` and managed version in
+`idf_component.yml`. Dependency selection reads the manifest before Kconfig is
+available. Keep common defaults free of board-specific settings and credentials.
+
+## 4. Validate
+
+From the repository root:
+
+```sh
+python firmware/tools/build_firmware.py --check
+python tools/board_catalog.py
+python tools/board_catalog.py --check
+python tools/check_docs.py
+python firmware/tools/build_firmware.py my-board-ble --jobs 2
+```
+
+After an authorized flash, check the boot model, link status, advertised I/O,
+buttons, audio and reconnect behavior. For WiFi also test provisioning,
+activation and a conversation with the platform-bound Agent. Record pending
+hardware checks. A build alone does not verify wiring or audio.

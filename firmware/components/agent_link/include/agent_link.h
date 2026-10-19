@@ -1,20 +1,5 @@
-// ============================================================================
-// agent_link — Connectivity Layer for Deotaland Agent Platform
-// ============================================================================
-// This module provides a reusable connectivity layer that allows devices
-// to access the Deotaland Agent platform with minimal integration effort
-
-// Design Philosophy:
-//   - New hardware simply "declares capabilities + registers callbacks"
-//   - Completely abstracts BLE/transport protocol details
-//   - Agent → Device: via agent_output_cb_t (speech/display/vibration/actuators)
-//   - Device → Agent: via agent_link_push_* (voice/buttons/sensors/battery)
-//   - Only handles "transport + protocol + capability routing"
-//   - Hardware actions are implemented in device callbacks → naturally cross-platform
-//
-// See agent_link_caps.h for capability flags, agent_link_io.h for generic I/O, and
-// agent_link_ota.h for App-driven firmware upgrades (handled by the SDK; no board code needed)
-// ============================================================================
+// Agent Link: transports, control protocol, and media routing for board applications.
+// Hardware work stays in the board callbacks.
 
 #pragma once
 #include <stddef.h>
@@ -48,15 +33,9 @@ extern "C" {
  * implemented within these callbacks.
  *
  * @note All callbacks are optional — set to NULL if not applicable.
- * @note Every callback here runs on the transport's own task — for BLE, the NimBLE host task —
- *       not on a worker the SDK owns. Two consequences, and both bite:
- *         - Blocking stalls the link. Queue the work and return.
- *         - The stack is the transport's, not yours, and it is small
- *           (CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE, 4096 by default) and already deep by the time
- *           a callback is reached. Keep locals to a few hundred bytes and do not call into
- *           filesystem or network stacks from here; a directory scan with a couple of 256-byte
- *           buffers is enough to overflow it.
- *       Callbacks are serialised onto that one task, so static scratch is safe.
+ * @note Callbacks run on transport or media worker tasks. BLE callbacks may run on the small
+ *       NimBLE host stack. Keep work short, queue slow hardware operations, and do not assume
+ *       callbacks from different transports share one task.
  */
 typedef struct {
     /**
@@ -145,6 +124,15 @@ typedef struct {
     void (*on_listen)(bool start, uint32_t max_ms, void* ctx);
 
     void* ctx;  ///< Opaque pointer passed through to all callbacks
+
+    /** Stop queued speech immediately when a turn is interrupted or the call closes. */
+    void (*on_audio_reset)(void* ctx);
+    /**
+     * @brief VoiceReply business state: 0 success, 2 speaking, 3 drain, other values failure.
+     * @note Copy the event and return quickly. False ignores it with a successful ACK.
+     *       A NULL callback preserves the SDK's default audio handling.
+     */
+    bool (*on_voice_reply)(uint32_t session_id, uint8_t status, void* ctx);
 } agent_output_cb_t;
 
 /**
@@ -285,6 +273,14 @@ void          agent_link_stop(void);
 /** Get current connection state */
 agent_state_t agent_link_state(void);
 
+/** Request a realtime voice grant from the configured WiFi grant source.
+ *  Returns ESP_OK when the request is queued, not when a voice session is established.
+ */
+esp_err_t agent_link_request_realtime(void);
+
+/** End a realtime call and discard pending grants and microphone packets. */
+esp_err_t agent_link_end_realtime(void);
+
 // The next three functions are safe to call from any task, even before agent_link_init() (boards
 // are constructed before init and may call them from their constructors).
 
@@ -356,6 +352,15 @@ esp_err_t agent_link_confirm(void);
  * @note A board that never calls this still plays correctly.
  */
 void agent_link_playback_set_buffer_ms(uint32_t playable_ms);
+
+/**
+ * @brief Supply the actual number of queued PCM bytes for downlink flow control.
+ *
+ * Register during board setup. The callback runs on transport and timer tasks and must
+ * return immediately. Without one, the SDK estimates playback from elapsed time.
+ */
+typedef size_t (*agent_playback_buffer_level_cb_t)(void* ctx);
+void agent_link_playback_set_buffer_level_callback(agent_playback_buffer_level_cb_t cb, void* ctx);
 
 /**
  * @brief Push a device→Agent event

@@ -50,6 +50,13 @@ esp_err_t Es8311Codec::Init(const Es8311Config& cfg) {
 }
 
 esp_err_t Es8311Codec::InitI2c() {
+    // Shared bus: the board already created it on this port.
+    if (cfg_.pin_sda == GPIO_NUM_NC || cfg_.pin_scl == GPIO_NUM_NC) {
+        ESP_RETURN_ON_ERROR(i2c_master_get_bus_handle(cfg_.i2c_port, &i2c_bus_), TAG,
+                            "I2C port %d has no bus yet - its owner must init first", (int)cfg_.i2c_port);
+        return ESP_OK;
+    }
+
     i2c_master_bus_config_t bus = {};
     bus.i2c_port          = cfg_.i2c_port;
     bus.sda_io_num        = cfg_.pin_sda;
@@ -115,7 +122,8 @@ esp_err_t Es8311Codec::InitCodec() {
     es8311.pa_pin      = cfg_.pin_pa_en;                 // GPIO_NUM_NC (-1) disables PA control
     es8311.pa_reverted = cfg_.pa_active_low;
     es8311.use_mclk    = true;
-    es8311.hw_gain.pa_voltage        = 3.3f;
+    es8311.no_dac_ref  = cfg_.no_dac_ref;               // see Es8311Config::no_dac_ref
+    es8311.hw_gain.pa_voltage        = cfg_.pa_voltage;
     es8311.hw_gain.codec_dac_voltage = 3.3f;
     codec_if_ = es8311_codec_new(&es8311);
     ESP_RETURN_ON_FALSE(codec_if_, ESP_FAIL, TAG, "es8311_new");
@@ -135,14 +143,39 @@ esp_err_t Es8311Codec::OpenDevice() {
     esp_codec_dev_sample_info_t fs = {};
     fs.bits_per_sample = kBits;
     fs.channel         = 1;   // mono both ways
-    fs.channel_mask    = 0;
+    // Mask 0 means "let the driver pick its default channel pattern". On a full-duplex
+    // ES8311 that default mixes the right slot in, and because no_dac_ref is off the DAC's
+    // own output bleeds into the capture. Pinning the mask to channel 0 is what the vendor BSP
+    // does and it is what makes a mono mic frame come back as exactly the left channel.
+    fs.channel_mask    = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0);
     fs.sample_rate     = cfg_.sample_rate;
+    // 0 -> the driver picks its default 256xfs MCLK and writes the ES8311 dividers to match.
+    // Do not overwrite REG01..06 by hand afterwards: the computed values are what keep the
+    // ADC and DAC in step, and getting them wrong is audible as noise.
+    fs.mclk_multiple   = 0;
     const int r = esp_codec_dev_open(codec_dev_, &fs);
     if (r != 0) { ESP_LOGE(TAG, "open codec=%d", r); return ESP_FAIL; }
+    if (!cfg_.use_default_volume_curve) ApplyVolumeCurve();
     (void)esp_codec_dev_set_out_vol(codec_dev_, cfg_.out_volume);
     (void)esp_codec_dev_set_in_gain(codec_dev_, static_cast<float>(cfg_.mic_gain));
     dev_open_ = true;
     return ESP_OK;
+}
+
+// Existing amplified curve; boards can opt into codec-dev's default curve instead.
+void Es8311Codec::ApplyVolumeCurve() {
+    static const esp_codec_dev_vol_map_t kMap[] = {
+        {  0, -50.0f },
+        { 50,  -6.0f },
+        { 75,   8.0f },
+        {100,  32.0f },
+    };
+    esp_codec_dev_vol_curve_t curve = {};
+    curve.vol_map = const_cast<esp_codec_dev_vol_map_t*>(kMap);
+    curve.count   = sizeof(kMap) / sizeof(kMap[0]);
+    if (esp_codec_dev_set_vol_curve(codec_dev_, &curve) != 0) {
+        ESP_LOGW(TAG, "volume curve not applied, staying on the default -50..0 dB");
+    }
 }
 
 esp_err_t Es8311Codec::StartMic() {
@@ -176,8 +209,15 @@ esp_err_t Es8311Codec::WritePcm(const int16_t* data, size_t frames) {
 }
 
 esp_err_t Es8311Codec::SetVolume(uint8_t vol) {
-    cfg_.out_volume = (vol > 100) ? 100 : vol;
-    if (dev_open_) (void)esp_codec_dev_set_out_vol(codec_dev_, cfg_.out_volume);
+    const uint8_t next = (vol > 100) ? 100 : vol;
+    if (dev_open_ && esp_codec_dev_set_out_vol(codec_dev_, next) != ESP_CODEC_DEV_OK) return ESP_FAIL;
+    cfg_.out_volume = next;
+    return ESP_OK;
+}
+
+esp_err_t Es8311Codec::SetMute(bool mute) {
+    muted_.store(mute, std::memory_order_release);
+    if (dev_open_) (void)esp_codec_dev_set_out_mute(codec_dev_, mute);
     return ESP_OK;
 }
 

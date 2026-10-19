@@ -167,8 +167,8 @@ esp_err_t Gc9d01Panel::Init(const Gc9d01Config& cfg) {
     }
 
     esp_lcd_panel_io_spi_config_t io_cfg = {};
-    io_cfg.dc_gpio_num       = cfg_.pin_dc;
-    io_cfg.cs_gpio_num       = cfg_.pin_cs;
+    io_cfg.dc_gpio_num       = static_cast<gpio_num_t>(cfg_.pin_dc);
+    io_cfg.cs_gpio_num       = static_cast<gpio_num_t>(cfg_.pin_cs);
     io_cfg.pclk_hz           = cfg_.pclk_hz;
     io_cfg.lcd_cmd_bits      = 8;
     io_cfg.lcd_param_bits    = 8;
@@ -190,7 +190,7 @@ esp_err_t Gc9d01Panel::Init(const Gc9d01Config& cfg) {
     vendor.init_cmds_size = sizeof(kBoeInit) / sizeof(kBoeInit[0]);
 
     esp_lcd_panel_dev_config_t panel_cfg = {};
-    panel_cfg.reset_gpio_num = cfg_.pin_rst;
+    panel_cfg.reset_gpio_num = static_cast<gpio_num_t>(cfg_.pin_rst);
     panel_cfg.rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB;   // matches MADCTL 0x00 in the table
     panel_cfg.bits_per_pixel = 16;
     panel_cfg.vendor_config  = &vendor;

@@ -1,0 +1,13 @@
+# FoloToy AI Passport and any future ESP32-C3 boards: 8 MB flash, no PSRAM.
+# Applied automatically by `idf.py set-target esp32c3` after sdkconfig.defaults.
+
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE=n
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_esp32c3.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_esp32c3.csv"
+
+# USB Serial/JTAG console (GPIO18/19). UART0 TX defaults to GPIO21, which is the
+# backlight on AI Passport — do not use UART0 for the console on this chip family.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

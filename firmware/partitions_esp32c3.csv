@@ -1,0 +1,12 @@
+# 8 MB flash layout for FoloToy AI Passport (ESP32-C3, no PSRAM).
+# Dual OTA slots ~3.875 MB each. The BLE + LVGL build leaves the smaller 1.875 MB slots nearly
+# full (4% spare), so the slots take most of the 8 MB.
+# Name,     Type, SubType,  Offset,   Size,      Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+
+ota_0,      app,  ota_0,    0x10000,  0x3E0000,
+ota_1,      app,  ota_1,    0x3F0000, 0x3E0000,
+
+nvs_keys,   data, nvs_keys, 0x7D0000, 0x1000,
+phy_init,   data, phy,      0x7D1000, 0x1000,

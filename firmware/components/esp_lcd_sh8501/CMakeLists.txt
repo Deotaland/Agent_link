@@ -1,4 +1,4 @@
 idf_component_register(SRCS "esp_lcd_sh8501.c"
                        INCLUDE_DIRS "include"
-                       PRIV_REQUIRES "driver"
+                       PRIV_REQUIRES esp_driver_gpio esp_driver_spi freertos
                        REQUIRES "esp_lcd")

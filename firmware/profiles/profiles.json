@@ -1,0 +1,310 @@
+{
+  "korvo-ble": {
+    "board": "korvo-ble",
+    "board_type": "ESP32S3_KORVO",
+    "target": "esp32s3",
+    "backend": "BLE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/lvgl.defaults",
+      "profiles/s3-ble.defaults",
+      "profiles/korvo-ble.defaults"
+    ],
+    "app": "korvo-ble",
+    "hardware": "korvo",
+    "drivers": [
+      "cst816_touch.cc",
+      "es_codec.cc",
+      "gc2145_camera.cc",
+      "st7789_lcd.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": [
+      "korvo_hardware.cc",
+      "sd_card.cc"
+    ]
+  },
+  "korvo-wifi": {
+    "board": "korvo-wifi",
+    "board_type": "ESP32S3_KORVO_CLOUD",
+    "target": "esp32s3",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/lvgl.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/korvo-wifi.defaults"
+    ],
+    "app": "korvo-wifi",
+    "hardware": "korvo",
+    "drivers": [
+      "cst816_touch.cc",
+      "es_codec.cc",
+      "gc2145_camera.cc",
+      "st7789_lcd.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": [
+      "korvo_hardware.cc",
+      "servo8.cc"
+    ]
+  },
+  "rorolee-ble": {
+    "board": "rorolee-s3",
+    "board_type": "ROROLEE_S3",
+    "target": "esp32s3",
+    "backend": "BLE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/lvgl.defaults",
+      "profiles/s3-ble.defaults",
+      "profiles/rorolee-ble.defaults"
+    ],
+    "app": "rorolee-s3",
+    "hardware": "rorolee-s3",
+    "drivers": [
+      "bq27220.cc",
+      "es_codec.cc",
+      "sh8501_lk_panel.cc",
+      "sh8501_panel.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": []
+  },
+  "work-badge-ble": {
+    "board": "work-badge",
+    "board_type": "ESP32S3_WORK_BADGE",
+    "target": "esp32s3",
+    "backend": "BLE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/lvgl.defaults",
+      "profiles/s3-ble.defaults",
+      "profiles/work-badge-ble.defaults"
+    ],
+    "app": "work-badge",
+    "hardware": "work-badge",
+    "drivers": [
+      "bq27220.cc",
+      "sh8501_lk_panel.cc",
+      "sh8501_panel.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": []
+  },
+  "ai-passport-ble": {
+    "board": "ai-passport",
+    "board_type": "FOLOTOY_AI_PASSPORT",
+    "target": "esp32c3",
+    "backend": "BLE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/ai-passport-ble.defaults"
+    ],
+    "app": "ai-passport",
+    "hardware": "ai-passport",
+    "drivers": [
+      "es8311_audio.cc",
+      "raster_montserrat_14.c",
+      "raster_montserrat_20.c",
+      "raster_montserrat_28.c",
+      "st7789_lcd.cc",
+      "stripe_canvas.cc"
+    ],
+    "ui": "raster",
+    "hardware_sources": []
+  },
+  "m5stack-stopwatch-ble": {
+    "board": "m5stack-stopwatch",
+    "board_type": "M5STACK_STOPWATCH",
+    "target": "esp32s3",
+    "backend": "BLE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/lvgl.defaults",
+      "profiles/s3-ble.defaults",
+      "profiles/m5stack-stopwatch-ble.defaults"
+    ],
+    "app": "m5stack-stopwatch-ble",
+    "hardware": "m5stack-stopwatch",
+    "drivers": [
+      "co5300_hal.c",
+      "co5300_panel.cc",
+      "es8311_audio.cc",
+      "m5ioe1.cc",
+      "m5pm1.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": [
+      "m5stack_stopwatch_hardware.cc"
+    ]
+  },
+  "m5stack-stopwatch-wifi": {
+    "board": "m5stack-stopwatch",
+    "board_type": "M5STACK_STOPWATCH_WIFI",
+    "target": "esp32s3",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/lvgl.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/m5stack-stopwatch-wifi.defaults"
+    ],
+    "app": "m5stack-stopwatch-wifi",
+    "hardware": "m5stack-stopwatch",
+    "drivers": [
+      "co5300_hal.c",
+      "co5300_panel.cc",
+      "cst820_touch.cc",
+      "es8311_audio.cc",
+      "m5ioe1.cc",
+      "m5pm1.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": [
+      "m5stack_stopwatch_hardware.cc"
+    ]
+  },
+  "gc2145-camera-ble": {
+    "board": "gc2145-camera",
+    "board_type": "ESP32S3_GC2145_CAMERA",
+    "target": "esp32s3",
+    "backend": "BLE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/s3-ble.defaults",
+      "profiles/gc2145-camera-ble.defaults"
+    ],
+    "app": "gc2145-camera",
+    "hardware": "gc2145-camera",
+    "drivers": [
+      "gc2145_camera.cc",
+      "st7789_lcd.cc"
+    ],
+    "ui": "none",
+    "hardware_sources": [
+      "ws2812_led.cc"
+    ]
+  },
+  "es8311-voice-ble": {
+    "board": "es8311-voice",
+    "board_type": "ESP32S3_ES8311_VOICE",
+    "target": "esp32s3",
+    "backend": "BLE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/s3-ble.defaults",
+      "profiles/es8311-voice-ble.defaults"
+    ],
+    "app": "es8311-voice",
+    "hardware": "es8311-voice",
+    "drivers": [
+      "es8311_audio.cc"
+    ],
+    "ui": "none",
+    "hardware_sources": []
+  },
+  "es8311-asr-ble": {
+    "board": "es8311-asr",
+    "board_type": "ESP32S3_ES8311_ASR",
+    "target": "esp32s3",
+    "backend": "BLE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/s3-ble.defaults",
+      "profiles/es8311-asr-ble.defaults"
+    ],
+    "app": "es8311-asr",
+    "hardware": "es8311-asr",
+    "drivers": [
+      "es8311_audio.cc"
+    ],
+    "ui": "none",
+    "hardware_sources": []
+  },
+  "rorolee-muse": {
+    "board": "rorolee-muse",
+    "board_type": "ROROLEE_MUSE",
+    "target": "esp32s3",
+    "backend": "MUSE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/lvgl.defaults",
+      "profiles/muse.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/rorolee-muse.defaults"
+    ],
+    "app": "rorolee-muse",
+    "hardware": "rorolee-muse",
+    "drivers": [
+      "bq27220.cc",
+      "cjk_font.cc",
+      "es_codec.cc",
+      "sh8501_lk_panel.cc",
+      "sh8501_panel.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": []
+  },
+  "wownny-muse": {
+    "board": "wownny-muse",
+    "board_type": "WOWNNY_MUSE",
+    "target": "esp32s3",
+    "backend": "MUSE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/lvgl.defaults",
+      "profiles/muse.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/wownny-muse.defaults"
+    ],
+    "app": "wownny-muse",
+    "hardware": "wownny-muse",
+    "drivers": [
+      "bq27220.cc",
+      "es_codec.cc",
+      "gc9d01_panel.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": []
+  },
+  "wownny-old-muse": {
+    "board": "wownny-muse",
+    "board_type": "WOWNNY_OLD_MUSE",
+    "target": "esp32s3",
+    "backend": "MUSE",
+    "defaults": [
+      "profiles/ble.defaults",
+      "profiles/lvgl.defaults",
+      "profiles/muse.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/wownny-old-muse.defaults"
+    ],
+    "app": "wownny-muse",
+    "hardware": "wownny-muse",
+    "drivers": [
+      "bq27220.cc",
+      "es_codec.cc",
+      "gc9d01_panel.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": []
+  },
+  "paper-s31-wifi": {
+    "board": "paper-s31",
+    "board_type": "PAPER_S31_WIFI",
+    "target": "esp32s31",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/paper-s31-wifi.defaults"
+    ],
+    "app": "paper-s31-wifi",
+    "hardware": "paper-s31",
+    "drivers": [],
+    "ui": "none",
+    "hardware_sources": [
+      "epd.c",
+      "i2c_bus.c",
+      "paper_audio.c",
+      "paper_hardware.c"
+    ]
+  }
+}

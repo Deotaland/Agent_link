@@ -1,0 +1,25 @@
+{
+    "manufacturer": "folotoy",
+    "type": "ai-passport",
+    "target": "esp32c3",
+    "boards": [
+        {
+            "board_type": "FOLOTOY_AI_PASSPORT",
+            "model": "AI-PASSPORT",
+            "product": "FoloToy AI Passport",
+            "vendor": "FoloToy",
+            "buy": ["https://ai-passport.folotoy.cn"],
+            "docs": ["https://github.com/FoloToy/ai-passport", "https://ai-passport.folotoy.cn"],
+            "aliases": ["AI Passport", "AIPassport", "FoloPassport", "FoloToy", "folotoy", "ai-passport", "Passport"],
+            "hardware": "ESP32-C3, 8 MB flash, no PSRAM; ST7789P3 240x320 SPI LCD; ES8311 codec (mic + speaker); three ADC keys (UP/DOWN/OK); CW2017 fuel gauge",
+            "identify": "Wearable badge with a 240x320 colour screen and three physical keys; USB-C (ESP32-C3 native USB Serial/JTAG on GPIO18/19)",
+            "flash_port": "USB-C (native USB Serial/JTAG). Download mode: hold the OK/BOOT-side key path if needed, or use esptool auto-reset.",
+            "use": "Push-to-talk with the agent through the Deotaland App over BLE: hold OK to speak, release to send; replies play on the speaker; screen colour shows link status",
+            "transport": "BLE",
+            "ble_name": "AIPassport",
+            "fw_model": "AI-PASSPORT",
+            "status": "supported",
+            "notes": "ESP32-C3 profile: ai-passport-ble; build with tools/build_firmware.py. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h."
+        }
+    ]
+}

@@ -1,0 +1,84 @@
+choice AGENT_LINK_FIRMWARE_SELECTION
+    prompt "Firmware profile"
+    default AGENT_LINK_PROFILE_ROROLEE_BLE if IDF_TARGET_ESP32S3
+    default AGENT_LINK_PROFILE_AI_PASSPORT_BLE if IDF_TARGET_ESP32C3
+    default AGENT_LINK_PROFILE_PAPER_S31_WIFI if IDF_TARGET_ESP32S31
+    help
+        Select a firmware for the current target chip, then save and build.
+        The build applies the profile's own board and memory settings.
+        To switch chips, use the menu in tools/build_firmware.py.
+
+    config AGENT_LINK_PROFILE_PAPER_S31_WIFI
+        bool "paper-s31-wifi (WIFI)"
+        depends on IDF_TARGET_ESP32S31
+
+    config AGENT_LINK_PROFILE_KORVO_BLE
+        bool "korvo-ble (BLE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_KORVO_WIFI
+        bool "korvo-wifi (WIFI)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_ROROLEE_BLE
+        bool "rorolee-ble (BLE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_WORK_BADGE_BLE
+        bool "work-badge-ble (BLE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_AI_PASSPORT_BLE
+        bool "ai-passport-ble (BLE)"
+        depends on IDF_TARGET_ESP32C3
+
+    config AGENT_LINK_PROFILE_M5STACK_STOPWATCH_BLE
+        bool "m5stack-stopwatch-ble (BLE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_M5STACK_STOPWATCH_WIFI
+        bool "m5stack-stopwatch-wifi (WIFI)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_GC2145_CAMERA_BLE
+        bool "gc2145-camera-ble (BLE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_ES8311_VOICE_BLE
+        bool "es8311-voice-ble (BLE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_ES8311_ASR_BLE
+        bool "es8311-asr-ble (BLE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_ROROLEE_MUSE
+        bool "rorolee-muse (MUSE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_WOWNNY_MUSE
+        bool "wownny-muse (MUSE)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_PROFILE_WOWNNY_OLD_MUSE
+        bool "wownny-old-muse (MUSE)"
+        depends on IDF_TARGET_ESP32S3
+
+endchoice
+
+config AGENT_LINK_FIRMWARE_PROFILE
+    string
+    default "paper-s31-wifi" if AGENT_LINK_PROFILE_PAPER_S31_WIFI
+    default "korvo-ble" if AGENT_LINK_PROFILE_KORVO_BLE
+    default "korvo-wifi" if AGENT_LINK_PROFILE_KORVO_WIFI
+    default "rorolee-ble" if AGENT_LINK_PROFILE_ROROLEE_BLE
+    default "work-badge-ble" if AGENT_LINK_PROFILE_WORK_BADGE_BLE
+    default "ai-passport-ble" if AGENT_LINK_PROFILE_AI_PASSPORT_BLE
+    default "m5stack-stopwatch-ble" if AGENT_LINK_PROFILE_M5STACK_STOPWATCH_BLE
+    default "m5stack-stopwatch-wifi" if AGENT_LINK_PROFILE_M5STACK_STOPWATCH_WIFI
+    default "gc2145-camera-ble" if AGENT_LINK_PROFILE_GC2145_CAMERA_BLE
+    default "es8311-voice-ble" if AGENT_LINK_PROFILE_ES8311_VOICE_BLE
+    default "es8311-asr-ble" if AGENT_LINK_PROFILE_ES8311_ASR_BLE
+    default "rorolee-muse" if AGENT_LINK_PROFILE_ROROLEE_MUSE
+    default "wownny-muse" if AGENT_LINK_PROFILE_WOWNNY_MUSE
+    default "wownny-old-muse" if AGENT_LINK_PROFILE_WOWNNY_OLD_MUSE

@@ -36,10 +36,10 @@ a{color:var(--acc)}
 <script>
 // Live progress (best-effort — the captive-portal browser may block fetch; the device connects regardless).
 function zh(){return !document.getElementById('lang').checked}
-var R={badpass:['密码错误或认证失败','Wrong password / auth failed'],notfound:['未找到该 WiFi','Network not found'],fail:['连接失败，请重试','Connection failed, please retry']};
+var R={badpass:['密码错误或认证失败','Wrong password / auth failed'],notfound:['未找到该 WiFi','Network not found'],noip:['已连接热点，但未获取到 IP 地址','Joined the network, but no IP address received'],timeout:['连接超时，请重试或选择其他 WiFi','Connection timed out; retry or choose another network'],fail:['连接失败，请重试','Connection failed, please retry']};
 function hide(){var e=document.getElementById('sp');if(e)e.style.display='none'}
 function done(s){document.getElementById('t').textContent=zh()?'✅ 连接成功':'✅ Connected';document.getElementById('m').textContent=zh()?('设备已接入 “'+(s.ssid||'')+'”，IP '+(s.ip||'')+'，可关闭本页。'):('Joined "'+(s.ssid||'')+'", IP '+(s.ip||'')+'. You can close this page.');hide()}
-function fail(s){document.getElementById('t').textContent=zh()?'❌ 连接失败':'❌ Failed';var r=R[s.reason]||R.fail;document.getElementById('m').textContent=zh()?r[0]:r[1];hide()}
+function fail(s){document.getElementById('t').textContent=zh()?'❌ 连接失败':'❌ Failed';var r=R[s.reason]||R.fail;document.getElementById('m').textContent=zh()?r[0]:r[1];hide();var a=document.createElement('a');a.href='/';a.textContent=zh()?'重新选择 WiFi':'Choose WiFi again';document.getElementById('m').appendChild(document.createElement('br'));document.getElementById('m').appendChild(a)}
 function poll(){fetch('/status').then(function(r){return r.json()}).then(function(s){
 if(s.state==='connected')return done(s);
 if(s.state==='failed')return fail(s);

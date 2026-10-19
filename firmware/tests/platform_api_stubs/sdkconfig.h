@@ -1,0 +1,5 @@
+#pragma once
+#ifndef CONFIG_AGENT_LINK_REALTIME_OPUS
+#define CONFIG_AGENT_LINK_REALTIME_OPUS 1
+#endif
+#define CONFIG_AGENT_LINK_PLATFORM_USER_TOKEN "unused-test-user-token"

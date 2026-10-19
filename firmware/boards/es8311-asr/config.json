@@ -1,5 +1,25 @@
 {
     "manufacturer": "deotaland",
     "type": "es8311-asr",
-    "target": "esp32s3"
+    "target": "esp32s3",
+    "boards": [
+        {
+            "board_type": "ESP32S3_ES8311_ASR",
+            "model": null,
+            "product": "Wiring example: ESP32-S3 + ES8311 (mic only)",
+            "vendor": null,
+            "buy": [],
+            "docs": [],
+            "aliases": ["es8311-asr", "ES8311", "ASR"],
+            "hardware": "Any ESP32-S3 board with 16 MB flash, plus an ES8311 codec module and a push button wired as in config.h",
+            "identify": "Hand-wired; there is no product to match",
+            "flash_port": "The board's USB port. Download mode: hold BOOT while plugging in.",
+            "use": "Minimal live speech-to-text example: hold the button and the mic audio streams to the App over BLE",
+            "transport": "BLE",
+            "ble_name": "ROROLEE_ES8311_ASR",
+            "fw_model": "ROROLEE_ES8311_ASR",
+            "status": "example",
+            "notes": "The talk button is active-high on GPIO8. Check the user's wiring against boards/es8311-asr/config.h before flashing."
+        }
+    ]
 }
