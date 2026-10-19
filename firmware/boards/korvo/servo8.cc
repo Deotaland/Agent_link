@@ -42,8 +42,51 @@ esp_err_t KorvoCloudServo8::Init() {
 }
 
 esp_err_t KorvoCloudServo8::SetAngle(uint8_t channel, uint8_t angle) {
-    if (!dev_ || channel < 1 || channel > 8 || angle > 180) return ESP_ERR_INVALID_ARG;
-    // HC32L110 firmware v2: [channel 0..7 for SS1..SS8][angle][reserved].
-    const uint8_t frame[3] = {static_cast<uint8_t>(channel - 1), angle, 0};
+    return Write(channel, Mode::Position180, angle);
+}
+
+bool KorvoCloudServo8::Valid(uint8_t channel, Mode mode, int value) {
+    if (channel != kAll && (channel < 1 || channel > kChannels)) return false;
+    switch (mode) {
+    case Mode::Released: return value == 0;
+    case Mode::Position180: return value >= 0 && value <= 180;
+    case Mode::Position360: return value >= 0 && value <= 360;
+    case Mode::Continuous: return value >= -100 && value <= 100;
+    default: return false;
+    }
+}
+
+esp_err_t KorvoCloudServo8::Write(uint8_t channel, Mode mode, int16_t value) {
+    if (!Valid(channel, mode, value)) return ESP_ERR_INVALID_ARG;
+    if (!dev_) return ESP_ERR_INVALID_STATE;
+    const uint16_t raw = static_cast<uint16_t>(value);
+    const uint8_t frame[4] = {
+        channel == kAll ? kAll : static_cast<uint8_t>(channel - 1),
+        static_cast<uint8_t>(mode), static_cast<uint8_t>(raw >> 8), static_cast<uint8_t>(raw)};
     return i2c_master_transmit(dev_, frame, sizeof(frame), kTimeoutMs);
+}
+
+esp_err_t KorvoCloudServo8::ReadStatus(Status& status) {
+    if (!dev_) return ESP_ERR_INVALID_STATE;
+    uint8_t raw[4 + kChannels * 3];
+    const esp_err_t err = i2c_master_receive(dev_, raw, sizeof(raw), kTimeoutMs);
+    if (err != ESP_OK) return err;
+    const auto decode = [](const uint8_t* bytes) -> int16_t {
+        const uint16_t value = (static_cast<uint16_t>(bytes[0]) << 8) | bytes[1];
+        return value <= 0x7fff ? static_cast<int16_t>(value) :
+            static_cast<int16_t>(static_cast<int32_t>(value) - 65536);
+    };
+    Status next = {};
+    next.last_id = raw[0];
+    next.last_mode = static_cast<Mode>(raw[1]);
+    next.last_value = decode(raw + 2);
+    if ((next.last_id != kAll && next.last_id >= kChannels) ||
+        !Valid(kAll, next.last_mode, next.last_value)) return ESP_ERR_INVALID_RESPONSE;
+    for (uint8_t i = 0; i < kChannels; ++i) {
+        next.channels[i] = {static_cast<Mode>(raw[4 + i * 3]), decode(raw + 5 + i * 3)};
+        if (!Valid(i + 1, next.channels[i].mode, next.channels[i].value))
+            return ESP_ERR_INVALID_RESPONSE;
+    }
+    status = next;
+    return ESP_OK;
 }

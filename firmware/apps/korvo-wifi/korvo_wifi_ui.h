@@ -9,7 +9,7 @@
 //   Apps    page 1: camera, voice and servo launchers.
 //   Camera  the live preview, opened from that icon. Not LVGL at all; the preview task owns the
 //           panel while it is up.
-//   Servo   local SS1–SS8 selector and angle dial; the board's servo task performs I2C writes.
+//   Servo   SS1–SS8 or ALL, positioning, speed, release and controller status.
 //   Shade   network, platform and identity detail.
 //
 //   swipe LEFT                      -> next page, wrapping (the phone idiom: the finger drags the
@@ -25,6 +25,7 @@
 #include "esp_err.h"
 #include "korvo_wifi_audio.h"
 #include "st7789_lcd.h"
+#include "servo8.h"
 
 namespace kc_ui {
 
@@ -40,7 +41,7 @@ enum class Mode {
 
 // Bring up LVGL on `lcd`, wire `touch` in as the pointer device, build the screens and start the
 // render task. `touch` may be null: with no pointer and no gestures the board stays on Home forever
-using ServoRequest = bool (*)(uint8_t channel, uint8_t angle, void* ctx);
+using ServoRequest = bool (*)(const KorvoCloudServo8::Command& command, void* ctx);
 esp_err_t Start(St7789Lcd* lcd, Cst816Touch* touch, KorvoCloudAudio* audio,
                 ServoRequest servo_request, void* servo_ctx);
 
@@ -60,7 +61,8 @@ void SetLinkStatus(const agent_link_status_t& st);
 // The agent_link transport came up or went down (the dot in the status bar).
 void SetLinkState(bool connected);
 // Report the result of the I2C transmit; safe to call from the servo task.
-void SetServoResult(uint8_t channel, uint8_t angle, esp_err_t result);
+void SetServoResult(const KorvoCloudServo8::Command& command, esp_err_t result,
+                    const KorvoCloudServo8::Status* status, esp_err_t read_result);
 void SetVoiceText(const char* utf8);
 
 }  // namespace kc_ui

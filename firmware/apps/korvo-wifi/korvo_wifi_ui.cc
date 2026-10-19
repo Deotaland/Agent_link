@@ -108,14 +108,25 @@ uint8_t s_servo_picker_channel = 1;
 uint8_t s_servo_picker_start_channel = 1;
 int32_t s_servo_picker_start_y = 0;
 bool s_servo_picker_active = false;
-uint8_t s_servo_angles[8] = {90, 90, 90, 90, 90, 90, 90, 90};
-uint8_t s_servo_last_sent_channel = 0;
-uint8_t s_servo_last_sent_angle = 0;
+using ServoMode = KorvoCloudServo8::Mode;
+using ServoCommand = KorvoCloudServo8::Command;
+using ServoStatus = KorvoCloudServo8::Status;
+KorvoCloudServo8::ChannelState s_servo_states[9] = {
+    {ServoMode::Position180, 90}, {ServoMode::Position180, 90},
+    {ServoMode::Position180, 90}, {ServoMode::Position180, 90},
+    {ServoMode::Position180, 90}, {ServoMode::Position180, 90},
+    {ServoMode::Position180, 90}, {ServoMode::Position180, 90},
+    {ServoMode::Position180, 90}};
+lv_obj_t* s_servo_mode_label = nullptr;
+lv_obj_t* s_servo_unit = nullptr;
+lv_obj_t* s_servo_stop = nullptr;
+bool s_servo_all_mixed = false;
 int64_t s_servo_last_send_us = 0;
 portMUX_TYPE s_servo_result_lock = portMUX_INITIALIZER_UNLOCKED;
-uint8_t s_servo_result_channel = 0;
-uint8_t s_servo_result_angle = 0;
+ServoCommand s_servo_result_command = {};
+ServoStatus s_servo_result_status = {};
 esp_err_t s_servo_result_error = ESP_OK;
+esp_err_t s_servo_read_error = ESP_OK;
 std::atomic<uint32_t> s_servo_result_rev{0};
 int64_t   s_last_voice_request_us = 0;
 int64_t   s_last_voice_attempt_us = 0;
@@ -795,49 +806,104 @@ void OnServoIcon(lv_event_t* /*e*/) {
     s_want.store(Mode::kServo, std::memory_order_release);
 }
 
-void ShowServoAngle(uint8_t angle) {
+void ShowServoAngle(int16_t value) {
     if (!s_servo_angle_label) return;
-    char caption[8];
-    snprintf(caption, sizeof caption, "%u", angle);
+    char caption[12];
+    snprintf(caption, sizeof caption, "%d", value);
     lv_label_set_text(s_servo_angle_label, caption);
 }
 
-void RequestServoAngle(uint8_t angle, bool force) {
-    if (!s_servo_request || !s_servo_status) return;
-    if (s_servo_last_sent_channel == s_servo_channel && s_servo_last_sent_angle == angle) return;
+uint8_t ServoTarget() {
+    return s_servo_channel == 9 ? KorvoCloudServo8::kAll : s_servo_channel;
+}
+
+void UpdateServoControls() {
+    const auto& state = s_servo_states[s_servo_channel - 1];
+    const bool mixed = s_servo_channel == 9 && s_servo_all_mixed;
+    lv_label_set_text(s_servo_mode_label, mixed ? "Mode" : state.mode == ServoMode::Continuous ? "Speed" :
+        state.mode == ServoMode::Position360 ? "360 deg" :
+        state.mode == ServoMode::Released ? "Released" : "180 deg");
+    lv_label_set_text(s_servo_unit, state.mode == ServoMode::Continuous ? "% speed" : "deg");
+    lv_arc_set_range(s_servo_arc, state.mode == ServoMode::Continuous ? -100 : 0,
+                    state.mode == ServoMode::Continuous ? 100 :
+                    state.mode == ServoMode::Position360 ? 360 : 180);
+    lv_arc_set_value(s_servo_arc, state.value);
+    ShowServoAngle(state.value);
+    if (!s_servo_request || mixed || state.mode == ServoMode::Released)
+        lv_obj_add_state(s_servo_arc, LV_STATE_DISABLED);
+    else lv_obj_remove_state(s_servo_arc, LV_STATE_DISABLED);
+    if (!s_servo_request || mixed || state.mode != ServoMode::Continuous)
+        lv_obj_add_state(s_servo_stop, LV_STATE_DISABLED);
+    else lv_obj_remove_state(s_servo_stop, LV_STATE_DISABLED);
+}
+
+bool SendServo(const ServoCommand& command) {
+    if (!s_servo_request || !s_servo_request(command, s_servo_ctx)) {
+        lv_label_set_text(s_servo_status, "Queue busy; retry");
+        lv_obj_set_style_text_color(s_servo_status, lv_color_hex(kColErr), 0);
+        return false;
+    }
+    lv_label_set_text(s_servo_status, command.read_only ? "Reading..." : "Sending...");
+    lv_obj_set_style_text_color(s_servo_status, lv_color_hex(kColMuted), 0);
+    return true;
+}
+
+void RequestServoAngle(int16_t value, bool force) {
     const int64_t now = esp_timer_get_time();
     if (!force && s_servo_last_send_us && now - s_servo_last_send_us < 40000) return;
-    if (!s_servo_request(s_servo_channel, angle, s_servo_ctx)) {
-        lv_label_set_text(s_servo_status, "Servo queue unavailable");
-        lv_obj_set_style_text_color(s_servo_status, lv_color_hex(kColErr), 0);
-        return;
-    }
-    s_servo_last_sent_channel = s_servo_channel;
-    s_servo_last_sent_angle = angle;
-    s_servo_last_send_us = now;
-    char caption[32];
-    snprintf(caption, sizeof caption, "Moving SS%u...", s_servo_channel);
-    lv_label_set_text(s_servo_status, caption);
-    lv_obj_set_style_text_color(s_servo_status, lv_color_hex(kColMuted), 0);
+    if (SendServo({ServoTarget(), s_servo_states[s_servo_channel - 1].mode, value}))
+        s_servo_last_send_us = now;
 }
 
 void SelectServoChannel(uint8_t channel) {
     if (channel == s_servo_channel) return;
     s_servo_channel = channel;
     char caption[8];
-    snprintf(caption, sizeof caption, "SS%u", s_servo_channel);
+    if (channel == 9) snprintf(caption, sizeof caption, "ALL");
+    else snprintf(caption, sizeof caption, "SS%u", channel);
     lv_label_set_text(s_servo_select_label, caption);
-    lv_arc_set_value(s_servo_arc, s_servo_angles[s_servo_channel - 1]);
-    ShowServoAngle(s_servo_angles[s_servo_channel - 1]);
-    lv_label_set_text(s_servo_status, "Turn dial to move");
+    UpdateServoControls();
+    lv_label_set_text(s_servo_status, channel == 9 ?
+        (s_servo_all_mixed ? "Mixed; pick mode" : "ALL: same mode") : "Turn dial to move");
     lv_obj_set_style_text_color(s_servo_status, lv_color_hex(kColMuted), 0);
+}
+
+void OnServoMode(lv_event_t*) {
+    auto& state = s_servo_states[s_servo_channel - 1];
+    state.mode = (s_servo_channel == 9 && s_servo_all_mixed) ||
+        state.mode == ServoMode::Released || state.mode == ServoMode::Continuous ?
+        ServoMode::Position180 : static_cast<ServoMode>(static_cast<unsigned>(state.mode) + 1);
+    if (s_servo_channel == 9) s_servo_all_mixed = false;
+    state.value = state.mode == ServoMode::Continuous ? 0 : 90;
+    UpdateServoControls();
+    lv_label_set_text(s_servo_status, "Mode selected; turn dial");
+}
+
+void OnServoStop(lv_event_t*) {
+    // Neutral pulses stop a continuous servo; release disables its pulses.
+    if (SendServo({ServoTarget(), ServoMode::Continuous, 0})) {
+        s_servo_states[s_servo_channel - 1] = {ServoMode::Continuous, 0};
+        UpdateServoControls();
+    }
+}
+
+void OnServoRelease(lv_event_t*) {
+    if (SendServo({ServoTarget(), ServoMode::Released, 0})) {
+        s_servo_states[s_servo_channel - 1] = {ServoMode::Released, 0};
+        UpdateServoControls();
+    }
+}
+
+void OnServoRead(lv_event_t*) {
+    SendServo({ServoTarget(), ServoMode::Released, 0, true});
 }
 
 void RefreshServoPicker() {
     for (int i = 0; i < 5; ++i) {
         const int channel = static_cast<int>(s_servo_picker_channel) + i - 2;
         char caption[8] = {};
-        if (channel >= 1 && channel <= 8) snprintf(caption, sizeof caption, "SS%d", channel);
+        if (channel == 9) snprintf(caption, sizeof caption, "ALL");
+        else if (channel >= 1 && channel <= 8) snprintf(caption, sizeof caption, "SS%d", channel);
         lv_label_set_text(s_servo_picker_rows[i], caption);
     }
 }
@@ -865,7 +931,7 @@ void OnServoPicker(lv_event_t* e) {
         int channel = static_cast<int>(s_servo_picker_start_channel) +
                       (point.y - s_servo_picker_start_y) / 16;
         if (channel < 1) channel = 1;
-        if (channel > 8) channel = 8;
+        if (channel > 9) channel = 9;
         if (channel != s_servo_picker_channel) {
             s_servo_picker_channel = static_cast<uint8_t>(channel);
             RefreshServoPicker();
@@ -879,9 +945,9 @@ void OnServoPicker(lv_event_t* e) {
 }
 
 void OnServoArc(lv_event_t* e) {
-    const uint8_t angle = static_cast<uint8_t>(lv_arc_get_value(s_servo_arc));
+    const int16_t angle = lv_arc_get_value(s_servo_arc);
     if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
-        s_servo_angles[s_servo_channel - 1] = angle;
+        s_servo_states[s_servo_channel - 1].value = angle;
         ShowServoAngle(angle);
         RequestServoAngle(angle, false);
     } else {
@@ -899,10 +965,13 @@ void BuildServo() {
     lv_obj_t* title = Label(s_scr_servo, "Servo control", kColServo, &lv_font_montserrat_20);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 12);
 
-    lv_obj_t* channel = Label(s_scr_servo, "Channel", kColMuted, &lv_font_montserrat_14);
-    lv_obj_set_pos(channel, kPad + 10, 56);
-    s_servo_select_label = MenuButton(s_scr_servo, kPad, 87, 82, 61,
+    s_servo_select_label = MenuButton(s_scr_servo, kPad, 42, 72, 34,
                                       "SS1", nullptr);
+    s_servo_mode_label = MenuButton(s_scr_servo, 94, 42, 86, 34, "180 deg", OnServoMode);
+    MenuButton(s_scr_servo, 188, 42, 76, 34, "Read", OnServoRead);
+    s_servo_stop = lv_obj_get_parent(MenuButton(s_scr_servo, kPad, 84, 94, 34, "Stop", OnServoStop));
+    lv_obj_add_state(s_servo_stop, LV_STATE_DISABLED);
+    MenuButton(s_scr_servo, kPad, 126, 94, 34, "Release", OnServoRelease);
     lv_obj_t* select_button = lv_obj_get_parent(s_servo_select_label);
     lv_obj_add_flag(select_button, LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_add_event_cb(select_button, OnServoPicker, LV_EVENT_PRESSED, nullptr);
@@ -934,13 +1003,13 @@ void BuildServo() {
     lv_obj_add_flag(s_servo_picker, LV_OBJ_FLAG_HIDDEN);
 
     s_servo_arc = lv_arc_create(s_scr_servo);
-    lv_obj_set_size(s_servo_arc, 148, 148);
-    lv_obj_set_pos(s_servo_arc, 112, 42);
+    lv_obj_set_size(s_servo_arc, 116, 116);
+    lv_obj_set_pos(s_servo_arc, 136, 82);
     lv_arc_set_range(s_servo_arc, 0, 180);
     lv_arc_set_rotation(s_servo_arc, 135);
     lv_arc_set_bg_angles(s_servo_arc, 0, 270);
     lv_arc_set_change_rate(s_servo_arc, 1440);
-    lv_arc_set_value(s_servo_arc, s_servo_angles[0]);
+    lv_arc_set_value(s_servo_arc, s_servo_states[0].value);
     lv_obj_set_style_arc_color(s_servo_arc, lv_color_hex(kColCard), LV_PART_MAIN);
     lv_obj_set_style_arc_color(s_servo_arc, lv_color_hex(kColServo), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(s_servo_arc, lv_color_hex(kColText), LV_PART_KNOB);
@@ -950,15 +1019,15 @@ void BuildServo() {
 
     s_servo_angle_label = Label(s_scr_servo, "90", kColText, &lv_font_montserrat_28);
     lv_obj_align_to(s_servo_angle_label, s_servo_arc, LV_ALIGN_CENTER, 0, -10);
-    lv_obj_t* unit = Label(s_scr_servo, "deg", kColMuted, &lv_font_montserrat_14);
-    lv_obj_align_to(unit, s_servo_arc, LV_ALIGN_CENTER, 0, 18);
+    s_servo_unit = Label(s_scr_servo, "deg", kColMuted, &lv_font_montserrat_14);
+    lv_obj_align_to(s_servo_unit, s_servo_arc, LV_ALIGN_CENTER, 0, 18);
 
     s_servo_status = Label(s_scr_servo, s_servo_request ? "Hold SS & slide" : "Servo unavailable",
                            s_servo_request ? kColMuted : kColErr, &lv_font_montserrat_14);
-    lv_obj_set_size(s_servo_status, 84, 38);
+    lv_obj_set_size(s_servo_status, 104, 38);
     lv_label_set_long_mode(s_servo_status, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(s_servo_status, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(s_servo_status, kPad - 1, 159);
+    lv_obj_set_pos(s_servo_status, kPad - 1, 164);
 
     if (!s_servo_request) {
         lv_obj_add_state(lv_obj_get_parent(s_servo_select_label), LV_STATE_DISABLED);
@@ -967,28 +1036,43 @@ void BuildServo() {
 
     lv_obj_t* back = Label(s_scr_servo, "Swipe up to return", kColMuted, &lv_font_montserrat_14);
     lv_obj_align(back, LV_ALIGN_BOTTOM_MID, 0, -28);
+    if (!s_servo_request) {
+        const uint32_t count = lv_obj_get_child_count(s_scr_servo);
+        for (uint32_t i = 0; i < count; ++i)
+            lv_obj_add_state(lv_obj_get_child(s_scr_servo, i), LV_STATE_DISABLED);
+    }
     BuildPill(s_scr_servo);
 }
 
 void RefreshServoResult() {
     if (!s_servo_status) return;
-    uint8_t channel;
-    uint8_t angle;
-    esp_err_t err;
+    ServoCommand command;
+    ServoStatus status;
+    esp_err_t err, read_error;
     taskENTER_CRITICAL(&s_servo_result_lock);
-    channel = s_servo_result_channel;
-    angle = s_servo_result_angle;
+    command = s_servo_result_command;
+    status = s_servo_result_status;
     err = s_servo_result_error;
+    read_error = s_servo_read_error;
     taskEXIT_CRITICAL(&s_servo_result_lock);
-    if (channel != s_servo_channel) return;
-    char caption[40];
-    if (err == ESP_OK) snprintf(caption, sizeof caption, "Sent %u deg", angle);
-    else {
-        s_servo_last_sent_channel = 0;
-        snprintf(caption, sizeof caption, "I2C write failed");
+    if (read_error == ESP_OK && !lv_obj_has_state(s_servo_arc, LV_STATE_PRESSED)) {
+        for (unsigned i = 0; i < 8; ++i) s_servo_states[i] = status.channels[i];
+        bool same = true;
+        for (unsigned i = 1; i < 8; ++i)
+            same &= status.channels[i].mode == status.channels[0].mode &&
+                    status.channels[i].value == status.channels[0].value;
+        if (same) s_servo_states[8] = status.channels[0];
+        s_servo_all_mixed = !same;
+        UpdateServoControls();
     }
-    lv_label_set_text(s_servo_status, caption);
-    lv_obj_set_style_text_color(s_servo_status, lv_color_hex(err == ESP_OK ? kColOk : kColErr), 0);
+    const bool relevant = command.read_only || command.channel == ServoTarget() ||
+        command.channel == KorvoCloudServo8::kAll;
+    if (!relevant) return;
+    lv_label_set_text(s_servo_status, err != ESP_OK ? "I2C write failed" :
+        read_error != ESP_OK ? (command.read_only ? "Read failed" : "Sent; read failed") :
+        (s_servo_channel == 9 && s_servo_all_mixed ? "Mixed; pick mode" : "Board state read"));
+    lv_obj_set_style_text_color(s_servo_status,
+        lv_color_hex(err == ESP_OK && read_error == ESP_OK ? kColOk : kColErr), 0);
 }
 
 // Apps
@@ -1240,6 +1324,8 @@ void ApplyMode(Mode want) {
                   : want == Mode::kVoice ? s_scr_voice
                   : want == Mode::kConversations ? s_scr_conversations
                                          : s_scr_home;
+    if (want == Mode::kServo && s_servo_request)
+        SendServo({ServoTarget(), ServoMode::Released, 0, true});
     if (scr) lv_screen_load(scr);
     s_mode.store(want, std::memory_order_release);
 
@@ -1520,11 +1606,13 @@ void SetLinkState(bool connected) {
     s_link_rev.fetch_add(1, std::memory_order_release);
 }
 
-void SetServoResult(uint8_t channel, uint8_t angle, esp_err_t result) {
+void SetServoResult(const KorvoCloudServo8::Command& command, esp_err_t result,
+                    const KorvoCloudServo8::Status* status, esp_err_t read_result) {
     taskENTER_CRITICAL(&s_servo_result_lock);
-    s_servo_result_channel = channel;
-    s_servo_result_angle = angle;
+    s_servo_result_command = command;
+    if (status) s_servo_result_status = *status;
     s_servo_result_error = result;
+    s_servo_read_error = read_result;
     taskEXIT_CRITICAL(&s_servo_result_lock);
     s_servo_result_rev.fetch_add(1, std::memory_order_release);
 }
