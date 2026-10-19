@@ -1,17 +1,18 @@
 # Applications
 
-Each folder implements one user workflow: UI, voice sessions, recording, and Agent Link callbacks.
-`profiles/profiles.json` selects one folder; two WOWNNY revisions share the same application.
+Each directory implements a device workflow: UI, voice sessions, recording and
+SDK callbacks. `profiles/profiles.json` selects one application per build.
 
-- Derive from `Application` in `common/application.h` and register with `DECLARE_APPLICATION`.
-- Use `boards/` for peripheral wiring and initialization. Shared drivers belong in `boards/common/`.
-- Keep transport and protocol implementation in `components/agent_link/`.
-- SDK callbacks copy data or queue work; camera, storage and audio workers perform blocking I/O.
+Derive from [Application](common/application.h) and register with
+`DECLARE_APPLICATION`. Put wiring and hardware initialization in `boards/`,
+shared peripheral drivers in `boards/common/`, and transport code in
+`components/agent_link/`. Callback data may expire on return: copy or queue it
+before handing work to display, storage or audio workers.
 
-Korvo applications share `boards/korvo/korvo_hardware.h`: LCD, camera, touch and codec are initialized
-in that order. BLE owns SD recording; WiFi owns platform sessions and servo commands. Their existing
-device model strings stay unchanged for App discovery and OTA validation.
+Korvo BLE/WiFi share `boards/korvo/`; StopWatch BLE/WiFi share
+`boards/m5stack-stopwatch/`. The WOWNNY revisions share an application and have
+separate pin settings. Some older applications still initialize their own
+hardware. Extract that setup when it needs to be shared.
 
-Other applications moved from `boards/` without changing their bring-up sequence. Their remaining
-peripheral setup can be extracted when sharing or changing hardware; a device with one application
-does not need a duplicate hardware layer. `main/board.h` preserves the old Board name for external ports.
+`main/board.h` preserves `Board` and `DECLARE_BOARD` aliases for existing ports.
+See the [board guide](../boards/README.md) for adding hardware or a BLE/WiFi profile.

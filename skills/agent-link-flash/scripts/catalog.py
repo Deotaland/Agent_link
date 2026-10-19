@@ -4,14 +4,14 @@ Used by find_board.py next to this file and by tools/board_catalog.py in the rep
 checkout (a skill installed on its own) the copy in ../references/boards.json is used instead.
 """
 import json
+import re
 from pathlib import Path
 
 TRANSPORTS = ("BLE", "WIFI", "MUSE", "NONE")
 STATUSES = ("supported", "legacy", "example", "not-adapted")
 REQUIRED = ("board_type", "model", "product", "vendor", "buy", "docs", "aliases", "hardware",
             "identify", "flash_port", "use", "transport", "ble_name", "fw_model", "status",
-            "notes", "zh")
-ZH_REQUIRED = ("product", "hardware", "identify", "flash_port", "use")
+            "notes")
 BUNDLED = Path(__file__).resolve().parent.parent / "references" / "boards.json"
 
 
@@ -38,16 +38,19 @@ def _check_entry(b, where):
     for k in ("buy", "docs", "aliases"):
         if not isinstance(b[k], list):
             problems.append(f"{where}: {k} must be a list")
-    if not isinstance(b["zh"], dict):
-        problems.append(f"{where}: zh must be an object")
-    else:
-        problems += [f"{where}: zh.{k} missing" for k in ZH_REQUIRED if not b["zh"].get(k)]
+    if "zh" in b:
+        problems.append(f"{where}: remove translated fields; catalog metadata is English only")
+    if re.search(r"[\u3400-\u9fff\uf900-\ufaff]", json.dumps(b, ensure_ascii=False)):
+        problems.append(f"{where}: catalog text and aliases must use English")
     return problems
 
 
 def load_config_dir(boards_dir):
     """(entries, problems) read from every boards_dir/*/config.json."""
     entries, problems = [], []
+    manifest = Path(boards_dir).parent / "profiles" / "profiles.json"
+    profiles = json.loads(manifest.read_text(encoding="utf-8")) if manifest.is_file() else {}
+    by_type = {p["board_type"]: name for name, p in profiles.items()}
     for cfg in sorted(Path(boards_dir).glob("*/config.json")):
         name = cfg.parent.name
         try:
@@ -69,12 +72,13 @@ def load_config_dir(boards_dir):
             if found:
                 problems += found
                 continue
-            sdkconfig = [f"CONFIG_BOARD_TYPE_{b['board_type']}=y"]
-            if b["transport"] != "NONE":
-                sdkconfig.append(f"CONFIG_AGENT_LINK_TRANSPORT_{b['transport']}=y")
+            profile = by_type.get(b["board_type"])
+            if not profile and b["status"] != "not-adapted":
+                problems.append(f"{where}: no firmware profile for {b['board_type']}")
+            sdkconfig = [f"CONFIG_AGENT_LINK_PROFILE_{profile.upper().replace('-', '_')}=y"] if profile else []
             entries.append({"board_type": b["board_type"], "dir": name, "target": data.get("target"),
                             **{k: v for k, v in b.items() if k != "board_type"},
-                            "sdkconfig": sdkconfig})
+                            "profile": profile, "sdkconfig": sdkconfig})
     return entries, problems
 
 

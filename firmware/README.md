@@ -1,101 +1,92 @@
-# Agent Link firmware
+# Firmware
 
-**English** | [简体中文](README.zh-CN.md)
+An ESP-IDF project with hardware drivers, applications and the
+[Agent Link SDK](components/agent_link/README.md).
 
-Agent Link connects embedded devices to the Deotaland Agent platform. The reusable ESP-IDF
-component is [`components/agent_link`](components/agent_link/README.md); this project supplies
-board drivers, applications and supported firmware configurations.
+## Build and flash
 
-## Build
+Activate ESP-IDF 5.5.x or 6.1.x. Maintainers use 5.5.4 for existing S3/C3 profiles;
+ESP32-S31 requires 6.1 with S31 support. From `firmware/`:
 
-Use ESP-IDF 5.5.x (maintainers use 5.5.4). Activate its environment, then run from this directory:
-
-A fresh checkout needs no existing `build/`, `sdkconfig`, private configuration or test files.
-The build tool generates the selected configuration; ESP-IDF downloads the managed dependencies
-using the committed manifests and `dependencies.lock`.
-
-```powershell
-python tools/build_firmware.py
+```sh
+python tools/build_firmware.py --list
+python tools/build_firmware.py korvo-ble --jobs 2
+idf.py -p PORT flash monitor
 ```
 
-A menu lists the supported profiles; choose a number without typing a profile name. In the SDK
-configuration editor or `menuconfig`, use **Agent Link Device → Firmware profile**, save, then build.
-Available choices depend on the current target chip. Use the terminal menu to change chips.
-Automated builds can still specify a name, such as `python tools/build_firmware.py korvo-ble`.
+Omit the profile name to choose from a menu. Each profile fixes the chip, board,
+application and backend. [Profiles](profiles/README.md) lists the combinations.
+Identify the hardware before flashing; ESP32-P4 is not adapted.
 
-A firmware profile fixes the board, application, target chip and backend together. For Korvo,
-`korvo-ble` provides the phone App firmware; `korvo-wifi` provides the platform UI and realtime
-voice. Only combinations listed by the tool are supported. ESP32-P4 is not adapted.
+The tool reuses `build/`, reconfigures, compiles and merges the image. It verifies
+that each merged segment matches the original build file. It never flashes.
+A fresh checkout needs no saved config or build files; ESP-IDF restores managed
+dependencies from the manifests and lock file. The first build needs network access.
 
-The tool reuses `build/`, runs two compiler jobs, and produces `agent_link.bin`, `merged.bin`,
-and matching debugging artifacts. It does not flash. Once configured, the IDE can continue to
-build the same profile.
+| Output in `build/` | Use |
+| --- | --- |
+| `agent_link.bin` | Application image for OTA |
+| `merged.bin` | USB full package; can overwrite saved settings |
+| `agent_link.elf`, `agent_link.map` | Debugging this exact build |
+| `flasher_args.json`, `flash_args` | Chip-specific files and flash offsets |
 
-```powershell
+`idf.py flash` uses the separate build files and leaves NVS intact. A merged
+image may overwrite WiFi, pairing and device identity. Check the package before
+writing and explain its effect. Do not use a merged image as an OTA application.
+
+## Configuration
+
+```sh
 python tools/build_firmware.py korvo-ble --configure-only
 python tools/build_firmware.py korvo-ble --reset-config
 python tools/build_firmware.py --check
 ```
 
-Common defaults, chip defaults, backend defaults and the profile's own defaults are applied in
-that order. Local credentials are loaded last from gitignored `sdkconfig.private`. The first
-migration backs up the original `sdkconfig` to `sdkconfig.before-profile` and imports known
-credentials and related options. Edit credentials in `sdkconfig.private`; do not commit it or
-distribute an image containing them.
+Defaults load in this order: common, chip, profile fragments, private settings.
+Keep supported credentials in ignored `sdkconfig.private`; do not commit or share
+that file or an image containing its values. The first migration backs up the
+previous config to `sdkconfig.before-profile` and imports recognized private
+settings. `sdkconfig` is generated; see [profiles](profiles/README.md).
 
-Saving a new profile applies its defaults on the next build and regenerates `sdkconfig`. The
-terminal tool clears the existing build cache only when changing chips. Unchanged profiles build
-incrementally. CMake delegates profile changes to the configuration tool and validates the result;
-it does not append settings. See [firmware profiles](profiles/README.md) for details.
+In `menuconfig`, select **Agent Link Device > Firmware profile**. The list is
+limited to the active chip. Use the build tool to change chips or SDK versions;
+it clears incompatible files in the existing build directory.
 
-## Connection backends
+## Connect
 
-| Backend | Connection                                                                 |
-| ------- | -------------------------------------------------------------------------- |
-| BLE     | GATT control and L2CAP audio/image channels through the Rorolee App        |
-| WiFi    | Hotspot setup, platform activation, MQTT commands and realtime voice       |
-| Muse    | BLE pairing through the Muse app, followed by WiFi access to Muse services |
+- **BLE:** use the Deotaland phone app. The app provides the platform connection.
+- **WiFi:** join the device hotspot, set WiFi at `http://192.168.4.1`, claim the
+  six-digit activation code in the console and bind an Agent.
+- **Muse:** pair and provision through the Muse app. See [Muse](components/muse_gadget/README.md).
 
-The SDK reports connection status through `agent_link_status_t`. Hardware callbacks receive
-PCM audio, text or peripheral commands. Backend support in the SDK does not imply that every
-application has been adapted to every backend.
+The console and firmware center are at [bot.zhaojun.work](https://bot.zhaojun.work).
+WiFi product identity and URL come from the application's `Platform()` settings.
 
-## Layout
+## Source layout
 
-```text
-firmware/
-  profiles/                  supported combinations and short sdkconfig fragments
-  tools/build_firmware.py    configure, validate, build and merge one profile
-  cmake/                    build integration
-  main/                     app_main and profile selection menu
-  apps/<app>/               UI, voice sessions, recording and SDK callbacks
-  apps/common/              Application interface
-  boards/<board>/           wiring, hardware initialization and catalog
-  boards/common/            shared display, codec, camera and peripheral drivers
-  components/board_support/ selected hardware drivers
-  components/ui_lvgl/       optional LVGL integration
-  components/agent_link/    core, audio, OTA and selected transport
-  components/muse_gadget/   vendored Muse integration
-```
+| Path | Responsibility |
+| --- | --- |
+| `boards/<hardware>/` | Wiring and hardware initialization |
+| `boards/common/` | Shared peripheral drivers |
+| `apps/<app>/` | UI, audio workers, sessions and SDK callbacks |
+| `apps/common/application.h` | Interface used by `main/app_main.cpp` |
+| `profiles/` | Supported firmware combinations and defaults |
+| `components/board_support/` | Drivers selected by the profile |
+| `components/agent_link/` | BLE/WiFi/Muse transports, I/O, audio and OTA |
 
-`profiles/profiles.json` selects the application, hardware, drivers, UI and transport together.
-Korvo BLE and WiFi share `boards/korvo/`; each keeps its own UI and audio workflow under `apps/`.
-The SDK compiles the selected transport and keeps disabled APIs available with an unsupported result.
-Public SDK interfaces, device models and flash partition layouts are preserved.
+To add hardware, follow the [board guide](boards/README.md). For a standalone
+ESP-IDF integration, see the [SDK guide](components/agent_link/README.md).
 
-To add hardware, follow [boards/README.md](boards/README.md), then add a profile and validate
-the board catalog. Code shared by multiple boards belongs in `boards/common/`.
+## Troubleshooting
 
-## Using the component
+| Symptom | Check |
+| --- | --- |
+| No serial port | Data cable, correct USB connector, USB bridge driver |
+| Cannot connect | Hold BOOT during reset, release, retry at 115200; check port ownership |
+| Chip mismatch | Compare profile target, detected chip and package metadata |
+| Old firmware boots | An OTA slot may still be selected; `idf.py flash` also writes initial otadata |
+| Black screen | Board revision, panel driver and boot log; do not guess by reflashing |
+| Missing `CONFIG_*` | Reconfigure with the selected profile |
+| Platform error | WiFi, compiled URL, activation and Agent binding |
 
-Copy `components/agent_link/` into an ESP-IDF project's `components/`, add `agent_link` to its
-dependencies, select the backend before `project()` (see the component README), and register capabilities and output callbacks through `agent_link.h`.
-Microphone input uses `agent_link_stream_open/write/close`; hardware output arrives in callbacks.
-Queue slow hardware work because callbacks may run on transport tasks.
-
-See the [component README](components/agent_link/README.md) and
-[realtime voice notes](components/agent_link/REALTIME.md) for API behavior and credentials.
-
-## License
-
-MIT; see [LICENSE](../LICENSE). Vendored components retain their own licenses.
+MIT; see [LICENSE](../LICENSE). Third-party components retain their own licenses.

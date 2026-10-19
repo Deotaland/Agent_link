@@ -1,4 +1,12 @@
-# Korvo WiFi servo control
+# Korvo WiFi
+
+Profile: `korvo-wifi`. Shared hardware is in `boards/korvo/`; this application
+provides camera preview, platform conversations, realtime voice and servo control.
+Set up WiFi through `KorvoCloud-XXXX`, claim the activation code in the console
+and bind an Agent there. See [realtime voice](../../components/agent_link/REALTIME.md)
+for authentication, audio and validation status.
+
+## Servo control
 
 The HC32L110 eight-channel module uses address `0x10` on the dedicated I2C bus:
 SDA GPIO19, SCL GPIO20, 100 kHz. Keep the existing Korvo wiring; the Arduino
@@ -58,7 +66,6 @@ Status is read and reported after each accepted command and explicit refresh.
 On successful read the JSON also contains `last_id` (wire ID 0–7 or 255),
 `last_mode`, `last_value`, and `channels` with eight `{channel,mode,value}` entries
 using human channel numbers 1–8. On read failure those state fields are omitted.
-No claim of measured position or mechanical completion is made.
 
 The application queues commands in order; SDK and UI callbacks do not perform I2C.
 An unavailable/full queue is reported locally or in the device log.

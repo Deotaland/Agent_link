@@ -1,26 +1,61 @@
-# Deotaland Agent Link
+# Agent Link
 
-A connectivity layer that puts embedded devices on the **Deotaland Agent platform**. A device declares which capabilities it has (microphone, speaker, screen, sensors, and so on) and registers a few callbacks; the library handles BLE advertising, GATT, and frame encoding. There is no Bluetooth or wire-protocol code to write on the device side.
+Connect ESP32 devices to the Deotaland Physical Agent platform over BLE or WiFi. The SDK
+handles connectivity, device I/O, audio streams and OTA; applications provide the
+hardware and user interface. Existing Muse firmware is also included.
 
-## Repository layout
+[Chinese README](README.zh-CN.md) · [Firmware guide](firmware/README.md) ·
+[Add a board](firmware/boards/README.md) · [SDK](firmware/components/agent_link/README.md)
 
-| Path | What it is |
-|---|---|
-| [`firmware/`](firmware/) | The ESP-IDF project: the `agent_link` SDK component, the shared app, and reference boards. Start here — see [`firmware/README.md`](firmware/README.md) ([简体中文](firmware/README.zh-CN.md)). |
-| [`docs/`](docs/) | Protocol reference: [BLE](docs/agent_link_ble.md) (frames, GATT, L2CAP, every command and event), [device I/O](docs/device-io.md) (self-describing sensors and actuators), [OTA](docs/agent_link_ota.md), and the [MCP gateway](docs/mcp-gateway.md) design. |
-| `app/` | Phone app (not yet published). |
+## Flash with an AI assistant
 
-## Quick start
+Open this repository in your coding assistant and tell it what you have:
 
-```bash
+> I have an M5Stack StopWatch. Flash Agent Link firmware onto it.
+
+[AGENTS.md](AGENTS.md) tells the assistant how to identify the board, choose a
+firmware profile, build or locate an image, find the USB port and check the boot
+log. It asks about the connection only when the hardware supports several
+firmware choices. You do not need to know the chip or configuration symbols.
+
+Connect a USB data cable. BLE firmware needs the Deotaland phone app; WiFi
+firmware uses hotspot setup and a six-digit activation code in the
+[platform console](https://bot.zhaojun.work). Prebuilt images are available in the
+[firmware center](https://bot.zhaojun.work/#/firmware).
+
+## Build from source
+
+Activate ESP-IDF 5.5.x or 6.1.x, then run:
+
+```sh
 git clone https://github.com/Deotaland/Agent_link.git
 cd Agent_link/firmware
-python tools/build_firmware.py   # choose the firmware profile from the menu
-idf.py -p <port> flash monitor
+python tools/build_firmware.py
+idf.py -p PORT flash monitor
 ```
 
-Requires an activated ESP-IDF v5.5.x or v6.1.x environment. The original v5.5.4 environment remains supported. The build tool generates the configuration and restores managed dependencies; a fresh checkout needs no local config or test files. Full build notes, the capability model, and the board-porting guide are in [`firmware/README.md`](firmware/README.md).
+Choose a profile from the menu. The tool reuses `firmware/build`, runs two
+compiler jobs and creates app, merged and debugging files. ESP32-S31 profiles
+require ESP-IDF 6.1 with S31 support. See the [firmware guide](firmware/README.md)
+for configuration and flashing details.
 
-## License
+## Add hardware
 
-MIT — see [LICENSE](LICENSE). Copyright (c) 2026 DEOTALAND LIMITED (德奧塔文化科技有限公司).
+Start with the [board guide](firmware/boards/README.md), or ask your assistant:
+
+> Add my ESP32-S3 board using the WiFi backend. Here are its schematic and pins.
+
+Keep wiring and drivers in `firmware/boards/`, application behavior in
+`firmware/apps/`, and select the combination in `firmware/profiles/`. BLE and
+WiFi use the same SDK callbacks and device I/O model.
+
+## Repository
+
+| Path | Contents |
+| --- | --- |
+| [firmware/](firmware/README.md) | ESP-IDF project, SDK, hardware and applications |
+| [skills/](skills/README.md) | AI workflows for flashing, building, porting and diagnosis |
+| `tools/` | Board catalog, documentation checks and skill installer |
+| [app/](app/readme.md) | Phone app placeholder |
+
+MIT; see [LICENSE](LICENSE). Vendored code and fonts retain their own licenses.

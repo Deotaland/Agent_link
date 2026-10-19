@@ -1,135 +1,97 @@
 # WiFi realtime voice
 
-Korvo WiFi and StopWatch WiFi use the agent bound to the device in the platform console.
-The device lists, creates, selects and deletes that agent's conversations, and starts or ends
-realtime voice calls. Agent selection and binding take place in the console only.
-The microphone opens when `session.ready` arrives and stays open until the user ends the call
-or leaves Voice. These screens do not provide push-to-talk or text chat.
+Korvo, StopWatch and paper WiFi profiles use the Agent bound in the platform
+console. Devices list, create, select and delete that Agent's conversations and
+start/end calls. Agent selection and binding happen in the console.
 
-## StopWatch WiFi controls
+## Authentication and calls
 
-The `paper-s31-wifi` profile uses product 16 (`esp32-s31`) with the same device-key
-authentication and conversation APIs. BOOT starts/ends a call; hold it for one second
-to choose a conversation. Its 3.6-inch six-color display coalesces updates on a separate
-worker. It requests PCM16 in both directions because esp_audio_codec 2.2.1 has no S31
-library; the existing SDK PCM converter handles 24 kHz replies. Physical-device and
-live-platform acceptance are still pending. See `boards/paper-s31/README.md` for controls.
+Hotspot setup is followed by a six-digit activation code. After the user claims
+it, `bind-status` returns a device `auth_key`, stored in NVS. This is the only
+persistent platform credential needed. The legacy account-token option is
+ignored by this flow.
 
-The round CST820 touchscreen provides Start/End call, Sessions and Settings. The reply area
-scrolls by touch. Sessions shows three rows with previous/next navigation; Settings creates
-a conversation, deletes the selected conversation, or resets activation. Delete and reset
-require separate confirmation. Reset keeps WiFi; platform unbinding is still required before
-reactivation. Yellow decreases volume, blue increases it in 5% steps (hold to repeat, 0–100).
-The independent power key keeps its hardware function. Idle dimming consumes the wake touch.
-Touch frames lost to I2C errors cancel the gesture; view IDs reject stale menu events.
-Platform requests run on the controller task and disable touch actions until acknowledged;
-volume keys run independently. Start call opens the mic only after session.ready.
-There is no StopWatch device available for physical acceptance; host tests are not device tests.
+`POST /api/device-gateway/auth` sends the device key and MAC in JSON. `data.agent`
+provides the bound Agent's metadata. `agent_link_platform_bound_agent()` reads
+the cached result without blocking. Authentication refreshes every 60 seconds;
+a rebind ends the old call and clears its conversation selection.
 
-## Credentials and API calls
+Conversation/voice requests use `X-Device-Auth-Key`:
 
-After WiFi setup, the device displays a six-digit claim code. The user claims it in the
-platform console; `bind-status` returns `auth_key`, which the device persists in NVS.
-This is the device's only persistent platform credential. No account login token is required
-or sent. The legacy `CONFIG_AGENT_LINK_PLATFORM_USER_TOKEN` setting is hidden and ignored,
-so existing private configuration files remain readable without changing authentication.
-
-The existing `POST /api/device-gateway/auth` sends the device key and MAC address in its JSON
-body. Its `data.agent` contains the platform-bound agent's ID, name and capabilities. The SDK
-caches only this metadata for the current device key; it does not obtain it from Agent/device
-management APIs or trust the Agent ID saved in NVS as the current platform binding.
-`agent_link_platform_bound_agent()` reads the cache without blocking on network requests.
-Authentication refreshes every heartbeat interval (60 seconds). A platform rebind invalidates
-the previous conversation selection and ends its call; loss of binding or key also disables
-session operations. The old list/bind Agent functions return `ESP_ERR_NOT_SUPPORTED` without
-sending any HTTP requests.
-
-The device uses `X-Device-Auth-Key` for conversation and voice operations:
-
-| Action | Platform request |
+| Action | Request below `/api/agents/{agent_id}/actions/realtime_voice/` |
 | --- | --- |
-| Read current platform binding | `POST /api/device-gateway/auth`; use `data.agent` |
-| List conversations | `GET /api/agents/{agent_id}/actions/realtime_voice/conversations?limit=20` and `cursor` for later pages |
-| Create a conversation | `POST` to the same conversations path |
-| Delete a conversation | `DELETE /api/agents/{agent_id}/actions/realtime_voice/conversations/{conversation_id}` |
-| Start a call | `POST /api/agents/{agent_id}/actions/realtime_voice/realtime-grant` with `session_id` and `audio_config` |
-| Recover a busy grant | On HTTP 409 only, `POST /api/agents/{agent_id}/actions/realtime_voice/realtime-refresh` with the same `session_id` |
-| End a call | `DELETE /api/agents/{agent_id}/actions/realtime_voice/realtime-grant/{session_id}` |
+| List | `GET conversations?limit=20`, with `cursor` for later pages |
+| Create | `POST conversations` |
+| Delete | `DELETE conversations/{conversation_id}` |
+| Start | `POST realtime-grant` with `session_id` and `audio_config` |
+| Recover busy grant | On HTTP 409, `POST realtime-refresh` for the same session |
+| End | `DELETE realtime-grant/{session_id}` |
 
-The selected conversation and its Agent context are saved in NVS. They are restored only if
-the authenticated platform binding still matches. **Sessions** opens the list; **New session**
-creates and selects another conversation. Deletion requires a second confirmation and clears
-the local selection if it was deleted. HTTPS calls run on a worker, outside LVGL callbacks.
-The SDK follows the server's `has_more` / `next_cursor` pagination; the UI shows the displayed
-range rather than claiming an exact total while later pages remain available.
+The selected conversation is saved in NVS and restored only for the same
+platform binding. Deletion requires confirmation. List UIs follow
+`has_more`/`next_cursor`; they must not present a partial page as a total count.
+HTTPS work runs outside UI callbacks.
 
-On 2026-10-17 real device-key requests confirmed gateway authentication and the bound Agent
-metadata, conversation listing, an existing conversation's voice grant, verified TLS/WSS with
-`tidb-link.realtime.v1`, `session.connect` / `session.ready`, and ending the test grant.
-Agent and device management listing returned business code 1005: those are account APIs and
-are intentionally absent from the device flow. Creating a conversation returned business
-code 1002 because the upstream returned HTTP 404 `agent_template_unavailable` /
-`Published Template unavailable.` That platform/template issue still prevents validating new
-sessions. Existing conversations were preserved; real deletion, audio upload/playback and
-physical-device behavior were not tested. Host API checks do not constitute device testing.
+A grant contains a one-use WebSocket token. The worker connects over verified
+TLS with subprotocol `tidb-link.realtime.v1`, sends `session.connect` and opens
+the microphone only after `session.ready`. Reconnection needs a fresh grant.
+Logs omit URLs with credentials, request bodies and saved device/session IDs.
+Nonzero business codes fail even when HTTP status is 200.
 
-The grant returns a one-use WebSocket token derived from device authentication. It does not
-require another manually configured credential. The worker connects over certificate-checked
-`wss://` using subprotocol `tidb-link.realtime.v1`, then sends `session.connect`. Reconnection
-requires a fresh grant. Logs omit grant URLs, tokens, request/response bodies, device IDs,
-conversation IDs and saved WiFi names. Nonzero business codes are rejected even on HTTP 200;
-only numeric error codes are logged.
+## Audio and workers
 
-## Audio path
+`cloud_platform.cc` owns device-authenticated APIs. `cloud_realtime.cc` owns
+grants, WebSocket I/O and encoder/decoder workers. Applications own microphone,
+speaker and UI. Calls capture continuously until ended; they are not BLE
+push-to-talk turns.
 
-`cloud_platform.cc` owns the device-authenticated platform API calls. `realtime_format.h` validates the negotiated audio.
-`cloud_realtime.cc` owns grants, WebSocket I/O, and the encoder and decoder workers.
-`transport_wifi.cpp` exposes them to the SDK; the Korvo board owns mic,
-speaker, and UI. The component does not access the codec or display.
+S3 profiles request mono Opus: 16 kHz input, 24 kHz output, 20 ms packets.
+`audio_config` uses `sampleRate` and `packetDurationMs`; output also specifies
+`bitrate`. `session.ready` determines the actual format, including PCM16 fallback.
+Each `input_audio.append` carries one Base64 Opus packet. Input and output
+queues are bounded. Encoding and decoding do not block WebSocket reads.
 
-Platform grants request mono Opus in both directions: 16 kHz input, 24 kHz output, 20 ms packets.
-`audio_config` contains the inner input/output object, using `sampleRate` and `packetDurationMs`.
-The platform wraps it in `audio` for the upstream request. `bitrate` is sent only for output.
-The current platform grant may report default PCM16 metadata even when Opus was accepted.
-`session.ready` confirms the actual format; PCM16 fallback there is logged explicitly.
-`CONFIG_AGENT_LINK_REALTIME_OPUS` applies to platform sessions as well as direct tests.
+Replies arrive as binary audio or `response.audio.delta`. The decoder converts
+negotiated PCM16/Opus to 16 kHz PCM16 and paces playback. Interruption invalidates
+queued audio. Korvo primes about 500 ms of playback, or 1000 ms after underrun;
+`response.audio.done` releases a shorter tail without waiting.
 
-After `session.ready`, the board supplies PCM16LE, 16 kHz microphone chunks. A dedicated encoder
-uses a PSRAM stack and produces 24 kbit/s Opus. Each `input_audio.append` contains one Base64 Opus
-packet; packets are never concatenated. If PCM16 was negotiated, the network worker batches up to
-eight queued chunks without waiting for more. Platform conversations use server endpointing, so
-the microphone stays live. Both uplink queues are bounded.
+During speaker playback the applications upload silence, resuming real mic
+samples after the I2S drain and echo tail. This playback guard is not acoustic
+echo cancellation and does not allow spoken interruption. Periodic voice logs
+report frame drops, queue duration, throughput and stack space without audio
+or credentials.
 
-Replies arrive as binary audio or `response.audio.delta`. The negotiated output is 24 kHz mono
-PCM16 or Opus. The network worker copies complete messages to a bounded PSRAM queue. A separate
-decoder worker converts them to 16 kHz PCM16 and paces playback, so waiting for the speaker does not
-block microphone upload or WebSocket reads. TCP_NODELAY avoids waiting between small WebSocket
-header and payload writes. Receive polling waits only when no uplink data is pending.
-Interruption invalidates queued downlink audio immediately, without waiting for playback pacing.
-`response.audio.done` marks the
-end of this reply. Korvo Cloud holds playback PCM in PSRAM and starts after about 500 ms is queued;
-after an underrun it waits for about 1000 ms. End-of-reply releases a shorter tail immediately.
-The playback buffer cannot make up for a sustained shortage of network throughput.
+The [paper profile](../../boards/paper-s31/README.md) requests PCM16 because the
+current codec library has no S31 Opus build. It uses 16 kHz input and 24 kHz
+output, converted by the SDK. Reject unsupported negotiated formats.
 
-Korvo Cloud currently prevents acoustic feedback by uploading silence during speaker playback.
-The microphone keeps sampling; real microphone uploads resume after the I2S drain allowance
-(100 ms) and acoustic tail (200 ms). This guard follows actual speaker writes, so a cloud thinking
-pause does not disable the microphone. Speaking over the agent does not interrupt it in this mode.
-This is a playback guard, not acoustic echo cancellation.
+## Device controls
 
-Korvo Cloud WiFi uses size optimization to keep both Opus codecs within the existing OTA slot.
+StopWatch uses its touchscreen for calls, conversations and settings. Sessions
+shows three entries per page. Settings can create/delete a conversation or reset
+activation; delete/reset require confirmation. Reset keeps WiFi, and the device
+must be unbound in the console before reactivation. Yellow/blue keys change
+volume by 5%; hold to repeat. The first touch after idle dimming wakes the screen.
+Network requests disable conflicting touch actions while volume keys remain usable.
 
-Every five seconds during a continuous call, one `voice` line reports captured, sent, and dropped
-20 ms frames, queued duration, WebSocket payload bytes/s, decoded duration, average/maximum send
-time, encoder time, pending downlink bytes, and mic/decoder/encoder stack headroom. Reply and speaker
-summaries show duration, packet gaps, underruns, and dropped playback
-bytes. Reply start, interruption, end, and speaker drain counts distinguish a server interruption
-from a playback underrun. Normal call cancellation does not count as an Opus codec failure.
-These counters contain no audio or credentials.
+Paper uses BOOT for calls and conversation selection; see its board guide.
+Its full-refresh display runs on a separate worker.
+
+## Validation status
+
+Device-key API checks on 2026-10-17 covered authentication, bound-Agent metadata,
+conversation listing, an existing conversation's grant, verified TLS/WSS,
+`session.ready` and grant release. Conversation creation failed with business
+code 1002 (`agent_template_unavailable`). Deletion, real audio and complete
+physical-device acceptance were not covered by those checks.
+
+Relevant host checks are `firmware/tests/test_platform_api.py` and
+`firmware/tests/test_stopwatch_controls.py`. Keep these distinct from device tests.
 
 ## Other grant sources
 
-The backend may also deliver a short-lived grant over the authenticated MQTT downlink.
-`CONFIG_AGENT_LINK_REALTIME_DIRECT` is a separate development path using a fixed
-Agent Stack session and a private User API Key. Both feed the same WebSocket worker; neither is the
-touch-screen conversation flow. Keep either credential in private `sdkconfig`.
+Authenticated MQTT can deliver a short-lived grant. `CONFIG_AGENT_LINK_REALTIME_DIRECT`
+is a separate development path using a fixed session and private User API Key.
+Both use the same worker; neither changes the normal activation/conversation
+flow. Keep direct-test values in `sdkconfig.private`.

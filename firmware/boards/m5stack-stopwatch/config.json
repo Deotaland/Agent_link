@@ -30,16 +30,7 @@
             "ble_name": "M5StopWatch",
             "fw_model": "M5-STOPWATCH",
             "status": "supported",
-            "notes": "Use m5stack-stopwatch-ble. Hold yellow to talk; tap blue for volume, hold blue for 6 seconds to reset pairing. The touch panel is not used.",
-            "zh": {
-                "product": "M5Stack StopWatch",
-                "vendor": "M5Stack",
-                "hardware": "ESP32-S3R8（8 MB PSRAM），16 MB Flash；1.75 寸 466x466 圆形 AMOLED（CO5300，QSPI），CST820 触摸；ES8311 编解码，MEMS 麦克风，AW8737A 1 W 功放；两个按键加电源键；振动马达；M5PM1 电源管理，450 mAh 电池；M5IOE1 IO 扩展；BMI270 IMU；RX8130CE RTC",
-                "identify": "52 x 52 mm 圆形手表，1.75 寸圆形触摸屏；一黄一蓝两个按键加电源键；USB-C；挂绳孔，背面带磁吸",
-                "flash_port": "USB-C（ESP32-S3 自带的 USB）。认不出串口时：插上 USB，按住电源键约 2 秒到绿灯亮，松开。",
-                "use": "通过 Deotaland App 走 BLE 和智能体按键对讲：按住黄键说话，回复从喇叭播放；圆屏显示连接状态",
-                "notes": "使用 m5stack-stopwatch-ble。按住黄键说话，短按蓝键调音量，长按蓝键 6 秒重置配对。暂不使用触摸屏。"
-            }
+            "notes": "Use m5stack-stopwatch-ble. Hold yellow to talk; tap blue for volume, hold blue for 6 seconds to reset pairing. The touch panel is not used."
         },
         {
             "board_type": "M5STACK_STOPWATCH_WIFI",
@@ -68,16 +59,7 @@
             "ble_name": null,
             "fw_model": "M5-STOPWATCH",
             "status": "supported",
-            "notes": "Use m5stack-stopwatch-wifi. Hotspot M5StopWatch-XXXX. Touch Start/End call, Sessions and Settings; swipe long replies. Settings offers new/delete conversation and reset activation, with confirmation for delete/reset. Yellow reduces volume, blue increases it (hold to repeat, 0-100). The independent power key retains hardware behavior. Agent binding is managed in the console only. CST820 touch and IOE 0x4F/0x6F supported. No StopWatch hardware is available: device acceptance remains pending.",
-            "zh": {
-                "product": "M5Stack StopWatch",
-                "vendor": "M5Stack",
-                "hardware": "ESP32-S3R8（8 MB PSRAM），16 MB Flash；1.75 寸 466x466 圆形 AMOLED（CO5300，QSPI），CST820 触摸；ES8311 编解码，MEMS 麦克风，AW8737A 1 W 功放；两个按键加电源键；振动马达；M5PM1 电源管理，450 mAh 电池；M5IOE1 IO 扩展；BMI270 IMU；RX8130CE RTC",
-                "identify": "52 x 52 mm 圆形手表，1.75 寸圆形触摸屏；一黄一蓝两个按键加电源键；USB-C；挂绳孔，背面带磁吸",
-                "flash_port": "USB-C（ESP32-S3 自带的 USB）。认不出串口时：插上 USB，按住电源键约 2 秒到绿灯亮，松开。",
-                "use": "WiFi 直连平台：热点配网、激活码认领；在平台绑定 Agent，设备查看、新建、选择或删除会话并进行实时语音",
-                "notes": "使用 m5stack-stopwatch-wifi。热点 M5StopWatch-XXXX。触摸开始/结束通话、会话和设置，长回复可滑动阅读；设置提供新建、删除会话及重置激活，删除和重置需再次确认。黄键减音量、蓝键加音量（长按连续调节，0–100）；独立电源键保留硬件行为。Agent 只在平台绑定。支持 CST820 触摸和 IOE 0x4F/0x6F。暂无 StopWatch 实物，仍待实机验收。"
-            }
+            "notes": "Use m5stack-stopwatch-wifi. Hotspot M5StopWatch-XXXX. Touch Start/End call, Sessions and Settings; swipe long replies. Settings offers new/delete conversation and reset activation, with confirmation for delete/reset. Yellow reduces volume, blue increases it (hold to repeat, 0-100). The independent power key retains hardware behavior. Agent binding is managed in the console only. CST820 touch and IOE 0x4F/0x6F supported. No StopWatch hardware is available: device acceptance remains pending."
         }
     ]
 }

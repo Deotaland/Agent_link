@@ -1,5 +1,3 @@
-#include <math.h>
-#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -7,7 +5,6 @@
 #include "esp_check.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
-#include "esp_heap_caps.h"
 #include "board_pins.h"
 #include "i2c_bus.h"
 #include "paper_audio.h"
@@ -19,7 +16,6 @@ static esp_codec_dev_handle_t s_spk, s_mic;
 static bool s_attempted;
 static bool s_mic_on;
 static bool s_spk_on;
-static int16_t s_chunk[FRAMES * CHANNELS];
 
 static esp_codec_dev_handle_t make_codec(esp_codec_dev_type_t type,
                                        esp_codec_dec_work_mode_t mode)
@@ -160,72 +156,4 @@ esp_err_t paper_audio_read_mono(int16_t *pcm, size_t capacity, size_t *samples)
         pcm[i] = ((int32_t)stereo[2 * i] + stereo[2 * i + 1]) / 2;
     *samples = capacity;
     return ESP_OK;
-}
-
-esp_err_t paper_audio_tone(void)
-{
-    ESP_RETURN_ON_ERROR(paper_audio_init(), TAG, "Audio unavailable");
-    ESP_RETURN_ON_ERROR(speaker_open(), TAG, "Open speaker");
-    esp_err_t result = ESP_OK;
-    for (int frame = 0; frame < RATE; frame += FRAMES) {
-        for (int i = 0; i < FRAMES; ++i) {
-            int16_t v = (int16_t)(8000 * sinf(2 * 3.14159265f * 1000 * (frame + i) / RATE));
-            s_chunk[2 * i] = s_chunk[2 * i + 1] = v;
-        }
-        if (esp_codec_dev_write(s_spk, s_chunk, sizeof(s_chunk)) != ESP_CODEC_DEV_OK) {
-            result = ESP_FAIL;
-            break;
-        }
-    }
-    speaker_close();
-    return result;
-}
-
-esp_err_t paper_audio_record_playback(void)
-{
-    ESP_RETURN_ON_ERROR(paper_audio_init(), TAG, "Audio unavailable");
-    const size_t frames = RATE * 3;
-    int16_t *record = heap_caps_malloc(frames * CHANNELS * sizeof(int16_t),
-                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    ESP_RETURN_ON_FALSE(record, ESP_ERR_NO_MEM, TAG, "Recording requires PSRAM");
-    esp_codec_dev_sample_info_t fs = { .sample_rate = RATE, .channel = CHANNELS, .bits_per_sample = 16 };
-    if (esp_codec_dev_open(s_mic, &fs) != ESP_CODEC_DEV_OK) {
-        free(record);
-        return ESP_FAIL;
-    }
-    esp_err_t result = ESP_OK;
-    if (esp_codec_dev_set_in_gain(s_mic, 30) != ESP_CODEC_DEV_OK) result = ESP_FAIL;
-    int64_t energy[2] = {0};
-    ESP_LOGI(TAG, "Speak now: recording 3 seconds");
-    for (size_t done = 0; result == ESP_OK && done < frames; done += FRAMES) {
-        int16_t *chunk = record + done * CHANNELS;
-        if (esp_codec_dev_read(s_mic, chunk, sizeof(s_chunk)) != ESP_CODEC_DEV_OK) {
-            result = ESP_FAIL;
-            break;
-        }
-        for (int i = 0; i < FRAMES; ++i) {
-            for (int c = 0; c < CHANNELS; ++c) {
-                int32_t v = chunk[2 * i + c];
-                energy[c] += (int64_t)v * v;
-            }
-        }
-    }
-    esp_codec_dev_close(s_mic);
-    int channel = energy[1] > energy[0] ? 1 : 0;
-    if (result == ESP_OK) result = speaker_open();
-    if (result == ESP_OK) {
-        ESP_LOGI(TAG, "Playing recorded channel %d; confirm by listening", channel);
-        for (size_t done = 0; done < frames; done += FRAMES) {
-            for (int i = 0; i < FRAMES; ++i) {
-                s_chunk[2 * i] = s_chunk[2 * i + 1] = record[(done + i) * CHANNELS + channel];
-            }
-            if (esp_codec_dev_write(s_spk, s_chunk, sizeof(s_chunk)) != ESP_CODEC_DEV_OK) {
-                result = ESP_FAIL;
-                break;
-            }
-        }
-        speaker_close();
-    }
-    free(record);
-    return result;
 }

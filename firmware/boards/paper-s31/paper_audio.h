@@ -11,8 +11,6 @@ extern "C" {
 
 // Call paper_hardware_init() before using the codec or PA.
 esp_err_t paper_audio_init(void);
-esp_err_t paper_audio_tone(void);
-esp_err_t paper_audio_record_playback(void);
 esp_err_t paper_audio_speaker_start(void);
 esp_err_t paper_audio_speaker_stop(void);
 esp_err_t paper_audio_write_mono(const int16_t *pcm, size_t samples);

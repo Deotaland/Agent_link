@@ -16,10 +16,9 @@
         "RoRoLee",
         "work-badge",
         "badge",
-        "工牌",
-        "电子工牌",
+        "work badge",
+        "electronic work badge",
         "Deotaland",
-        "德奥塔",
         "rorolee.com"
       ],
       "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; BQ27220 fuel gauge",
@@ -31,18 +30,9 @@
       "fw_model": "RRL-01",
       "status": "supported",
       "notes": "Pins from the mass-production board. Only the screen, the fuel gauge and the App link are used.",
-      "zh": {
-        "product": "RoRoLee",
-        "vendor": "Deotaland（德奥塔）",
-        "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；SH8501 120x240 AMOLED；BQ27220 电量计",
-        "identify": "小的长方形 AMOLED 屏（120x240）；三个按键：BOOT、VOL+、VOL-",
-        "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
-        "use": "电子工牌：通过 BLE 由 App 填写的名片",
-        "notes": "引脚来自量产板，只用到屏幕、电量计和 App 连接。"
-      },
+      "profile": "work-badge-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_WORK_BADGE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_WORK_BADGE_BLE=y"
       ]
     },
     {
@@ -60,7 +50,6 @@
         "RoRoLee",
         "rorolee-muse",
         "Deotaland",
-        "德奥塔",
         "rorolee.com"
       ],
       "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; ES8311 + ES7210 audio; BQ27220 fuel gauge",
@@ -72,18 +61,9 @@
       "fw_model": "RRL-01",
       "status": "supported",
       "notes": "Hold VOL- for 6 s to forget the Muse pairing. Chinese text needs a font image in anim_pack (boards/rorolee-muse/font/README.md).",
-      "zh": {
-        "product": "RoRoLee",
-        "vendor": "Deotaland（德奥塔）",
-        "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；SH8501 120x240 AMOLED；ES8311 + ES7210 音频；BQ27220 电量计",
-        "identify": "小的长方形 AMOLED 屏（120x240）；三个按键：BOOT、VOL+、VOL-",
-        "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
-        "use": "Muse 语音助手：按住 BOOT 说话，回答以文字显示",
-        "notes": "按住 VOL- 6 秒清除 Muse 配对。显示中文需要往 anim_pack 烧字库（boards/rorolee-muse/font/README.md）。"
-      },
+      "profile": "rorolee-muse",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ROROLEE_MUSE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_MUSE=y"
+        "CONFIG_AGENT_LINK_PROFILE_ROROLEE_MUSE=y"
       ]
     },
     {
@@ -101,7 +81,6 @@
         "RoRoLee",
         "rorolee-s3",
         "Deotaland",
-        "德奥塔",
         "rorolee.com"
       ],
       "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; ES8311 + ES7210 audio; BQ27220 fuel gauge",
@@ -113,18 +92,9 @@
       "fw_model": "RRL-01",
       "status": "supported",
       "notes": null,
-      "zh": {
-        "product": "RoRoLee",
-        "vendor": "Deotaland（德奥塔）",
-        "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；SH8501 120x240 AMOLED；ES8311 + ES7210 音频；BQ27220 电量计",
-        "identify": "小的长方形 AMOLED 屏（120x240）；三个按键：BOOT、VOL+、VOL-",
-        "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
-        "use": "Agent Link 参考固件：通过 BLE 连 Deotaland App，按键和智能体对话",
-        "notes": null
-      },
+      "profile": "rorolee-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ROROLEE_S3=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_ROROLEE_BLE=y"
       ]
     },
     {
@@ -142,9 +112,8 @@
         "WOWNNY",
         "wownny-muse",
         "Deotaland",
-        "德奥塔",
         "rorolee.com",
-        "圆屏"
+        "round display"
       ],
       "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; GC9D01 160x160 round TFT; ES8311 + ES7210 audio; BQ27220 fuel gauge; vibration motor",
       "identify": "Round screen, about 100 px of it visible through the case; three buttons: BOOT, VOL+, VOL-",
@@ -155,18 +124,9 @@
       "fw_model": "WWY-01",
       "status": "supported",
       "notes": "Production board. Once the screen starts the log continues on USB only (GPIO43, UART0 TX, is the display reset).",
-      "zh": {
-        "product": "WOWNNY",
-        "vendor": "Deotaland（德奥塔）",
-        "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；GC9D01 160x160 圆形屏；ES8311 + ES7210 音频；BQ27220 电量计；振动马达",
-        "identify": "圆形屏，透过外壳能看到约 100 像素；三个按键：BOOT、VOL+、VOL-",
-        "flash_port": "USB-C（芯片自带的 USB）。下载模式：按住 BOOT 再插 USB。",
-        "use": "Muse 语音助手：按住 BOOT 说话；固件里填了 MiniMax key 时会念出回答",
-        "notes": "量产板。屏幕启动后日志只从 USB 输出（GPIO43 即 UART0 TX，用作屏幕复位）。"
-      },
+      "profile": "wownny-muse",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_WOWNNY_MUSE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_MUSE=y"
+        "CONFIG_AGENT_LINK_PROFILE_WOWNNY_MUSE=y"
       ]
     },
     {
@@ -184,11 +144,10 @@
         "WOWNNY",
         "wownny-muse",
         "Deotaland",
-        "德奥塔",
         "rorolee.com",
-        "圆屏",
-        "老板子",
-        "旧版"
+        "round display",
+        "old board",
+        "old revision"
       ],
       "hardware": "Same parts as WWY-01 on an earlier PCB: different display pins, display powered from GPIO46, no 32 kHz crystal",
       "identify": "Looks like WWY-01. Its screen stays dark for about a second at boot. If unsure, flash WWY-01 first; if the screen stays dark, flash this one.",
@@ -199,18 +158,9 @@
       "fw_model": "WWY-01-old",
       "status": "legacy",
       "notes": "Early hardware revision. The volume keys are swapped compared to WWY-01.",
-      "zh": {
-        "product": "WOWNNY（老板子）",
-        "vendor": "Deotaland（德奥塔）",
-        "hardware": "和 WWY-01 同样的器件，早期 PCB：屏幕引脚不同，屏幕由 GPIO46 供电，没有 32 kHz 晶振",
-        "identify": "外观和 WWY-01 一样，开机时屏幕会黑一秒左右。分不清时先烧 WWY-01；屏幕不亮再烧这个。",
-        "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
-        "use": "Muse 语音助手，和 WWY-01 相同",
-        "notes": "早期硬件版本，音量键和 WWY-01 是反的。"
-      },
+      "profile": "wownny-old-muse",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_WOWNNY_OLD_MUSE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_MUSE=y"
+        "CONFIG_AGENT_LINK_PROFILE_WOWNNY_OLD_MUSE=y"
       ]
     },
     {
@@ -234,7 +184,7 @@
         "FoloToy",
         "folotoy",
         "ai-passport",
-        "护照"
+        "Passport"
       ],
       "hardware": "ESP32-C3, 8 MB flash, no PSRAM; ST7789P3 240x320 SPI LCD; ES8311 codec (mic + speaker); three ADC keys (UP/DOWN/OK); CW2017 fuel gauge",
       "identify": "Wearable badge with a 240x320 colour screen and three physical keys; USB-C (ESP32-C3 native USB Serial/JTAG on GPIO18/19)",
@@ -244,19 +194,89 @@
       "ble_name": "AIPassport",
       "fw_model": "AI-PASSPORT",
       "status": "supported",
-      "notes": "First Agent Link board on ESP32-C3. Build with idf.py set-target esp32c3. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
-      "zh": {
-        "product": "FoloToy AI Passport",
-        "vendor": "FoloToy",
-        "hardware": "ESP32-C3，8 MB Flash，无 PSRAM；ST7789P3 240x320 SPI 屏；ES8311 编解码（麦克风+扬声器）；三键 ADC 分压（上/下/确定）；CW2017 电量计",
-        "identify": "可穿戴式护照外形，240x320 彩屏，三个实体按键；USB-C（ESP32-C3 原生 USB Serial/JTAG，GPIO18/19）",
-        "flash_port": "USB-C（原生 USB Serial/JTAG）。一般可自动复位进入下载；不行再按住相关按键重试。",
-        "use": "通过 Deotaland App 走 BLE 和智能体按键对讲：按住确定键说话，松开发送；回复从喇叭播放；屏幕颜色表示连接状态",
-        "notes": "Agent Link 首个 ESP32-C3 板型。用 idf.py set-target esp32c3 编译。分区表是 partitions_esp32c3.csv（8 MB，双 OTA）。串口是 USB Serial/JTAG——UART0 TX 与背光 GPIO21 冲突。引脚与 FoloToy ai-passport 的 bsp_pins.h 一致。"
-      },
+      "notes": "ESP32-C3 profile: ai-passport-ble; build with tools/build_firmware.py. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
+      "profile": "ai-passport-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_FOLOTOY_AI_PASSPORT=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_AI_PASSPORT_BLE=y"
+      ]
+    },
+    {
+      "board_type": "ESP32S3_KORVO",
+      "dir": "korvo-ble",
+      "target": "esp32s3",
+      "model": "Korvo 2 V3",
+      "product": "ESP32S3 Korvo 2 V3 development board",
+      "vendor": "KSDIY (Kevincoooool)",
+      "buy": [
+        "https://item.taobao.com/item.htm?id=681702043224"
+      ],
+      "docs": [
+        "https://github.com/Kevincoooool/esp-idf-docs"
+      ],
+      "aliases": [
+        "Korvo",
+        "Korvo 2",
+        "Korvo-2",
+        "Korvo2",
+        "ESP32-S3-Korvo-2",
+        "ESP32S3 Korvo",
+        "Korvo S3",
+        "KSDIY",
+        "Kevincoooool",
+        "681702043224"
+      ],
+      "hardware": "ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM); 1.69-inch 240x280 ST7789 touch LCD (CST816); ES8311 + ES7210 audio; 24-pin DVP camera connector (this firmware drives a GC2145); TF card slot",
+      "identify": "Two USB-C ports; 1.69-inch touch screen; camera on a 24-pin ribbon connector; six ADC buttons",
+      "flash_port": "Left USB-C (CH9102F USB-UART, automatic download). The right USB-C is the chip's own USB, not for flashing.",
+      "use": "Touch home screen with three apps: camera preview, voice to the agent, WAV recording to the TF card; links over BLE with the Deotaland App",
+      "transport": "BLE",
+      "ble_name": "KORVO",
+      "fw_model": "KORVO",
+      "status": "supported",
+      "notes": "Pin-compatible with Espressif's ESP32-S3-Korvo-2 V3, but the screen code is for this board's 240x280 ST7789. Espressif's own Korvo-2 uses a different LCD board, so the screen may not work there.",
+      "profile": "korvo-ble",
+      "sdkconfig": [
+        "CONFIG_AGENT_LINK_PROFILE_KORVO_BLE=y"
+      ]
+    },
+    {
+      "board_type": "ESP32S3_KORVO_CLOUD",
+      "dir": "korvo-wifi",
+      "target": "esp32s3",
+      "model": "Korvo 2 V3",
+      "product": "ESP32S3 Korvo 2 V3 development board",
+      "vendor": "KSDIY (Kevincoooool)",
+      "buy": [
+        "https://item.taobao.com/item.htm?id=681702043224"
+      ],
+      "docs": [
+        "https://github.com/Kevincoooool/esp-idf-docs"
+      ],
+      "aliases": [
+        "Korvo",
+        "Korvo 2",
+        "Korvo-2",
+        "Korvo2",
+        "ESP32-S3-Korvo-2",
+        "ESP32S3 Korvo",
+        "Korvo S3",
+        "korvo-cloud",
+        "KSDIY",
+        "Kevincoooool",
+        "681702043224"
+      ],
+      "hardware": "ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM); 1.69-inch 240x280 ST7789 touch LCD (CST816); ES8311 + ES7210 audio; 24-pin DVP camera connector (this firmware drives a GC2145); TF card slot",
+      "identify": "Two USB-C ports; 1.69-inch touch screen; camera on a 24-pin ribbon connector; six ADC buttons",
+      "flash_port": "Left USB-C (CH9102F USB-UART, automatic download). The right USB-C is the chip's own USB, not for flashing.",
+      "use": "WiFi platform voice: hotspot setup and activation code; bind the agent in the console, then list, create, select or delete conversations and start a realtime call; camera preview",
+      "transport": "WIFI",
+      "ble_name": "KorvoCloud-XXXX (WiFi hotspot)",
+      "fw_model": "KORVO-CLOUD",
+      "status": "supported",
+      "notes": "The platform address is compiled in (config.h: CLOUD_BASE_URL, CLOUD_PRODUCT_ID). Rebuild when the platform moves to deotaland.ai. Agent binding is managed in the console only. Deleting a conversation requires confirmation.",
+      "profile": "korvo-wifi",
+      "sdkconfig": [
+        "CONFIG_AGENT_LINK_PROFILE_KORVO_WIFI=y"
       ]
     },
     {
@@ -289,18 +309,9 @@
       "fw_model": "M5-STOPWATCH",
       "status": "supported",
       "notes": "Use m5stack-stopwatch-ble. Hold yellow to talk; tap blue for volume, hold blue for 6 seconds to reset pairing. The touch panel is not used.",
-      "zh": {
-        "product": "M5Stack StopWatch",
-        "vendor": "M5Stack",
-        "hardware": "ESP32-S3R8（8 MB PSRAM），16 MB Flash；1.75 寸 466x466 圆形 AMOLED（CO5300，QSPI），CST820 触摸；ES8311 编解码，MEMS 麦克风，AW8737A 1 W 功放；两个按键加电源键；振动马达；M5PM1 电源管理，450 mAh 电池；M5IOE1 IO 扩展；BMI270 IMU；RX8130CE RTC",
-        "identify": "52 x 52 mm 圆形手表，1.75 寸圆形触摸屏；一黄一蓝两个按键加电源键；USB-C；挂绳孔，背面带磁吸",
-        "flash_port": "USB-C（ESP32-S3 自带的 USB）。认不出串口时：插上 USB，按住电源键约 2 秒到绿灯亮，松开。",
-        "use": "通过 Deotaland App 走 BLE 和智能体按键对讲：按住黄键说话，回复从喇叭播放；圆屏显示连接状态",
-        "notes": "使用 m5stack-stopwatch-ble。按住黄键说话，短按蓝键调音量，长按蓝键 6 秒重置配对。暂不使用触摸屏。"
-      },
+      "profile": "m5stack-stopwatch-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_M5STACK_STOPWATCH=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_M5STACK_STOPWATCH_BLE=y"
       ]
     },
     {
@@ -333,55 +344,9 @@
       "fw_model": "M5-STOPWATCH",
       "status": "supported",
       "notes": "Use m5stack-stopwatch-wifi. Hotspot M5StopWatch-XXXX. Touch Start/End call, Sessions and Settings; swipe long replies. Settings offers new/delete conversation and reset activation, with confirmation for delete/reset. Yellow reduces volume, blue increases it (hold to repeat, 0-100). The independent power key retains hardware behavior. Agent binding is managed in the console only. CST820 touch and IOE 0x4F/0x6F supported. No StopWatch hardware is available: device acceptance remains pending.",
-      "zh": {
-        "product": "M5Stack StopWatch",
-        "vendor": "M5Stack",
-        "hardware": "ESP32-S3R8（8 MB PSRAM），16 MB Flash；1.75 寸 466x466 圆形 AMOLED（CO5300，QSPI），CST820 触摸；ES8311 编解码，MEMS 麦克风，AW8737A 1 W 功放；两个按键加电源键；振动马达；M5PM1 电源管理，450 mAh 电池；M5IOE1 IO 扩展；BMI270 IMU；RX8130CE RTC",
-        "identify": "52 x 52 mm 圆形手表，1.75 寸圆形触摸屏；一黄一蓝两个按键加电源键；USB-C；挂绳孔，背面带磁吸",
-        "flash_port": "USB-C（ESP32-S3 自带的 USB）。认不出串口时：插上 USB，按住电源键约 2 秒到绿灯亮，松开。",
-        "use": "WiFi 直连平台：热点配网、激活码认领；在平台绑定 Agent，设备查看、新建、选择或删除会话并进行实时语音",
-        "notes": "使用 m5stack-stopwatch-wifi。热点 M5StopWatch-XXXX。触摸开始/结束通话、会话和设置，长回复可滑动阅读；设置提供新建、删除会话及重置激活，删除和重置需再次确认。黄键减音量、蓝键加音量（长按连续调节，0–100）；独立电源键保留硬件行为。Agent 只在平台绑定。支持 CST820 触摸和 IOE 0x4F/0x6F。暂无 StopWatch 实物，仍待实机验收。"
-      },
+      "profile": "m5stack-stopwatch-wifi",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_M5STACK_STOPWATCH_WIFI=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_WIFI=y"
-      ]
-    },
-    {
-      "board_type": "PAPER_S31",
-      "dir": "paper-s31",
-      "target": "esp32s31",
-      "model": "paper V2",
-      "product": "Mozhifang paper V2 (3.6-inch six-color e-paper)",
-      "vendor": "Mozhifang",
-      "buy": [],
-      "docs": [],
-      "aliases": [
-        "paper-s31",
-        "paper V2",
-        "ESP32-S31",
-        "S31"
-      ],
-      "hardware": "ESP32-S31NRV16, ES8389, Waveshare 3.6-inch e-Paper (E), BQ27220, PCF85063, SC7A20",
-      "identify": "paper V2 board; 3.6-inch 400x600 six-color display on U1 (50 pins), H1 BS0 grounded",
-      "flash_port": "Type-C USB Serial/JTAG on GPIO33/34; hold BOOT (GPIO61) while connecting for download mode",
-      "use": "Offline board demo: six-color screen, speaker tone, microphone record/playback, keys, motor, LED and battery; no platform connection",
-      "transport": "NONE",
-      "ble_name": null,
-      "fw_model": "PAPER-S31",
-      "status": "supported",
-      "notes": "Build verification only; hardware acceptance pending. Requires ESP-IDF 6.1 with esp32s31 support. Camera, touch and SD are not initialized. Color panels use full refresh only.",
-      "zh": {
-        "product": "墨之坊 paper V2（3.6 寸六色墨水屏）",
-        "vendor": "墨之坊",
-        "hardware": "ESP32-S31NRV16、ES8389、3.6 寸六色墨水屏、BQ27220、PCF85063、SC7A20",
-        "identify": "paper V2；3.6 寸 400×600 六色屏接 U1（50 针），H1 的 BS0 接 GND",
-        "flash_port": "Type-C USB Serial/JTAG（GPIO33/34）；按住 BOOT（GPIO61）接入进入下载模式",
-        "use": "离线板级演示：六色屏、喇叭、录音回放、按键、震动、LED、电量；不接平台",
-        "notes": "仅编译验证，待实机验收；需要支持 esp32s31 的 ESP-IDF 6.1。未启用摄像头、触摸和 TF 卡。彩色屏仅全刷。"
-      },
-      "sdkconfig": [
-        "CONFIG_BOARD_TYPE_PAPER_S31=y"
+        "CONFIG_AGENT_LINK_PROFILE_M5STACK_STOPWATCH_WIFI=y"
       ]
     },
     {
@@ -408,18 +373,9 @@
       "fw_model": "PAPER-S31",
       "status": "supported",
       "notes": "Product ID 16, chip_type esp32-s31. Build verification only; hardware and live platform acceptance pending. PCM16 voice; no Opus library for S31. ASCII text rendering only.",
-      "zh": {
-        "product": "墨之坊 paper V2（3.6 寸六色墨水屏）",
-        "vendor": "墨之坊",
-        "hardware": "ESP32-S31NRV16、ES8389、3.6 寸六色墨水屏、BQ27220、PCF85063、SC7A20",
-        "identify": "paper V2；3.6 寸 400×600 六色屏接 U1（50 针），H1 的 BS0 接 GND",
-        "flash_port": "Type-C USB Serial/JTAG（GPIO33/34）；按住 BOOT（GPIO61）接入进入下载模式",
-        "use": "WiFi 平台设备：热点配网、六位激活码、MQTT 控制、会话选择和 PCM16 实时语音；3.6 寸六色屏显示状态",
-        "notes": "产品 ID 16，芯片类型 esp32-s31。仅构建验证，待实机和平台验收。语音使用 PCM16；屏幕仅支持 ASCII 字符。"
-      },
+      "profile": "paper-s31-wifi",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_PAPER_S31_WIFI=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_WIFI=y"
+        "CONFIG_AGENT_LINK_PROFILE_PAPER_S31_WIFI=y"
       ]
     },
     {
@@ -452,119 +408,9 @@
       "fw_model": "GC2145_CAMERA",
       "status": "supported",
       "notes": null,
-      "zh": {
-        "product": "ESP32-S3 AIoT Basic V2 开发板",
-        "vendor": "OpenJumper",
-        "hardware": "ESP32-S3，16 MB Flash，8 MB PSRAM；1.3 寸 240x240 IPS 屏（ST7789）；板载摄像头（本固件驱动 GC2145）；数字麦克风、功放、蜂鸣器、光敏传感器、WS2812 彩灯；Grove 接口",
-        "identify": "较大的学习板，约 145 x 135 mm，板上有九个模块：按键、蜂鸣器、LED、光敏、屏幕、麦克风、SD 卡座、功放、摄像头",
-        "flash_port": "USB-C。下载模式：按住 BOOT 再插 USB。",
-        "use": "摄像头画面显示在屏幕上；按键（或 App）拍照，照片通过 BLE 发给 App",
-        "notes": null
-      },
+      "profile": "gc2145-camera-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_GC2145_CAMERA=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
-      ]
-    },
-    {
-      "board_type": "ESP32S3_KORVO",
-      "dir": "korvo-ble",
-      "target": "esp32s3",
-      "model": "Korvo 2 V3",
-      "product": "ESP32S3 Korvo 2 V3 development board",
-      "vendor": "酷世DIY (Kevincoooool)",
-      "buy": [
-        "https://item.taobao.com/item.htm?id=681702043224"
-      ],
-      "docs": [
-        "https://github.com/Kevincoooool/esp-idf-docs"
-      ],
-      "aliases": [
-        "Korvo",
-        "Korvo 2",
-        "Korvo-2",
-        "Korvo2",
-        "ESP32-S3-Korvo-2",
-        "ESP32S3 Korvo",
-        "Korvo S3",
-        "酷世",
-        "酷世DIY",
-        "KSDIY",
-        "Kevincoooool",
-        "681702043224"
-      ],
-      "hardware": "ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM); 1.69-inch 240x280 ST7789 touch LCD (CST816); ES8311 + ES7210 audio; 24-pin DVP camera connector (this firmware drives a GC2145); TF card slot",
-      "identify": "Two USB-C ports; 1.69-inch touch screen; camera on a 24-pin ribbon connector; six ADC buttons",
-      "flash_port": "Left USB-C (CH9102F USB-UART, automatic download). The right USB-C is the chip's own USB, not for flashing.",
-      "use": "Touch home screen with three apps: camera preview, voice to the agent, WAV recording to the TF card; links over BLE with the Deotaland App",
-      "transport": "BLE",
-      "ble_name": "KORVO",
-      "fw_model": "KORVO",
-      "status": "supported",
-      "notes": "Pin-compatible with Espressif's ESP32-S3-Korvo-2 V3, but the screen code is for this board's 240x280 ST7789. Espressif's own Korvo-2 uses a different LCD board, so the screen may not work there.",
-      "zh": {
-        "product": "ESP32S3 Korvo 2 V3 开发板",
-        "vendor": "酷世DIY（Kevincoooool）",
-        "hardware": "ESP32-S3-WROOM-1-N16R8（16 MB Flash，8 MB PSRAM）；1.69 寸 240x280 ST7789 触摸屏（CST816）；ES8311 + ES7210 音频；24P DVP 摄像头座（本固件驱动 GC2145）；TF 卡座",
-        "identify": "两个 USB-C 口；1.69 寸触摸屏；摄像头接在 24P 排线座上；6 个 ADC 按键",
-        "flash_port": "左边的 USB-C（CH9102F 串口芯片，带自动下载）。右边的 USB-C 是芯片自带的 USB，不用来烧录。",
-        "use": "触摸主屏，三个应用：摄像头预览、语音发给智能体、录音存到 TF 卡；通过 BLE 连 Deotaland App",
-        "notes": "和乐鑫官方 ESP32-S3-Korvo-2 V3 引脚兼容，但屏幕代码是按这块板的 240x280 ST7789 写的；乐鑫官方 Korvo-2 的屏幕板不同，屏幕可能不亮。"
-      },
-      "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_KORVO=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
-      ]
-    },
-    {
-      "board_type": "ESP32S3_KORVO_CLOUD",
-      "dir": "korvo-wifi",
-      "target": "esp32s3",
-      "model": "Korvo 2 V3",
-      "product": "ESP32S3 Korvo 2 V3 development board",
-      "vendor": "酷世DIY (Kevincoooool)",
-      "buy": [
-        "https://item.taobao.com/item.htm?id=681702043224"
-      ],
-      "docs": [
-        "https://github.com/Kevincoooool/esp-idf-docs"
-      ],
-      "aliases": [
-        "Korvo",
-        "Korvo 2",
-        "Korvo-2",
-        "Korvo2",
-        "ESP32-S3-Korvo-2",
-        "ESP32S3 Korvo",
-        "Korvo S3",
-        "korvo-cloud",
-        "酷世",
-        "酷世DIY",
-        "KSDIY",
-        "Kevincoooool",
-        "681702043224"
-      ],
-      "hardware": "ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM); 1.69-inch 240x280 ST7789 touch LCD (CST816); ES8311 + ES7210 audio; 24-pin DVP camera connector (this firmware drives a GC2145); TF card slot",
-      "identify": "Two USB-C ports; 1.69-inch touch screen; camera on a 24-pin ribbon connector; six ADC buttons",
-      "flash_port": "Left USB-C (CH9102F USB-UART, automatic download). The right USB-C is the chip's own USB, not for flashing.",
-      "use": "WiFi platform voice: hotspot setup and activation code; bind the agent in the console, then list, create, select or delete conversations and start a realtime call; camera preview",
-      "transport": "WIFI",
-      "ble_name": "KorvoCloud-XXXX (WiFi hotspot)",
-      "fw_model": "KORVO-CLOUD",
-      "status": "supported",
-      "notes": "The platform address is compiled in (config.h: CLOUD_BASE_URL, CLOUD_PRODUCT_ID). Rebuild when the platform moves to deotaland.ai. Agent binding is managed in the console only. Deleting a conversation requires confirmation.",
-      "zh": {
-        "product": "ESP32S3 Korvo 2 V3 开发板",
-        "vendor": "酷世DIY（Kevincoooool）",
-        "hardware": "ESP32-S3-WROOM-1-N16R8（16 MB Flash，8 MB PSRAM）；1.69 寸 240x280 ST7789 触摸屏（CST816）；ES8311 + ES7210 音频；24P DVP 摄像头座（本固件驱动 GC2145）；TF 卡座",
-        "identify": "两个 USB-C 口；1.69 寸触摸屏；摄像头接在 24P 排线座上；6 个 ADC 按键",
-        "flash_port": "左边的 USB-C（CH9102F 串口芯片，带自动下载）。右边的 USB-C 是芯片自带的 USB，不用来烧录。",
-        "use": "WiFi 直连平台：热点配网、激活码认领；在平台绑定 Agent，设备查看、新建、选择或删除会话并进行实时语音；支持相机预览",
-        "notes": "平台地址编进了固件（config.h 的 CLOUD_BASE_URL、CLOUD_PRODUCT_ID），平台迁到 deotaland.ai 后要重新编译。 Agent 只在平台绑定，删除会话需再次确认。"
-      },
-      "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_KORVO_CLOUD=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_WIFI=y"
+        "CONFIG_AGENT_LINK_PROFILE_GC2145_CAMERA_BLE=y"
       ]
     },
     {
@@ -590,18 +436,9 @@
       "fw_model": "ROROLEE_ES8311_ASR",
       "status": "example",
       "notes": "The talk button is active-high on GPIO8. Check the user's wiring against boards/es8311-asr/config.h before flashing.",
-      "zh": {
-        "product": "接线示例：ESP32-S3 + ES8311（只用麦克风）",
-        "vendor": null,
-        "hardware": "任意 16 MB Flash 的 ESP32-S3 开发板，按 config.h 接一个 ES8311 音频模块和一个按键",
-        "identify": "自己接线，没有对应的成品",
-        "flash_port": "开发板的 USB 口。下载模式：按住 BOOT 再插 USB。",
-        "use": "最小实时语音转文字示例：按住按键，麦克风音频通过 BLE 发给 App",
-        "notes": "说话键在 GPIO8，高电平有效。烧录前按 boards/es8311-asr/config.h 核对用户的接线。"
-      },
+      "profile": "es8311-asr-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_ES8311_ASR=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_ES8311_ASR_BLE=y"
       ]
     },
     {
@@ -626,18 +463,9 @@
       "fw_model": "ROROLEE_ES8311",
       "status": "example",
       "notes": "Check the user's wiring against boards/es8311-voice/config.h before flashing.",
-      "zh": {
-        "product": "接线示例：ESP32-S3 + ES8311（扬声器和麦克风）",
-        "vendor": null,
-        "hardware": "任意 16 MB Flash 的 ESP32-S3 开发板，按 config.h 接一个 ES8311 音频模块",
-        "identify": "自己接线，没有对应的成品",
-        "flash_port": "开发板的 USB 口。下载模式：按住 BOOT 再插 USB。",
-        "use": "最小语音示例：按住 BOOT 通过 BLE 和智能体对话，回答从扬声器播放",
-        "notes": "烧录前按 boards/es8311-voice/config.h 核对用户的接线。"
-      },
+      "profile": "es8311-voice-ble",
       "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32S3_ES8311_VOICE=y",
-        "CONFIG_AGENT_LINK_TRANSPORT_BLE=y"
+        "CONFIG_AGENT_LINK_PROFILE_ES8311_VOICE_BLE=y"
       ]
     },
     {
@@ -655,7 +483,6 @@
       ],
       "aliases": [
         "Waveshare",
-        "微雪",
         "ESP32-P4",
         "P4 7B",
         "7B",
@@ -671,18 +498,8 @@
       "fw_model": "ESP32P4_WAVESHARE",
       "status": "not-adapted",
       "notes": "The screen code still drives a CO5300 466x466 AMOLED, not this board's 7-inch LCD, so the screen stays dark. Don't flash it for users yet.",
-      "zh": {
-        "product": "微雪 ESP32-P4-WIFI6-Touch-LCD-7B",
-        "vendor": "Waveshare（微雪）",
-        "hardware": "ESP32-P4，另有一颗 ESP32-C6 负责 Wi-Fi 6 / BLE 5；7 寸 1024x600 IPS 屏（MIPI-DSI），GT911 触摸",
-        "identify": "7 寸横屏触摸屏",
-        "flash_port": "见微雪的资料。",
-        "use": "只点亮屏幕，没有连接功能",
-        "notes": "屏幕代码目前驱动的还是 CO5300 466x466 AMOLED，不是这块板的 7 寸屏，烧上去屏幕不亮。先不要给用户烧。"
-      },
-      "sdkconfig": [
-        "CONFIG_BOARD_TYPE_ESP32P4_WAVESHARE=y"
-      ]
+      "profile": null,
+      "sdkconfig": []
     }
   ]
 }

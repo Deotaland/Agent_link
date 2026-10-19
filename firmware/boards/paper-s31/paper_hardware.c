@@ -65,20 +65,6 @@ static bool battery_word(uint8_t reg, int16_t *value)
     return true;
 }
 
-static void battery_text(char *text, size_t size)
-{
-    int16_t mv, ma, soc;
-    if (!i2c_bus_probe(BQ27220_I2C_ADDR)) {
-        snprintf(text, size, "Battery: not connected");
-    } else if (!battery_word(0x08, &mv) || !battery_word(0x0C, &ma) || !battery_word(0x2C, &soc)) {
-        snprintf(text, size, "Battery: read failed");
-    } else if (soc < 0 || soc > 100 || mv < 2500 || mv > 4500) {
-        snprintf(text, size, "Battery: invalid reading");
-    } else {
-        snprintf(text, size, "Battery: %d%% %dmV %dmA", soc, mv, ma);
-    }
-}
-
 esp_err_t paper_battery_read(int *percent, bool *charging)
 {
     if (!percent || !charging) return ESP_ERR_INVALID_ARG;
@@ -91,34 +77,6 @@ esp_err_t paper_battery_read(int *percent, bool *charging)
     *percent = soc;
     *charging = ma > 0;
     return ESP_OK;
-}
-
-void paper_sensor_log(void)
-{
-    static const uint8_t addresses[] = {0x10, 0x18, 0x19, 0x51, 0x55};
-    for (size_t i = 0; i < sizeof(addresses); ++i) {
-        ESP_LOGI(TAG, "I2C 0x%02x: %s", addresses[i], i2c_bus_probe(addresses[i]) ? "present" : "absent");
-    }
-    char battery[80];
-    battery_text(battery, sizeof(battery));
-    ESP_LOGI(TAG, "%s", battery);
-    uint8_t rtc[7];
-    if (i2c_bus_probe(PCF85063_I2C_ADDR) &&
-        i2c_read_regs(PCF85063_I2C_ADDR, 0x04, rtc, sizeof(rtc)) == ESP_OK) {
-        if (rtc[0] & 0x80) {
-            ESP_LOGW(TAG, "RTC oscillator stopped; time is not valid");
-        } else {
-            ESP_LOGI(TAG, "RTC BCD: 20%02x-%02x-%02x %02x:%02x:%02x",
-                     rtc[6], rtc[5] & 0x1f, rtc[3] & 0x3f, rtc[2] & 0x3f, rtc[1] & 0x7f, rtc[0] & 0x7f);
-        }
-    }
-    uint8_t imu = i2c_bus_probe(0x19) ? 0x19 : (i2c_bus_probe(0x18) ? 0x18 : 0);
-    if (imu) {
-        uint8_t who;
-        if (i2c_read_regs(imu, 0x0f, &who, 1) == ESP_OK) {
-            ESP_LOGI(TAG, "SC7A20 WHO_AM_I=0x%02x (expected 0x11)", who);
-        }
-    }
 }
 
 static void draw_text(uint8_t *frame, int x, int y, const char *text)
@@ -138,41 +96,6 @@ static void draw_text(uint8_t *frame, int x, int y, const char *text)
             }
         }
     }
-}
-
-esp_err_t paper_display_status(void)
-{
-    ESP_RETURN_ON_FALSE(epd_probe(), ESP_ERR_NOT_FOUND, TAG, "Display not responding");
-    uint8_t *frame = heap_caps_malloc(EPD_WIDTH * EPD_HEIGHT, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    ESP_RETURN_ON_FALSE(frame, ESP_ERR_NO_MEM, TAG, "Display requires PSRAM");
-    memset(frame, 0xff, EPD_WIDTH * EPD_HEIGHT);
-    draw_text(frame, 16, 20, "Agent Link / PAPER-S31");
-    draw_text(frame, 16, 60, "3.6in 400x600 SIX COLOR");
-    draw_text(frame, 16, 100, "Offline board demo");
-    static const uint8_t colors[] = {0x00, 0xff, 0xfc, 0xe0, 0x03, 0x1c};
-    for (int y = 160; y < 280; ++y) {
-        for (int x = 8; x < EPD_WIDTH - 8; ++x) {
-            frame[y * EPD_WIDTH + x] = colors[(x - 8) * 6 / (EPD_WIDTH - 16)];
-        }
-    }
-    char battery[80];
-    battery_text(battery, sizeof(battery));
-    char first[24];
-    snprintf(first, sizeof(first), "%.23s", battery);
-    draw_text(frame, 16, 300, first);
-    if (strlen(battery) > 23) draw_text(frame, 16, 340, battery + 23);
-    ESP_LOGI(TAG, "%s", battery);
-    draw_text(frame, 16, 400, "BOOT: next demo");
-    draw_text(frame, 16, 440, "1 Speaker tone");
-    draw_text(frame, 16, 480, "2 Record + playback");
-    draw_text(frame, 16, 520, "3 Motor + LED");
-    draw_text(frame, 16, 560, "4 Sensors + screen");
-    int before = epd_busy_timeouts();
-    EPD_init();
-    PIC_display(frame);
-    EPD_sleep();
-    free(frame);
-    return epd_busy_timeouts() == before ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t paper_display_lines(const char *const *lines, size_t count)

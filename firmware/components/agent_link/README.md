@@ -1,71 +1,88 @@
-# Agent Link component
+# Agent Link SDK
 
-This component connects a board to the Deotaland Agent platform. The board declares its
-capabilities and supplies callbacks for hardware work; the component handles the link, protocol,
-voice routing, device identity, and OTA. [`main/app_main.cpp`](../../main/app_main.cpp) wires the
-selected board to the component.
+An ESP-IDF component for BLE/WiFi connectivity, device I/O, audio streams and OTA.
+Hardware is supplied through callbacks. The repository's
+[app entrypoint](../../main/app_main.cpp) adapts one
+[Application](../../apps/common/application.h) to this API.
 
-## Where code belongs
+## Public interfaces
 
-| Location | Responsibility |
+| Header | Purpose |
 | --- | --- |
-| `include/agent_link.h`, `agent_link_stream.h` | Lifecycle, status, callbacks, and media streams |
-| `include/agent_link_io.h`, `agent_link_ota.h`, `agent_link_platform.h` | Device I/O, OTA, and platform conversation calls |
-| `src/core/` | Lifecycle, capabilities, control protocol and device identity |
-| `src/audio/` | PCM/ADPCM downlink, playback accounting and flow control |
-| `src/ota/` | Firmware receive, validation and boot-slot selection |
-| `src/transports/ble/` | GATT control, L2CAP data and bounded voice queue |
-| `src/transports/wifi/` | Station, provisioning and platform clients under `cloud/` |
-| `src/transports/muse/` | Muse adapter |
-| `src/transports/disabled.cpp` | Unsupported implementations for omitted backends |
-| `apps/<app>/` | UI, voice/recording workflows and hardware callbacks |
-| `boards/` | Pins, hardware bring-up and shared drivers |
+| [agent_link.h](include/agent_link.h) | Lifecycle, capabilities, status and callbacks |
+| [agent_link_stream.h](include/agent_link_stream.h) | Voice, audio and image input |
+| [agent_link_io.h](include/agent_link_io.h) | Sensor/actuator descriptors, registration and readings |
+| [agent_link_platform.h](include/agent_link_platform.h) | Bound Agent, conversations and realtime calls |
+| [agent_link_ota.h](include/agent_link_ota.h) | Optional OTA progress and image validation |
 
-The board calls `agent_link_init()` and `agent_link_start()` through the shared app. Output
-callbacks may run on transport or media tasks: queue slow hardware work and return promptly. Streaming input uses
-`agent_link_stream_open/write/close`; callbacks receive PCM16 after any downlink decoding. Register
-only callbacks covered by the board's capability bits.
+Initialize with a persistent `agent_link_config_t` and callback data, then call
+`agent_link_start()`. The repository does this in `main/app_main.cpp` after
+constructing the application. Report only capabilities with working handlers.
 
-## Links
+Copy or queue callback data and return promptly. BLE callbacks may run on the
+6 KB NimBLE host stack; hardware I/O belongs on workers. Audio output callbacks
+receive PCM16 mono at 16 kHz. Tell the SDK the playback buffer capacity with
+`agent_link_playback_set_buffer_ms()` and handle end/reset separately.
 
-- **BLE:** GATT control and L2CAP audio/image channels connect through the phone App.
-- **WiFi:** the captive portal saves WiFi credentials; `/api/device-gateway/*` claims and
-  authenticates the device; MQTT carries platform commands and replies. Korvo Cloud's touch UI can
-  select an agent and conversation and start [realtime voice](REALTIME.md) directly.
-- **Muse:** the Muse gadget transport handles its own pairing and cloud connection.
+Input uses `agent_link_stream_open/write/close`. Use `AGENT_STREAM_VOICE` for
+button voice turns and `AGENT_STREAM_AUDIO` for requested capture; handle errors
+and disconnects. Use the dedicated platform APIs for WiFi conversations and
+calls, as described in [realtime voice](REALTIME.md).
 
-WiFi currently has no publisher for unsolicited SDK control events. Its MQTT bridge handles
-command replies, including an explicit manifest fetch. Do not treat a ready WiFi link as proof that
-BLE-style event notifications are available.
+Register I/O with `agent_link_register_io()` before starting the link. Descriptors
+and their strings need static or equivalent lifetime. Use `agent_link_push_reading()`
+for typed sensor values and keep actuator callbacks short. Built-in capabilities
+supply standard endpoints; register board-specific sensors/actuators explicitly.
+See the [board guide](../../boards/README.md) for porting examples.
 
-WiFi joins and reconnects have a 20-second limit, including the wait for an IP address. On timeout,
-the device opens the setup hotspot; a failed attempt from the setup page leaves it open for retry.
-Only a successful join replaces the saved credentials. Changing WiFi keeps the platform binding.
+## Backends
 
-## Credentials
+| Backend | Implementation |
+| --- | --- |
+| BLE | Phone app; GATT control, voice notifications and L2CAP media/OTA |
+| WiFi | Hotspot provisioning, device activation/authentication, MQTT commands and WebSocket realtime voice |
+| Muse | Muse pairing/cloud adapter; requires companion components |
 
-Keep WiFi passwords, platform user tokens, and direct-test API keys in `sdkconfig.private` or NVS.
-Do not add real credentials to source, defaults, examples, logs, or distributable firmware images.
-The platform user token in `sdkconfig` is embedded in the built image; use a device-scoped
-authorization method before distributing that configuration.
+WiFi reads the current bound Agent from device authentication. Binding and Agent
+selection happen in the console; devices manage that Agent's conversations.
+WiFi has no publisher for unsolicited SDK control events. MQTT command replies
+and explicit manifest queries work; a ready link does not imply BLE-style event
+notifications. Video and hybrid transport enum values are not supported firmware
+profiles.
 
-This project supports ESP-IDF 5.5.x and 6.1.x. The board and transport are selected at build time; see the
-[firmware profiles](../../profiles/README.md) for the supported combinations and build commands.
+WiFi joins have a 20-second limit including IP acquisition, then open the setup
+hotspot. A failed portal attempt leaves it available for retry. Only successful
+joins replace saved credentials. Changing WiFi preserves platform binding.
 
-## Backend selection in another ESP-IDF project
+## Source layout
 
-This firmware passes the profile backend before dependency expansion. A project that copies
-this component can choose a backend in its top-level `CMakeLists.txt`, before `project()`:
+`src/core/` owns lifecycle, control frames and identity; `src/audio/` handles
+playback accounting; `src/ota/` handles image writes. `src/transports/` holds BLE,
+WiFi and Muse adapters. WiFi platform clients are under `wifi/cloud/`.
+`disabled.cpp` supplies unsupported results for omitted backends. No codec or
+panel drivers belong in the SDK.
+
+## Use in another ESP-IDF project
+
+Copy this component into the project's `components/`, add `agent_link` to its
+requirements and select the backend in the top-level `CMakeLists.txt` before
+`project()`:
 
 ```cmake
 set(ENV{AGENT_LINK_BUILD_BACKEND} "BLE")  # BLE, WIFI or MUSE
 ```
 
-The BLE API and wire protocol are unchanged. Selecting WiFi adds the platform, provisioning
-and Opus clients; Muse also needs the repository's Muse components. Calls to an omitted backend
-return `ESP_ERR_NOT_SUPPORTED`. Without a backend selection, the component keeps its legacy
-multi-backend build; that requires the same companion components as before.
+Supply matching Kconfig settings and dependencies. Muse also needs this
+repository's Muse components. Without explicit backend selection the legacy
+multi-backend build requires all companion components. Use
+[firmware profiles](../../profiles/README.md) as the supported integration examples.
 
-For 6.x, JSON and MQTT come from the managed `espressif/cjson` and `espressif/mqtt` components.
-The 5.5 build keeps the IDF-provided components. OTA hashing uses PSA Crypto on 6.x and the
-existing mbedTLS SHA-256 API on 5.5; the OTA protocol and digest format stay the same.
+The project supports ESP-IDF 5.5.x and 6.1.x. IDF 6 uses managed cJSON/MQTT and
+PSA-based OTA hashing; the control protocol and digest format stay unchanged.
+
+## Credentials
+
+WiFi setup and platform device keys are stored in NVS. Put supported build-time
+credentials in ignored `sdkconfig.private`. Never commit tokens/passwords or
+share firmware containing them. Normal WiFi activation needs no account token;
+direct realtime tests are a separate private configuration.

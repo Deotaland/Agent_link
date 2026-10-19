@@ -2,10 +2,6 @@ menu "Agent Link Device"
 
 rsource "Kconfig.profiles"
 
-config BOARD_TYPE_PAPER_S31
-    bool
-    default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-offline"
-
 config BOARD_TYPE_PAPER_S31_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-wifi"

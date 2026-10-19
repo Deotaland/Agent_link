@@ -19,16 +19,7 @@
             "ble_name": "ROROLEE_ES8311",
             "fw_model": "ROROLEE_ES8311",
             "status": "example",
-            "notes": "Check the user's wiring against boards/es8311-voice/config.h before flashing.",
-            "zh": {
-                "product": "接线示例：ESP32-S3 + ES8311（扬声器和麦克风）",
-                "vendor": null,
-                "hardware": "任意 16 MB Flash 的 ESP32-S3 开发板，按 config.h 接一个 ES8311 音频模块",
-                "identify": "自己接线，没有对应的成品",
-                "flash_port": "开发板的 USB 口。下载模式：按住 BOOT 再插 USB。",
-                "use": "最小语音示例：按住 BOOT 通过 BLE 和智能体对话，回答从扬声器播放",
-                "notes": "烧录前按 boards/es8311-voice/config.h 核对用户的接线。"
-            }
+            "notes": "Check the user's wiring against boards/es8311-voice/config.h before flashing."
         }
     ]
 }

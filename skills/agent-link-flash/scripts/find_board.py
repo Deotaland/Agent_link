@@ -16,12 +16,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import catalog  # noqa: E402
 
-CJK = r"㐀-鿿"
+CJK = r"\u3400-\u9fff"
 
 
 def norm(s):
     s = unicodedata.normalize("NFKC", str(s)).lower()
-    return re.sub(r"[\s\-_./:;,()\[\]（）·，、。]+", "", s)
+    return re.sub(r"[\s\-_./:;,()\[\]\uff08\uff09\u00b7\uff0c\u3001\u3002]+", "", s)
 
 
 def tokens(query):
@@ -37,14 +37,12 @@ def url_pieces(url):
 
 
 def fields(e):
-    zh = e.get("zh") or {}
-    strong = [e.get("model"), e.get("product"), zh.get("product"), e.get("fw_model"), *e.get("aliases", [])]
+    strong = [e.get("model"), e.get("product"), e.get("fw_model"), *e.get("aliases", [])]
     if e.get("ble_name"):
         strong.append(re.sub(r"X{2,}.*$", "", e["ble_name"]))
-    medium = [e.get("vendor"), zh.get("vendor")]
+    medium = [e.get("vendor")]
     urls = [*e.get("buy", []), *e.get("docs", [])]
     weak = [e.get(k) for k in ("hardware", "identify", "use", "notes")]
-    weak += [zh.get(k) for k in ("hardware", "identify", "use", "notes")]
     clean = lambda xs: sorted({norm(x) for x in xs if x})  # noqa: E731
     return clean(strong), clean(medium), urls, clean(weak)
 
@@ -94,7 +92,8 @@ def describe(entries):
         lines.append(f"  - {e['board_type']} [{e['status']}] {e['use']}")
         lines.append(f"      firmware/boards/{e['dir']}, target {e['target']}, link {e['transport']},"
                      f" boot log model = {e['fw_model']}")
-        lines.append(f"      sdkconfig: {'  '.join(e['sdkconfig'])}")
+        if e.get("profile"):
+            lines.append(f"      build from firmware/: python tools/build_firmware.py {e['profile']} --jobs 2")
         if e.get("ble_name"):
             lines.append(f"      shows up as: {e['ble_name']}")
         if e.get("notes"):

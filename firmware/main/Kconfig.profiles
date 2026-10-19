@@ -8,10 +8,6 @@ choice AGENT_LINK_FIRMWARE_SELECTION
         The build applies the profile's own board and memory settings.
         To switch chips, use the menu in tools/build_firmware.py.
 
-    config AGENT_LINK_PROFILE_PAPER_S31_OFFLINE
-        bool "paper-s31-offline (board demo, no network)"
-        depends on IDF_TARGET_ESP32S31
-
     config AGENT_LINK_PROFILE_PAPER_S31_WIFI
         bool "paper-s31-wifi (WIFI)"
         depends on IDF_TARGET_ESP32S31
@@ -72,7 +68,6 @@ endchoice
 
 config AGENT_LINK_FIRMWARE_PROFILE
     string
-    default "paper-s31-offline" if AGENT_LINK_PROFILE_PAPER_S31_OFFLINE
     default "paper-s31-wifi" if AGENT_LINK_PROFILE_PAPER_S31_WIFI
     default "korvo-ble" if AGENT_LINK_PROFILE_KORVO_BLE
     default "korvo-wifi" if AGENT_LINK_PROFILE_KORVO_WIFI

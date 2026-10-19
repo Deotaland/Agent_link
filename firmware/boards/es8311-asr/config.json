@@ -19,16 +19,7 @@
             "ble_name": "ROROLEE_ES8311_ASR",
             "fw_model": "ROROLEE_ES8311_ASR",
             "status": "example",
-            "notes": "The talk button is active-high on GPIO8. Check the user's wiring against boards/es8311-asr/config.h before flashing.",
-            "zh": {
-                "product": "接线示例：ESP32-S3 + ES8311（只用麦克风）",
-                "vendor": null,
-                "hardware": "任意 16 MB Flash 的 ESP32-S3 开发板，按 config.h 接一个 ES8311 音频模块和一个按键",
-                "identify": "自己接线，没有对应的成品",
-                "flash_port": "开发板的 USB 口。下载模式：按住 BOOT 再插 USB。",
-                "use": "最小实时语音转文字示例：按住按键，麦克风音频通过 BLE 发给 App",
-                "notes": "说话键在 GPIO8，高电平有效。烧录前按 boards/es8311-asr/config.h 核对用户的接线。"
-            }
+            "notes": "The talk button is active-high on GPIO8. Check the user's wiring against boards/es8311-asr/config.h before flashing."
         }
     ]
 }

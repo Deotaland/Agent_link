@@ -1,72 +1,146 @@
-# Hardware and applications
+# Add a board
 
-`boards/` holds wiring, drivers and the board catalog. User workflows live in `apps/`.
-One firmware profile selects them together; unsupported board/transport combinations are not offered.
+A port has three parts: hardware under `boards/`, an application under `apps/`,
+and a profile under `profiles/`. BLE and WiFi use the same application callbacks;
+the SDK owns provisioning, authentication and transport protocols.
 
-```text
-profiles/profiles.json        app, hardware, drivers, UI, backend and defaults
-boards/<board>/config.json   hardware identity and supported firmware metadata
-boards/<board>/config.h      board/application settings
-boards/common/              reusable peripheral drivers
-boards/korvo/               shared Korvo wiring and hardware initialization
-apps/<app>/                 UI, sessions, recording and SDK callbacks
-apps/common/application.h   callback adapter used by main/app_main.cpp
+## Choose a starting point
+
+| Need | Read first |
+| --- | --- |
+| Small BLE voice device | `apps/es8311-voice/` and `profiles/es8311-voice-ble.defaults` |
+| BLE camera | `apps/gc2145-camera/` |
+| BLE/WiFi on shared hardware | `boards/m5stack-stopwatch/` and its two applications |
+| WiFi voice and conversations | `apps/m5stack-stopwatch-wifi/` |
+| C3 without PSRAM | `boards/ai-passport/` and `profiles/ai-passport-ble.defaults` |
+
+Confirm the chip, flash/PSRAM size, panel and codec, GPIO assignments, power
+controls, button polarity and USB connector before copying a port. Use its
+schematic; similar product names do not guarantee the same wiring.
+
+## 1. Hardware
+
+Create `boards/my-board/config.h` for pins and product settings. Put board-specific
+initialization and drivers beside it. Reuse drivers from `boards/common/` by
+passing pins and bus handles. Initialize shared buses once, then attach devices.
+Do not put BLE/WiFi branches or protocol code in hardware drivers.
+
+Create `config.json` using an existing catalog entry as the schema. Set the
+outer `type` to the directory name and `target` to the IDF chip name. Each item in
+`boards` describes one firmware variant: unique `board_type`, model, product,
+vendor, aliases, identification details, USB port, use, transport, BLE name,
+`fw_model`, status and notes. All catalog fields and aliases use English;
+do not add translated copies.
+
+Use distinct board types for BLE and WiFi variants. `fw_model` must match the
+application's `Model()` exactly. Preserve existing model strings when migrating
+an installed product; OTA validates them.
+
+## 2. Application
+
+Create `apps/my-board-ble/my_board.cc`. Derive from
+[Application](../apps/common/application.h), initialize hardware and register one
+implementation:
+
+```cpp
+#include "application.h"
+#include "config.h"
+
+class MyBoard : public Application {
+public:
+    MyBoard() { /* Initialize hardware and workers. */ }
+    const char* Name() const override { return "MyBoard"; }
+    const char* Model() const override { return "MY-BOARD"; }
+    uint32_t Capabilities() const override { return 0; }
+};
+
+DECLARE_APPLICATION(MyBoard);
 ```
 
-Korvo BLE and WiFi share one `KorvoHardware` instance per application. The camera creates the I2C bus;
-touch and audio attach afterwards. Each application owns its playback queue and workers. SD-card
-and servo drivers are selected separately. Other ports retain their initialization inside the
-application; extract it into `boards/` when sharing or changing the hardware.
+Add capabilities only as their handlers work:
 
-## Application interface
-
-Derive from `Application` and end the implementation with `DECLARE_APPLICATION(MyApplication)`.
-`Name()`, `Model()` and `Capabilities()` declare device identity and available I/O. Keep the existing
-`Model()` string when migrating a device: OTA checks it against the installed firmware.
-
-| Operation | Application hook |
+| Function | Application/API |
 | --- | --- |
-| Audio output and end/reset | `PlayAudio`, `AudioEnd`, `AudioReset` |
-| Listening request | `OnListen` |
-| Reply state | `OnVoiceReply` |
-| Text, vibration, LED | `ShowText`, `Vibrate`, `SetLed` |
-| Link progress | `OnLinkStatus`, `OnLinkState` |
-| Product identity for direct platform access | `Platform` |
-| Additional control command | `OnCommand` |
+| Speaker output | `PlayAudio`, `AudioEnd`, `AudioReset`; queue PCM16 mono at 16 kHz |
+| Microphone request | `OnListen`; capture on a worker |
+| Button voice input | `agent_link_stream_open/write/close` with `AGENT_STREAM_VOICE` |
+| Text, motor, LED | `ShowText`, `Vibrate`, `SetLed` |
+| Link status | `OnLinkStatus`; copy `title`, `hint` and activation `code` |
+| Sensor/actuator | Register endpoints with `agent_link_register_io` |
 | Battery | `GetBatteryLevel`, `IsCharging` |
 
-Call SDK stream and I/O APIs directly for input. Shared hardware drivers never depend on Agent Link.
-SDK callbacks can run on the 6 KB NimBLE host stack: copy data or signal a worker, then return.
-Advertise only capabilities that work. `main/board.h` retains `Board` and `DECLARE_BOARD` aliases
-for existing external ports.
+Copy callback data before returning and queue slow work. The NimBLE host stack
+is 6 KB. Stream APIs can block; use them on a capture worker. Before starting a
+capture, check `agent_link_state() == AGENT_STATE_READY` and handle stream errors.
+Constructors run before SDK initialization; defer operations that require a link.
 
-## Adding hardware or a firmware profile
+For **BLE**, the phone app supplies the platform connection. Start with the
+voice example and adapt its pins, input polarity and buffering.
 
-The `paper-s31-wifi` profile connects the Mozhifang paper V2 to the platform as
-product 16, using hotspot setup, activation, MQTT and PCM16 realtime voice. Its
-3.6-inch six-color screen runs on a separate worker; BOOT controls calls and sessions.
-The `paper-s31-offline` profile brings up the same board with a 3.6-inch
-400x600 six-color display, ES8389 audio, keys, motor and battery readings. It runs
-without a transport and requires ESP-IDF 6.1 with ESP32-S31 support. See
-[paper-s31](paper-s31/README.md) for wiring and the BOOT demo sequence.
+For **WiFi**, also implement `Platform()` with a static `agent_platform_t`
+containing the real platform URL, registered product ID and chip type. Do not
+copy another product's ID. The SDK handles hotspot setup and activation; display
+`OnLinkStatus` output or provide another way to read the code. Use
+`agent_link_platform_bound_agent()` and the conversation/call APIs from
+[agent_link_platform.h](../components/agent_link/include/agent_link_platform.h).
+Select and bind Agents in the platform console. Microphone upload starts after
+`session.ready`. Follow the [realtime guide](../components/agent_link/REALTIME.md)
+for formats, worker ownership and playback buffering.
 
-1. Add `boards/<board>/config.h` and `config.json`; use a current entry as the catalog template.
-   The catalog records chip, model, vendor, identification, flash port, capabilities and supported link.
-2. Put the application in `apps/<app>/`. Add reusable drivers to `boards/common/`, hardware-specific
-   drivers to `boards/<hardware>/`. Do not compile all common drivers with a source glob.
-3. Add a choice in `main/Kconfig.profiles` and derive its board/backend in `main/Kconfig.projbuild`.
-   Keep old `BOARD_TYPE_*` symbols when migrating existing hardware.
-4. Add a dedicated `.defaults` and an entry in `profiles/profiles.json`. List the required drivers and
-   hardware sources; use the BLE, network and UI fragments only where needed.
-5. If a driver requires a new component, add it to `components/board_support/CMakeLists.txt`.
-   Dependency decisions use the profile manifest, available during IDF's early expansion; do not
-   use `CONFIG_*` to decide `REQUIRES`. Register managed versions in its `idf_component.yml`.
-6. Run `python tools/build_firmware.py --check`, build the selected profile, and test it on hardware.
-   From the repository root run `python tools/board_catalog.py` and `--check` before committing.
+## 3. Profile and build registration
 
-## Configuration and credentials
+For `my-board-ble` on ESP32-S3, add these together:
 
-Use `python tools/build_firmware.py` for the selection menu, or the firmware profile choice in the
-SDK configuration editor. Reuse `build/`. The tool validates the chip and profile, loads the selected
-defaults and keeps private settings in the ignored `sdkconfig.private` file. Never add credentials to
-source, public defaults or catalog entries. See [profiles](../profiles/README.md) for migration details.
+1. In `main/Kconfig.profiles`, add `AGENT_LINK_PROFILE_MY_BOARD_BLE` to the choice
+   with `depends on IDF_TARGET_ESP32S3`, and map it to `"my-board-ble"` in
+   `AGENT_LINK_FIRMWARE_PROFILE`.
+2. In `main/Kconfig.projbuild`, add `BOARD_TYPE_MY_BOARD_BLE` with a default for
+   that profile. Add it to the defaults selecting `AGENT_LINK_TRANSPORT_BLE`.
+   WiFi profiles select `AGENT_LINK_TRANSPORT_WIFI` instead.
+3. Create `profiles/my-board-ble.defaults` with
+   `CONFIG_AGENT_LINK_PROFILE_MY_BOARD_BLE=y` and hardware-specific settings.
+4. Add an entry to `profiles/profiles.json`:
+
+```json
+"my-board-ble": {
+  "board": "my-board",
+  "board_type": "MY_BOARD_BLE",
+  "target": "esp32s3",
+  "backend": "BLE",
+  "defaults": ["profiles/ble.defaults", "profiles/s3-ble.defaults", "profiles/my-board-ble.defaults"],
+  "app": "my-board-ble",
+  "hardware": "my-board",
+  "hardware_sources": [],
+  "drivers": [],
+  "ui": "none"
+}
+```
+
+List hardware `.c`/`.cc` files in `hardware_sources` and common drivers in
+`drivers`; application sources are collected from the selected app directory.
+Add `profiles/lvgl.defaults` and `ui: "lvgl"` only if needed. The S3 fragments
+assume PSRAM: adapt defaults to the actual memory instead of copying them to a
+board without PSRAM. For WiFi on S3, use `profiles/s3-network.defaults` in place
+of the BLE fragments and set product identity in the application config.
+
+If a new driver needs a component, add its dependency selection in
+`components/board_support/CMakeLists.txt` and managed version in
+`idf_component.yml`. Dependency selection reads the manifest before Kconfig is
+available. Keep common defaults free of board-specific settings and credentials.
+
+## 4. Validate
+
+From the repository root:
+
+```sh
+python firmware/tools/build_firmware.py --check
+python tools/board_catalog.py
+python tools/board_catalog.py --check
+python tools/check_docs.py
+python firmware/tools/build_firmware.py my-board-ble --jobs 2
+```
+
+After an authorized flash, check the boot model, link status, advertised I/O,
+buttons, audio and reconnect behavior. For WiFi also test provisioning,
+activation and a conversation with the platform-bound Agent. Record pending
+hardware checks. A build alone does not verify wiring or audio.

@@ -9,10 +9,8 @@ extern "C" {
 #endif
 
 esp_err_t paper_hardware_init(void);
-esp_err_t paper_display_status(void);
 esp_err_t paper_display_lines(const char *const *lines, size_t count);
 esp_err_t paper_battery_read(int *percent, bool *charging);
-void paper_sensor_log(void);
 void paper_vibrate(unsigned duration_ms);
 void paper_led(bool on);
 

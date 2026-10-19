@@ -1,50 +1,43 @@
 ---
 name: agent-link-flash
-description: Identify a user's Agent Link board (RoRoLee, WOWNNY, Korvo, AIoT Basic and others) from its model, company, shop, Bluetooth name or looks, then flash Deotaland Agent Link firmware onto it with the user's consent and get it online over BLE, WiFi or Muse. Use when someone wants to flash, reflash, update or set up such a device. Not for changing firmware code.
+description: Identify an Agent Link board from its name, model, shop, Bluetooth name or appearance, select matching firmware, flash it and guide BLE, WiFi or Muse setup. Use for flashing and device setup, not firmware changes.
 ---
-
-**English** | [简体中文](SKILL.zh-CN.md)
 
 # Flash an Agent Link device
 
-The rules and every detail (flash addresses, setup steps, troubleshooting) are in `AGENTS.md`: read it in the user's checkout, or at https://github.com/Deotaland/Agent_link/blob/main/AGENTS.md. This skill is the order of work.
+Read `AGENTS.md` in the user's checkout. Without a checkout, use the
+[repository instructions](https://github.com/Deotaland/Agent_link/blob/main/AGENTS.md).
 
-## 1. Identify the board
+## Identify and prepare
 
-Run `python scripts/find_board.py "<what the user said>"` from this skill's folder. Pass whatever the user gave: model, product name, company, shop or link, the name it shows over Bluetooth, what it looks like.
+Run `python scripts/find_board.py "USER'S BOARD"` from this skill's folder.
+For a local-language product name, use its English model name from the catalog.
+The output gives compatible profiles, build commands, chip, USB connector and
+boot model. Model names are enough to start; do not ask the user for Kconfig
+symbols. If one model has several firmware choices, ask which behavior or
+connection they want. Confirm weak matches. Do not flash `not-adapted` boards;
+check pins before using a wiring example.
 
-- Several firmware builds for one hardware: ask what the device should do, then use that build.
-- No match or a weak one: ask for more (the text printed on the board, a photo, the order page). Never flash firmware for a board you couldn't identify.
-- `not-adapted`: stop and tell the user this board isn't supported yet.
-- `example`: only for parts the user wired themselves. Check their wiring against the board's `config.h` first.
+Use an existing matching package, the firmware center, or build the returned
+profile in the user's checkout with `firmware/tools/build_firmware.py`. Follow
+[the build skill](../agent-link-build/SKILL.md) when available. Never infer flash
+offsets from another chip's example. Prefer `idf.py flash` for a local build;
+use its `flasher_args.json` to inspect the files and offsets.
 
-## 2. Get an image
+## Write and verify
 
-1. **Browser flasher** (AGENTS.md path A): the user flashes from the firmware center while you guide them. Use this when you can't run commands. The firmware center needs the user's login, so you can't download from it yourself.
-2. **An image you already have** plus esptool (path B).
-3. **Build it** (path C): use the `agent-link-build` skill.
+Find ports read-only with `python -m serial.tools.list_ports -v`. Resolve multiple
+matching ports with the user. Explain the chosen image, port and settings impact
+before writing. Use existing authorization for the requested flash; a connected
+cable alone is not permission. A merged image can overwrite WiFi, pairing and
+device identity. A full-chip erase needs explicit approval.
 
-## 3. Get consent
+Flash with the selected chip and package layout. For connection failures, check
+the data cable, BOOT/reset sequence and port ownership, then retry at 115200.
+Do not erase settings as a troubleshooting shortcut or close another program.
 
-- Find the port read-only: `python -m serial.tools.list_ports -v`. Several ports: ask which one. None: ask the user to plug the board in with a data cable, using the port in the catalog's `flash_port` (Korvo: the left USB-C).
-- Before writing, tell the user the port, the image, the address and what happens to the data:
-  - `idf.py flash`, or the four build files at their offsets: settings and pairing stay.
-  - A merged image at `0x0`, or an erase: WiFi, pairing and the device ID are wiped, and the device must be set up and bound on the platform again.
-- A connected device is not consent. A full erase needs its own yes.
-
-## 4. Flash
-
-Use the commands in AGENTS.md path B or C. If it fails, check download mode (hold BOOT and replug), the cable, a program holding the port, or try 115200 baud. Retry only after changing something. Don't erase the chip to fix a failed flash unless the user agrees.
-
-## 5. Check and set up
-
-- Read the boot log (115200 baud, or `idf.py -p PORT monitor`; opening the port can reset the device). `model = …` must equal the catalog's `fw_model`. If the old firmware still runs, see "Flashed, but the old firmware still runs" in AGENTS.md.
-- Walk the user through setup for the board's link (AGENTS.md "After flashing"): BLE and the Deotaland App; WiFi hotspot plus the 6-digit code in the console; or the Muse app plus a BOOT press.
-
-## 6. Report
-
-Report these separately:
-- **Flashed:** the port, image and address.
-- **Boot log checked:** the board, model and link it reported.
-- **Set up:** online, or the step the user is on.
-- **Not verified:** what only the user can confirm (screen, sound, pairing).
+Read a bounded 115200-baud boot log and verify its model and transport. Opening
+the port can reset the board. Do not leave a monitor running after the task.
+Guide BLE app pairing, WiFi hotspot/activation or Muse pairing using AGENTS.md.
+Report what was flashed, what the boot log confirmed and what setup or physical
+checks remain. Do not claim online status from a successful write alone.
