@@ -99,6 +99,8 @@ For `my-board-ble` on ESP32-S3, add these together:
    WiFi profiles select `AGENT_LINK_TRANSPORT_WIFI` instead.
 3. Create `profiles/my-board-ble.defaults` with
    `CONFIG_AGENT_LINK_PROFILE_MY_BOARD_BLE=y` and hardware-specific settings.
+   Declare flash capacity, the custom partition table, PSRAM wiring, board clocks
+   and console routing here; never inherit them from common or chip defaults.
 4. Add an entry to `profiles/profiles.json`:
 
 ```json

@@ -1,5 +1,2 @@
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_IGNORE_NOTFOUND=y
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_320=y
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
-CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# Chip-wide invariants only for esp32s31.
+# Flash, partitions, PSRAM, CPU frequency and console wiring belong to profiles.

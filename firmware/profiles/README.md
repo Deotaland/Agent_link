@@ -42,6 +42,15 @@ application supports it.
 | `flash_assets` | Optional data images with partition labels and firmware-relative source files; included in USB flash and merged images |
 
 Common defaults and chip defaults load first; the profile's fragments follow.
+Common defaults contain software policy only. Chip defaults are reserved for
+chip-wide invariants, not a particular module or board. Each named profile declares
+its flash capacity and partition table. PSRAM presence/mode/speed, board clock
+choices and console routing also belong to that profile. BLE/network fragments
+may share buffer and allocator policies, but must not assume a module's memory
+wiring. Existing S3 profiles require octal PSRAM at 80 MHz; AI Passport uses 8 MB
+flash without PSRAM. Do not apply AI Passport's USB console pins to every C3 board.
+Metadata checks reject inherited hardware settings, missing flash capacity and
+conflicting flash selections before invoking ESP-IDF.
 Private settings load last from ignored `sdkconfig.private`. Only recognized
 credentials and direct-test settings are accepted there, not board or memory
 settings; the allowed keys are in `tools/build_firmware.py`.

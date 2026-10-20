@@ -95,6 +95,35 @@ def profile_symbol(name):
     return "CONFIG_AGENT_LINK_PROFILE_" + name.upper().replace("-", "_")
 
 
+# Physical memory, clocks and console routing must not be inherited from a chip.
+HARDWARE_PREFIXES = (
+    "CONFIG_ESPTOOLPY_FLASHSIZE", "CONFIG_ESPTOOLPY_FLASHMODE_",
+    "CONFIG_ESPTOOLPY_FLASHFREQ_", "CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE",
+    "CONFIG_PARTITION_TABLE_", "CONFIG_SPIRAM_MODE_", "CONFIG_SPIRAM_SPEED_",
+    "CONFIG_ESP_DEFAULT_CPU_FREQ_", "CONFIG_ESP_CONSOLE_", "CONFIG_RTC_CLK_SRC_",
+)
+HARDWARE_KEYS = {"CONFIG_SPIRAM", "CONFIG_SPIRAM_IGNORE_NOTFOUND"}
+
+
+def check_hardware_defaults(profile):
+    for path in defaults_files(profile)[:2]:
+        misplaced = [key for key in settings(path)
+                     if key in HARDWARE_KEYS or key.startswith(HARDWARE_PREFIXES)]
+        if misplaced:
+            raise ValueError(f"{path.name}: hardware settings belong to profile defaults: " +
+                             ", ".join(sorted(misplaced)))
+    values = expected_settings(profile)
+    sizes = [key for key, value in values.items()
+             if re.fullmatch(r"CONFIG_ESPTOOLPY_FLASHSIZE_\d+MB", key) and value == "y"]
+    if len(sizes) != 1:
+        raise ValueError(f"{profile['name']}: declare exactly one flash capacity in profile defaults")
+    filename = values.get("CONFIG_PARTITION_TABLE_CUSTOM_FILENAME", "").strip('"')
+    partition = ROOT / filename
+    if (values.get("CONFIG_PARTITION_TABLE_CUSTOM") != "y" or not filename or
+            not partition.resolve().is_relative_to(ROOT) or not partition.is_file()):
+        raise ValueError(f"{profile['name']}: declare an existing custom partition table in profile defaults")
+
+
 def load_profiles():
     profiles = json.loads(MANIFEST.read_text(encoding="utf-8"))
     seen = set()
@@ -129,6 +158,7 @@ def load_profiles():
                 raise ValueError(f"{name}: missing or invalid defaults file")
             if PRIVATE_KEYS.intersection(settings(path)):
                 raise ValueError(f"{name}: private settings must not appear in public defaults")
+        check_hardware_defaults(profile)
         partitions = set()
         for asset in profile.get("flash_assets", []):
             partition = asset.get("partition", "")
