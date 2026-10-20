@@ -9,6 +9,10 @@
 #include "cloud_credential.h"
 #include "esp_http_client.h"
 #include "sdkconfig.h"
+#include "cloud_limits.h"
+
+const std::string kListPath = "/api/agents/7/actions/realtime_voice/conversations?limit=" +
+    std::to_string(agentlink::cloud_limits::kListPageSize);
 
 #define CHECK(value) do { if (!(value)) { std::fprintf(stderr, "FAIL at line %d\n", __LINE__); std::exit(1); } } while (false)
 struct Expected {
@@ -123,7 +127,7 @@ int main() {
            R"({"data":{"conversation_id":"owned-session"}})");
     CHECK(agent_link_platform_create_conversation(7, session, sizeof session) == ESP_OK);
     CHECK(std::strcmp(session, "owned-session") == 0);
-    Expect(HTTP_METHOD_GET, "/api/agents/7/actions/realtime_voice/conversations?limit=20",
+    Expect(HTTP_METHOD_GET, kListPath.c_str(),
            R"({"data":{"items":[{"conversation_id":"previous"},{"conversation_id":"owned-session","name":"Test"}]}})");
     CHECK(agent_link_platform_conversations(7, 1, sessions, 3, &count, &total) == ESP_OK);
     CHECK(count == 1 && total == 2 && std::strcmp(sessions[0].id, session) == 0);
@@ -154,10 +158,10 @@ int main() {
     configuration = cJSON_Parse(auth);
     cloud_platform_set_bound_agent(configuration);
     cJSON_Delete(configuration);
-    Expect(HTTP_METHOD_GET, "/api/agents/7/actions/realtime_voice/conversations?limit=20",
+    Expect(HTTP_METHOD_GET, kListPath.c_str(),
            R"({"code":1005,"success":false,"data":{}})");
     CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_ERR_INVALID_RESPONSE);
-    Expect(HTTP_METHOD_GET, "/api/agents/7/actions/realtime_voice/conversations?limit=20", R"({"code":0,"data":{}})", "", 401);
+    Expect(HTTP_METHOD_GET, kListPath.c_str(), R"({"code":0,"data":{}})", "", 401);
     CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_ERR_INVALID_RESPONSE);
 
     std::string page = R"({"data":{"items":[)";
@@ -166,8 +170,8 @@ int main() {
         page += "{\"conversation_id\":\"s" + std::to_string(i) + "\"}";
     }
     page += R"(],"has_more":true,"next_cursor":"abc+/="}})";
-    Expect(HTTP_METHOD_GET, "/api/agents/7/actions/realtime_voice/conversations?limit=20", page.c_str());
-    Expect(HTTP_METHOD_GET, "/api/agents/7/actions/realtime_voice/conversations?limit=20&cursor=abc%2B%2F%3D",
+    Expect(HTTP_METHOD_GET, kListPath.c_str(), page.c_str());
+    Expect(HTTP_METHOD_GET, (kListPath + "&cursor=abc%2B%2F%3D").c_str(),
            R"({"data":{"items":[{"conversation_id":"s20"},{"conversation_id":"s21"},{"conversation_id":"s22"}],"has_more":false}})");
     CHECK(agent_link_platform_conversations(7, 18, sessions, 3, &count, &total) == ESP_OK);
     CHECK(count == 3 && total == 23);

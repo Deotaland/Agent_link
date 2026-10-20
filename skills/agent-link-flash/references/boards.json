@@ -201,6 +201,43 @@
       ]
     },
     {
+      "board_type": "FOLOTOY_AI_PASSPORT_WIFI",
+      "dir": "ai-passport",
+      "target": "esp32c3",
+      "model": "AI-PASSPORT",
+      "product": "FoloToy AI Passport",
+      "vendor": "FoloToy",
+      "buy": [
+        "https://ai-passport.folotoy.cn"
+      ],
+      "docs": [
+        "https://github.com/FoloToy/ai-passport",
+        "https://ai-passport.folotoy.cn"
+      ],
+      "aliases": [
+        "AI Passport",
+        "AIPassport",
+        "FoloPassport",
+        "FoloToy",
+        "folotoy",
+        "ai-passport",
+        "Passport"
+      ],
+      "hardware": "ESP32-C3, 8 MB flash, no PSRAM; ST7789P3 240x320 SPI LCD; ES8311 codec (mic + speaker); three ADC keys (UP/DOWN/OK); CW2017 fuel gauge",
+      "identify": "Wearable badge with a 240x320 colour screen and three physical keys; USB-C (ESP32-C3 native USB Serial/JTAG on GPIO18/19)",
+      "flash_port": "USB-C (native USB Serial/JTAG). Download mode: hold the OK/BOOT-side key path if needed, or use esptool auto-reset.",
+      "use": "Direct WiFi Agent voice: configure the hotspot, activate in the platform console, then press OK to start/end a call; UP/DOWN adjust volume; hold OK for conversations.",
+      "transport": "WIFI",
+      "ble_name": "",
+      "fw_model": "AI-PASSPORT",
+      "status": "supported",
+      "notes": "Profile ai-passport-wifi; platform product 15, chip_type esp32-c3. PCM16 realtime voice, lightweight raster UI, no BLE or PSRAM. Reuses the 8 MB dual-OTA layout. Device audio and reconnect behavior require hardware acceptance.",
+      "profile": "ai-passport-wifi",
+      "sdkconfig": [
+        "CONFIG_AGENT_LINK_PROFILE_AI_PASSPORT_WIFI=y"
+      ]
+    },
+    {
       "board_type": "ESP32S3_KORVO",
       "dir": "korvo-ble",
       "target": "esp32s3",

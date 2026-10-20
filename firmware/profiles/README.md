@@ -15,7 +15,7 @@ python tools/build_firmware.py korvo-wifi --jobs 2
 | RoRoLee RRL-01 | `rorolee-ble`, `work-badge-ble` | BLE |
 | RoRoLee RRL-01 | `rorolee-muse` | Muse |
 | WOWNNY | `wownny-muse`, `wownny-old-muse` | Muse; choose the correct revision |
-| FoloToy AI Passport | `ai-passport-ble` | BLE; ESP32-C3 |
+| FoloToy AI Passport | `ai-passport-ble`, `ai-passport-wifi` | BLE / WiFi; ESP32-C3 |
 | M5Stack StopWatch C152 | `m5stack-stopwatch-ble`, `m5stack-stopwatch-wifi` | BLE / WiFi |
 | OpenJumper AIoT Basic V2 | `gc2145-camera-ble` | BLE |
 | ESP32-S3 + ES8311 wiring examples | `es8311-asr-ble`, `es8311-voice-ble` | BLE |

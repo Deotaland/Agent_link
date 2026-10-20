@@ -124,6 +124,18 @@ config BOARD_TYPE_FOLOTOY_AI_PASSPORT
         talk to the agent over BLE; replies play on the speaker. Screen colour shows link
         status. Use the ai-passport-ble profile. Pins match FoloToy ai-passport BSP.
 
+config BOARD_TYPE_FOLOTOY_AI_PASSPORT_WIFI
+    bool
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "ai-passport-wifi"
+
+config AI_PASSPORT_PRODUCT_ID
+    int "AI Passport platform product ID"
+    depends on BOARD_TYPE_FOLOTOY_AI_PASSPORT_WIFI
+    range 1 2147483647
+    default 15
+    help
+        Registered FoloToy-AI-Passport product on the Deotaland platform.
+
 config AGENT_LINK_TRANSPORT_BLE
     bool
     default y if BOARD_TYPE_ESP32S3_KORVO
@@ -137,6 +149,7 @@ config AGENT_LINK_TRANSPORT_BLE
 
 config AGENT_LINK_TRANSPORT_WIFI
     bool
+    default y if BOARD_TYPE_FOLOTOY_AI_PASSPORT_WIFI
     default y if BOARD_TYPE_WAVESHARE_EPAPER_397_WIFI
     default y if BOARD_TYPE_PAPER_S31_WIFI
     default y if BOARD_TYPE_ESP32S3_KORVO_CLOUD

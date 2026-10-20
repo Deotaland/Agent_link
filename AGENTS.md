@@ -105,6 +105,7 @@ Run `python tools/board_catalog.py` after changing either.
 | WWY-01 | WOWNNY | `wownny-muse` | ESP32-S3 | Muse | supported |
 | WWY-01-old | WOWNNY (old board) | `wownny-old-muse` | ESP32-S3 | Muse | old revision |
 | AI-PASSPORT | FoloToy AI Passport | `ai-passport-ble` | ESP32-C3 | BLE | supported |
+| AI-PASSPORT | FoloToy AI Passport | `ai-passport-wifi` | ESP32-C3 | WiFi | supported |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 development board | `korvo-ble` | ESP32-S3 | BLE | supported |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 development board | `korvo-wifi` | ESP32-S3 | WiFi | supported |
 | C152 | M5Stack StopWatch | `m5stack-stopwatch-ble` | ESP32-S3 | BLE | supported |

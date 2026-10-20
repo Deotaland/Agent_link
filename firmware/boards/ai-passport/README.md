@@ -48,3 +48,50 @@ Build in `firmware/build` with ESP-IDF 5.5.4:
 ```bash
 python tools/build_firmware.py ai-passport-ble
 ```
+
+## WiFi voice
+
+Build from the repository root in the existing ESP-IDF 5.5.x or 6.1.x environment:
+
+```sh
+python firmware/tools/build_firmware.py ai-passport-wifi --jobs 2
+```
+
+The product is `FoloToy-AI-Passport`, platform product ID **15**, chip identifier
+`esp32-c3`, at [bot.zhaojun.work](https://bot.zhaojun.work). Firmware keeps the
+existing `AI-PASSPORT` model string. No account API key belongs in this profile.
+
+After an authorized flash, join the `AIPassport-XXXX` hotspot shown on the screen
+and open `http://192.168.4.1`. Configure WiFi, claim the six-digit activation code
+in the platform console, and bind an Agent supporting realtime voice.
+
+- Press OK to start/end a continuous conversation. The microphone starts only
+  after `session.ready`. There is no hold-to-send interaction in the WiFi profile.
+- UP/DOWN change volume by 5%, repeating while held. Volume is saved locally.
+- Hold OK to end the call and open the menu. UP/DOWN select an entry, OK confirms;
+  hold OK again to return home. Existing conversations have previous/next pages.
+- The first call uses the latest returned conversation, or creates one if none
+  exist. The selection survives restart only for the same bound Agent. The menu
+  can select another conversation or create one; it does not delete conversations.
+- Loss of network ends the call and stops capture. Connectivity retries through
+  the SDK; press OK again after recovery to resume with a fresh voice grant.
+- Speaker playback and its short echo tail upload silence. This is half-duplex
+  feedback prevention, not acoustic echo cancellation or spoken interruption.
+
+PCM16 input is 16 kHz mono; output is negotiated at 24 kHz and converted by the
+SDK to the codec's 16 kHz. C3 queues are bounded, the speaker buffer is 8 KB,
+and complete incoming WebSocket messages are limited to 16 KB. Larger messages
+fail explicitly. The screen renders in a shared 240x4 stripe without LVGL.
+The small raster fonts cover Latin text; non-Latin answer text shows an explicit
+placeholder while spoken replies remain available. Chinese typography is pending.
+
+The WiFi application contains no BLE exchange, NFC web integration or contact
+management. CW2017 battery reporting is not advertised by this version.
+
+## Acceptance
+
+Host checks cover button gestures, PCM packet assembly/conversion, playback
+gating and device-authenticated platform APIs, including the C3 PCM16 path.
+A build is not hardware acceptance. Verify hotspot setup, activation, binding,
+both audio directions, volume, call stop, network recovery, conversation paging
+and repeated calls on the physical board. Keep the matching ELF for diagnosis.

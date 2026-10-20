@@ -14,6 +14,7 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--idf-path', type=Path, default=os.environ.get('IDF_PATH'))
 parser.add_argument('--pcm', action='store_true', help='verify the PCM16-only S31 grant path')
+parser.add_argument('--c3', action='store_true', help='verify C3 PCM16 grants and smaller HTTP pages')
 args = parser.parse_args()
 if not args.idf_path:
     parser.error('provide an existing ESP-IDF path for its cJSON dependency')
@@ -27,7 +28,9 @@ includes = [root / 'tests/platform_api_stubs', root / 'components/agent_link/inc
 sources = [root / 'tests/platform_api_auth_test.cc',
            root / 'components/agent_link/src/transports/wifi/cloud/cloud_platform.cc']
 environment = os.environ.copy()
-defines = ['CONFIG_AGENT_LINK_REALTIME_OPUS=0'] if args.pcm else []
+defines = ['CONFIG_AGENT_LINK_REALTIME_OPUS=0'] if args.pcm or args.c3 else []
+if args.c3:
+    defines.append('CONFIG_IDF_TARGET_ESP32C3=1')
 if os.name == 'nt':
     vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
     installation = subprocess.check_output([str(vswhere), '-latest', '-products', '*',

@@ -1,6 +1,6 @@
 # WiFi realtime voice
 
-Korvo, StopWatch, Waveshare ePaper 3.97 and paper WiFi profiles use the Agent bound in the platform
+AI Passport, Korvo, StopWatch, Waveshare ePaper 3.97 and paper WiFi profiles use the Agent bound in the platform
 console. Devices list, create, select and delete that Agent's conversations and
 start/end calls. Agent selection and binding happen in the console.
 
@@ -80,6 +80,14 @@ Waveshare ePaper 3.97 uses its three-way key for conversations and calls; see
 
 Paper uses BOOT for calls and conversation selection; see its board guide.
 Its full-refresh display runs on a separate worker.
+
+AI Passport uses OK to start/end a continuous call and holds OK for its conversation
+menu. UP/DOWN adjust volume, or move through menus. It restores the selected
+conversation for the same bound Agent; the first call selects the latest existing
+conversation or creates one if none exist. Its ESP32-C3 profile requests PCM16,
+uses a raster display and no BLE, and limits incoming complete WebSocket messages
+to 16 KB. Oversized messages fail the call instead of being truncated. See the
+[board guide](../../boards/ai-passport/README.md).
 
 ## Validation status
 
