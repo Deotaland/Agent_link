@@ -1,6 +1,6 @@
 # WiFi realtime voice
 
-Korvo, StopWatch and paper WiFi profiles use the Agent bound in the platform
+Korvo, StopWatch, Waveshare ePaper 3.97 and paper WiFi profiles use the Agent bound in the platform
 console. Devices list, create, select and delete that Agent's conversations and
 start/end calls. Agent selection and binding happen in the console.
 
@@ -74,6 +74,9 @@ activation; delete/reset require confirmation. Reset keeps WiFi, and the device
 must be unbound in the console before reactivation. Yellow/blue keys change
 volume by 5%; hold to repeat. The first touch after idle dimming wakes the screen.
 Network requests disable conflicting touch actions while volume keys remain usable.
+
+Waveshare ePaper 3.97 uses its three-way key for conversations and calls; see
+[its board guide](../../boards/waveshare-epaper-397/README.md).
 
 Paper uses BOOT for calls and conversation selection; see its board guide.
 Its full-refresh display runs on a separate worker.

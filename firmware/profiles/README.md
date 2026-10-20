@@ -19,6 +19,7 @@ python tools/build_firmware.py korvo-wifi --jobs 2
 | M5Stack StopWatch C152 | `m5stack-stopwatch-ble`, `m5stack-stopwatch-wifi` | BLE / WiFi |
 | OpenJumper AIoT Basic V2 | `gc2145-camera-ble` | BLE |
 | ESP32-S3 + ES8311 wiring examples | `es8311-asr-ble`, `es8311-voice-ble` | BLE |
+| Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | WiFi; ESP32-S3 |
 | Mozhifang paper V2 | `paper-s31-wifi` | WiFi; ESP32-S31 |
 
 S3/C3 profiles support ESP-IDF 5.5.x and 6.1.x. S31 needs an S31-capable 6.1 SDK.
@@ -38,6 +39,7 @@ application supports it.
 | `ui` | `lvgl`, `raster` or `none` |
 | `backend` | `BLE`, `WIFI`, `MUSE` or `NONE` |
 | `defaults` | Ordered sdkconfig fragments |
+| `flash_assets` | Optional data images with partition labels and firmware-relative source files; included in USB flash and merged images |
 
 Common defaults and chip defaults load first; the profile's fragments follow.
 Private settings load last from ignored `sdkconfig.private`. Only recognized

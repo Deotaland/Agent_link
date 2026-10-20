@@ -111,6 +111,7 @@ Run `python tools/board_catalog.py` after changing either.
 | C152 | M5Stack StopWatch | `m5stack-stopwatch-wifi` | ESP32-S3 | WiFi | supported |
 | paper V2 | Mozhifang paper V2 (3.6-inch six-color e-paper) | `paper-s31-wifi` | ESP32-S31 | WiFi | supported |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 development board | `gc2145-camera-ble` | ESP32-S3 | BLE | supported |
+| ESP32-S3-ePaper-3.97 | Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | ESP32-S3 | WiFi | supported |
 | — | Wiring example: ESP32-S3 + ES8311 (mic only) | `es8311-asr-ble` | ESP32-S3 | BLE | wiring example |
 | — | Wiring example: ESP32-S3 + ES8311 (speaker and mic) | `es8311-voice-ble` | ESP32-S3 | BLE | wiring example |
 | ESP32-P4-WIFI6-Touch-LCD-7B | Waveshare ESP32-P4-WIFI6-Touch-LCD-7B | — | ESP32-P4 | — | **not adapted; do not flash** |

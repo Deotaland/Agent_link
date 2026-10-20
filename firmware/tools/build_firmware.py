@@ -129,6 +129,15 @@ def load_profiles():
                 raise ValueError(f"{name}: missing or invalid defaults file")
             if PRIVATE_KEYS.intersection(settings(path)):
                 raise ValueError(f"{name}: private settings must not appear in public defaults")
+        partitions = set()
+        for asset in profile.get("flash_assets", []):
+            partition = asset.get("partition", "")
+            source = ROOT / asset.get("file", "")
+            if (not re.fullmatch(r"[a-zA-Z0-9_-]{1,16}", partition) or
+                    partition in partitions or not source.resolve().is_relative_to(ROOT) or
+                    not source.is_file() or source.stat().st_size == 0):
+                raise ValueError(f"{name}: invalid or missing flash asset")
+            partitions.add(partition)
         selected = {k for k, v in expected_settings(profile).items()
                     if v == "y" and k.startswith(("CONFIG_BOARD_TYPE_", "CONFIG_AGENT_LINK_TRANSPORT_"))}
         if selected != identity(profile):

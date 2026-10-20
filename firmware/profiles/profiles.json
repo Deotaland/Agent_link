@@ -306,5 +306,32 @@
       "paper_audio.c",
       "paper_hardware.c"
     ]
+  },
+  "waveshare-epaper-397-wifi": {
+    "board": "waveshare-epaper-397",
+    "board_type": "WAVESHARE_EPAPER_397_WIFI",
+    "target": "esp32s3",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/lvgl.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/waveshare-epaper-397-wifi.defaults"
+    ],
+    "app": "waveshare-epaper-397-wifi",
+    "hardware": "waveshare-epaper-397",
+    "drivers": [
+      "cjk_font.cc",
+      "es8311_audio.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": [
+      "epaper_hardware.cc"
+    ],
+    "flash_assets": [
+      {
+        "partition": "anim_pack",
+        "file": "boards/common/fonts/cjk_font.bin"
+      }
+    ]
   }
 }

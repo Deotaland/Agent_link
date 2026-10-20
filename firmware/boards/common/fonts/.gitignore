@@ -1,0 +1,2 @@
+# Required runtime asset; include it despite the global build-output rule.
+!cjk_font.bin

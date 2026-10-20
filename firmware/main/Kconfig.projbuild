@@ -2,6 +2,19 @@ menu "Agent Link Device"
 
 rsource "Kconfig.profiles"
 
+config BOARD_TYPE_WAVESHARE_EPAPER_397_WIFI
+    bool
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-epaper-397-wifi"
+
+config WAVESHARE_EPAPER_PRODUCT_ID
+    int "Waveshare ePaper 3.97 platform product ID"
+    depends on BOARD_TYPE_WAVESHARE_EPAPER_397_WIFI
+    range 0 2147483647
+    default 0
+    help
+        Use the platform product registered for this board. Zero leaves WiFi
+        provisioning available but disables platform activation until configured.
+
 config BOARD_TYPE_PAPER_S31_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-wifi"
@@ -124,6 +137,7 @@ config AGENT_LINK_TRANSPORT_BLE
 
 config AGENT_LINK_TRANSPORT_WIFI
     bool
+    default y if BOARD_TYPE_WAVESHARE_EPAPER_397_WIFI
     default y if BOARD_TYPE_PAPER_S31_WIFI
     default y if BOARD_TYPE_ESP32S3_KORVO_CLOUD
     default y if BOARD_TYPE_M5STACK_STOPWATCH_WIFI

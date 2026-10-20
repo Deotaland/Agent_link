@@ -414,6 +414,37 @@
       ]
     },
     {
+      "board_type": "WAVESHARE_EPAPER_397_WIFI",
+      "dir": "waveshare-epaper-397",
+      "target": "esp32s3",
+      "model": "ESP32-S3-ePaper-3.97",
+      "product": "Waveshare ESP32-S3-ePaper-3.97",
+      "vendor": "Waveshare",
+      "buy": [],
+      "docs": [
+        "https://docs.waveshare.com/ESP32-S3-ePaper-3.97"
+      ],
+      "aliases": [
+        "ESP32-S3-ePaper-3.97",
+        "ESP32-S3-ePaper-3.97-EN",
+        "WavePaper",
+        "waveshare-epaper-397"
+      ],
+      "hardware": "ESP32-S3-WROOM-1-N16R8, 16 MB flash, 8 MB PSRAM, 800x480 monochrome e-paper, ES8311, NS4150B, TG28 PMIC, three-way key",
+      "identify": "Waveshare 3.97-inch e-paper board with three-way side key, BOOT/PWR buttons and USB-C",
+      "flash_port": "Native ESP32-S3 USB-C (GPIO19/20). Hold BOOT while reconnecting USB for download mode.",
+      "use": "WiFi hotspot provisioning, activation, bound-Agent conversation list/create/select and realtime voice",
+      "transport": "WIFI",
+      "ble_name": null,
+      "fw_model": "WS-EPAPER-397",
+      "status": "supported",
+      "notes": "Hotspot WavePaper397-XXXX. Center: call; hold center: menu; Up/Down: volume or menu selection; BOOT: back/end. Device acceptance pending. Platform product ID 20, product key esp32-s3-epaper-397, platform name waveShare-ESP32-S3-ePaper-3.97. Use ESP-IDF 5.5.x; the shared ES8311 driver is not compatible with IDF 6.1.",
+      "profile": "waveshare-epaper-397-wifi",
+      "sdkconfig": [
+        "CONFIG_AGENT_LINK_PROFILE_WAVESHARE_EPAPER_397_WIFI=y"
+      ]
+    },
+    {
       "board_type": "ESP32S3_ES8311_ASR",
       "dir": "es8311-asr",
       "target": "esp32s3",
