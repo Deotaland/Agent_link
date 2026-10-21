@@ -60,7 +60,9 @@ it clears incompatible files in the existing build directory.
 - **Muse:** pair and provision through the Muse app. See [Muse](components/muse_gadget/README.md).
 
 The console and firmware center are at [bot.zhaojun.work](https://bot.zhaojun.work).
-WiFi product identity and URL come from the application's `Platform()` settings.
+WiFi product identity comes from the application's `Platform()` settings. The
+shared URL is in [platform_config.h](boards/common/platform_config.h).
+After changing it, rebuild and verify the product ID on the target platform.
 
 ## Source layout
 

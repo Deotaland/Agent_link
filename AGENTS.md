@@ -130,6 +130,9 @@ Read [the board guide](firmware/boards/README.md), the
   they do not depend on the transport.
 - Register one `Application` with `DECLARE_APPLICATION`. Preserve existing
   `Model()` strings for OTA compatibility and advertise only working capabilities.
+- Query `/api/products/all` with the porting skill before assigning a WiFi product
+  ID. Match official boards directly; custom boards may reuse a compatible
+  registered product while keeping their own hardware and firmware model.
 - Copy or queue callback data and return promptly. BLE callbacks can run on a
   6 KB NimBLE host stack. Do not perform display, storage or blocking audio work there.
 - Public SDK calls must tolerate use before `agent_link_init()`; applications are

@@ -310,7 +310,7 @@
       "ble_name": "KorvoCloud-XXXX (WiFi hotspot)",
       "fw_model": "KORVO-CLOUD",
       "status": "supported",
-      "notes": "The platform address is compiled in (config.h: CLOUD_BASE_URL, CLOUD_PRODUCT_ID). Rebuild when the platform moves to deotaland.ai. Agent binding is managed in the console only. Deleting a conversation requires confirmation.",
+      "notes": "The platform address is compiled in (config.h: CLOUD_BASE_URL, CLOUD_PRODUCT_ID). Rebuild after changing the platform address. Agent binding is managed in the console only. Deleting a conversation requires confirmation.",
       "profile": "korvo-wifi",
       "sdkconfig": [
         "CONFIG_AGENT_LINK_PROFILE_KORVO_WIFI=y"

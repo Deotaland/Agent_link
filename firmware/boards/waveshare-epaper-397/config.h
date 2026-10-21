@@ -5,10 +5,11 @@
 #include "driver/i2s_std.h"
 #include "driver/spi_master.h"
 #include "sdkconfig.h"
+#include "platform_config.h"
 
 // Waveshare ESP32-S3-ePaper-3.97, N16R8. Verified against the official IDF BSP.
 #define EPAPER_MODEL "WS-EPAPER-397"
-#define CLOUD_BASE_URL "https://bot.zhaojun.work"
+#define CLOUD_BASE_URL DEOTALAND_PLATFORM_BASE_URL
 #define CLOUD_PRODUCT_ID CONFIG_WAVESHARE_EPAPER_PRODUCT_ID
 #define CLOUD_CHIP_TYPE "esp32-s3"
 #define SYS_I2C_PORT I2C_NUM_0

@@ -77,9 +77,13 @@ Constructors run before SDK initialization; defer operations that require a link
 For **BLE**, the phone app supplies the platform connection. Start with the
 voice example and adapt its pins, input polarity and buffering.
 
-For **WiFi**, also implement `Platform()` with a static `agent_platform_t`
-containing the real platform URL, registered product ID and chip type. Do not
-copy another product's ID. The SDK handles hotspot setup and activation; display
+For **WiFi**, also implement `Platform()` with a static `agent_platform_t` using
+`DEOTALAND_PLATFORM_BASE_URL` from `boards/common/platform_config.h`, a registered
+product ID and the actual chip type. Use the
+[product lookup helper](../../skills/agent-link-port/references/platform-products.md)
+to match official boards. Custom boards may reuse a suitable registered product
+ID after checking chip and behavior; keep their own pins and firmware model.
+The SDK handles hotspot setup and activation; display
 `OnLinkStatus` output or provide another way to read the code. Use
 `agent_link_platform_bound_agent()` and the conversation/call APIs from
 [agent_link_platform.h](../components/agent_link/include/agent_link_platform.h).

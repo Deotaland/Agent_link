@@ -1,6 +1,7 @@
 #include "application.h"
 #include "ai_passport_hardware.h"
 #include "agent_link_platform.h"
+#include "platform_config.h"
 #include "passport_wifi_audio.h"
 #include "passport_wifi_controls.h"
 #include "passport_wifi_ui.h"
@@ -53,7 +54,7 @@ public:
     const char* Model() const override { return "AI-PASSPORT"; }
     const agent_platform_t* Platform() const override {
         static const agent_platform_t platform = {
-            .base_url = "https://bot.zhaojun.work", .product_id = CONFIG_AI_PASSPORT_PRODUCT_ID,
+            .base_url = DEOTALAND_PLATFORM_BASE_URL, .product_id = CONFIG_AI_PASSPORT_PRODUCT_ID,
             .chip_type = "esp32-c3",
         };
         return &platform;
