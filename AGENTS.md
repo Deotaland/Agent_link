@@ -68,7 +68,7 @@ in [skills/](skills/README.md) for device tasks.
    `transport` against the selected catalog entry. Keep the matching ELF for crash
    decoding. Report flashing, boot verification and online setup separately.
 
-Without a terminal, guide the user through the [firmware center](https://bot.zhaojun.work/#/firmware)
+Without a terminal, guide the user through the [firmware center](https://bot.deotaland.cn/#/firmware)
 in desktop Chrome or Edge. Select the identified product's full package, connect
 its serial port and leave full-chip erase off. If no package is available, build
 from source with a terminal-capable assistant.
@@ -83,7 +83,7 @@ from source with a terminal-capable assistant.
 
 WiFi hotspots include `KorvoCloud-XXXX`, `M5StopWatch-XXXX` and `PaperS31-XXXX`.
 Agent selection happens in the platform console; devices manage that Agent's
-conversations. The configured platform is [bot.zhaojun.work](https://bot.zhaojun.work).
+conversations. The configured platform is [bot.deotaland.cn](https://bot.deotaland.cn).
 If it becomes unavailable, confirm the replacement address with the user rather
 than silently changing the compiled URL.
 
@@ -105,12 +105,14 @@ Run `python tools/board_catalog.py` after changing either.
 | WWY-01 | WOWNNY | `wownny-muse` | ESP32-S3 | Muse | supported |
 | WWY-01-old | WOWNNY (old board) | `wownny-old-muse` | ESP32-S3 | Muse | old revision |
 | AI-PASSPORT | FoloToy AI Passport | `ai-passport-ble` | ESP32-C3 | BLE | supported |
+| AI-PASSPORT | FoloToy AI Passport | `ai-passport-wifi` | ESP32-C3 | WiFi | supported |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 development board | `korvo-ble` | ESP32-S3 | BLE | supported |
 | Korvo 2 V3 | ESP32S3 Korvo 2 V3 development board | `korvo-wifi` | ESP32-S3 | WiFi | supported |
 | C152 | M5Stack StopWatch | `m5stack-stopwatch-ble` | ESP32-S3 | BLE | supported |
 | C152 | M5Stack StopWatch | `m5stack-stopwatch-wifi` | ESP32-S3 | WiFi | supported |
 | paper V2 | Mozhifang paper V2 (3.6-inch six-color e-paper) | `paper-s31-wifi` | ESP32-S31 | WiFi | supported |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 development board | `gc2145-camera-ble` | ESP32-S3 | BLE | supported |
+| ESP32-S3-ePaper-3.97 | Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | ESP32-S3 | WiFi | supported |
 | — | Wiring example: ESP32-S3 + ES8311 (mic only) | `es8311-asr-ble` | ESP32-S3 | BLE | wiring example |
 | — | Wiring example: ESP32-S3 + ES8311 (speaker and mic) | `es8311-voice-ble` | ESP32-S3 | BLE | wiring example |
 | ESP32-P4-WIFI6-Touch-LCD-7B | Waveshare ESP32-P4-WIFI6-Touch-LCD-7B | — | ESP32-P4 | — | **not adapted; do not flash** |
@@ -128,6 +130,9 @@ Read [the board guide](firmware/boards/README.md), the
   they do not depend on the transport.
 - Register one `Application` with `DECLARE_APPLICATION`. Preserve existing
   `Model()` strings for OTA compatibility and advertise only working capabilities.
+- Query `/api/products/all` with the porting skill before assigning a WiFi product
+  ID. Match official boards directly; custom boards may reuse a compatible
+  registered product while keeping their own hardware and firmware model.
 - Copy or queue callback data and return promptly. BLE callbacks can run on a
   6 KB NimBLE host stack. Do not perform display, storage or blocking audio work there.
 - Public SDK calls must tolerate use before `agent_link_init()`; applications are

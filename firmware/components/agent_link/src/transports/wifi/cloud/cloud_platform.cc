@@ -1,5 +1,7 @@
 #include "agent_link_platform.h"
 #include "cloud_platform.h"
+#include "cloud_limits.h"
+#include "cloud_log.h"
 
 #include <cctype>
 #include <cstdio>
@@ -17,7 +19,8 @@
 
 namespace {
 constexpr const char* TAG = "agent_link.platform";
-constexpr size_t kListBytes = 96 * 1024;
+using agentlink::cloud_limits::kListBytes;
+using agentlink::cloud_limits::kListPageSize;
 constexpr size_t kSmallBytes = 8 * 1024;
 char s_base[160] = {};
 std::mutex s_agent_mutex;
@@ -115,7 +118,6 @@ esp_err_t Exchange(const char* operation, esp_http_client_method_t method, const
     if (status_out) *status_out = status;
     esp_http_client_cleanup(client);
     if (result == ESP_OK && response.overflow) result = ESP_ERR_INVALID_SIZE;
-    if (result == ESP_OK && (status < 200 || status >= 300)) result = ESP_ERR_INVALID_RESPONSE;
     if (result == ESP_OK && response.size) {
         cJSON* root = cJSON_ParseWithLength(buffer, response.size);
         if (!root) result = ESP_ERR_INVALID_RESPONSE;
@@ -123,14 +125,17 @@ esp_err_t Exchange(const char* operation, esp_http_client_method_t method, const
             const cJSON* success = Field(root, "success");
             const cJSON* code = Field(root, "code");
             if ((cJSON_IsBool(success) && !cJSON_IsTrue(success)) ||
-                (cJSON_IsNumber(code) && code->valueint != 0)) {
-                if (cJSON_IsNumber(code))
-                    ESP_LOGW(TAG, "%s: platform code %d", operation, code->valueint);
+                (cJSON_IsNumber(code) && code->valueint != 0) || status < 200 || status >= 300) {
+                char message[192];
+                cloud_log_safe_message(message, sizeof message, String(root, "message"), device_key);
+                ESP_LOGW(TAG, "%s: HTTP %d, code=%d, message=%s", operation, status,
+                         cJSON_IsNumber(code) ? code->valueint : -1, message);
                 result = ESP_ERR_INVALID_RESPONSE;
                 cJSON_Delete(root);
             } else *root_out = root;
         }
     } else if (result == ESP_OK && method != HTTP_METHOD_DELETE) result = ESP_ERR_INVALID_RESPONSE;
+    if (result == ESP_OK && (status < 200 || status >= 300)) result = ESP_ERR_INVALID_RESPONSE;
     if (result != ESP_OK) ESP_LOGW(TAG, "%s: HTTP %d, %s", operation, status, esp_err_to_name(result));
     memset(buffer, 0, response.size);
     free(buffer);
@@ -220,8 +225,8 @@ extern "C" esp_err_t agent_link_platform_conversations(int agent_id, size_t offs
         char encoded[480] = {}, path[640];
         if (!EncodeCursor(cursor, encoded, sizeof encoded)) return ESP_ERR_INVALID_SIZE;
         const int length = snprintf(path, sizeof path,
-            "/api/agents/%d/actions/realtime_voice/conversations?limit=20%s%s",
-            agent_id, cursor[0] ? "&cursor=" : "", encoded);
+            "/api/agents/%d/actions/realtime_voice/conversations?limit=%u%s%s",
+            agent_id, kListPageSize, cursor[0] ? "&cursor=" : "", encoded);
         if (length < 0 || length >= static_cast<int>(sizeof path)) return ESP_ERR_INVALID_SIZE;
         cJSON* root = nullptr;
         esp_err_t result = Exchange("list conversations", HTTP_METHOD_GET, path, nullptr,

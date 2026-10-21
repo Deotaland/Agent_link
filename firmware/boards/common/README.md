@@ -19,6 +19,7 @@ source files in `drivers`; `components/board_support` compiles that list.
 | `cjk_font.*` | Memory-mapped font partition for LVGL TinyTTF |
 | `stripe_canvas.*`, `raster_font.h`, `raster_montserrat_*.c` | Small-memory drawing and fonts |
 | `voice_playback.h` | Playback buffer helpers |
+| `platform_config.h` | Shared Deotaland platform base URL |
 
 ## Add a driver
 

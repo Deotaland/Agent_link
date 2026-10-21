@@ -113,6 +113,29 @@
     "ui": "raster",
     "hardware_sources": []
   },
+  "ai-passport-wifi": {
+    "board": "ai-passport",
+    "board_type": "FOLOTOY_AI_PASSPORT_WIFI",
+    "target": "esp32c3",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/ai-passport-wifi.defaults"
+    ],
+    "app": "ai-passport-wifi",
+    "hardware": "ai-passport",
+    "drivers": [
+      "es8311_audio.cc",
+      "raster_montserrat_14.c",
+      "raster_montserrat_20.c",
+      "raster_montserrat_28.c",
+      "st7789_lcd.cc",
+      "stripe_canvas.cc"
+    ],
+    "ui": "raster",
+    "hardware_sources": [
+      "ai_passport_hardware.cc"
+    ]
+  },
   "m5stack-stopwatch-ble": {
     "board": "m5stack-stopwatch",
     "board_type": "M5STACK_STOPWATCH",
@@ -305,6 +328,33 @@
       "i2c_bus.c",
       "paper_audio.c",
       "paper_hardware.c"
+    ]
+  },
+  "waveshare-epaper-397-wifi": {
+    "board": "waveshare-epaper-397",
+    "board_type": "WAVESHARE_EPAPER_397_WIFI",
+    "target": "esp32s3",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/lvgl.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/waveshare-epaper-397-wifi.defaults"
+    ],
+    "app": "waveshare-epaper-397-wifi",
+    "hardware": "waveshare-epaper-397",
+    "drivers": [
+      "cjk_font.cc",
+      "es8311_audio.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": [
+      "epaper_hardware.cc"
+    ],
+    "flash_assets": [
+      {
+        "partition": "anim_pack",
+        "file": "boards/common/fonts/cjk_font.bin"
+      }
     ]
   }
 }

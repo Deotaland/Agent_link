@@ -16,9 +16,24 @@ common drivers; do not create a second source tree.
 Implement hardware under `firmware/boards/` and behavior under `firmware/apps/`.
 Register one `Application` and expose only working capabilities. Keep callbacks
 short and queue blocking I/O. BLE uses SDK streams through the phone app. WiFi
-requires the registered product ID and a static `Platform()` configuration;
-use SDK provisioning and device-authenticated conversation APIs. Do not add a
-second MQTT/provisioning client or copy another product's identity.
+uses a static `Platform()` configuration with the shared URL from
+`firmware/boards/common/platform_config.h`, a registered product ID and the actual
+chip type. Use SDK provisioning and device-authenticated conversation APIs;
+do not add a second MQTT/provisioning client.
+
+Before assigning a product ID, query the platform with
+`python skills/agent-link-port/scripts/find_product.py --list --json`.
+Read [product lookup](references/platform-products.md) for authentication and
+matching. Use the official board's unique matching ID without asking the developer
+for a number. For a custom board, choose a suitable registered reference product
+after checking its chip and behavior. Keep the board's own pins, capabilities and
+firmware model; a reused product ID does not make its hardware or OTA image compatible.
+
+Store the verified products and profile mappings in `firmware/profiles/products.json`.
+Use the generated `platform_product.h` / `AGENT_LINK_PRODUCT_ID` in applications
+instead of duplicating numeric IDs in board headers or Kconfig. Build validation
+checks the platform origin and chip. Leave unregistered WiFi mappings null until
+the platform has a matching registered product.
 
 Add the catalog entry, profile manifest, dedicated defaults, Kconfig profile
 choice and derived board/backend mappings together. Select dependencies from

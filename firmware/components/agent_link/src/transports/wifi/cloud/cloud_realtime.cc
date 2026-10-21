@@ -2,6 +2,7 @@
 #include "realtime_audio.h"
 #include "audio_downlink.h"
 #include "cloud_platform.h"
+#include "cloud_limits.h"
 
 #include <atomic>
 #include <algorithm>
@@ -35,17 +36,13 @@
 namespace {
 using agentlink::realtime::AudioFormat;
 using agentlink::realtime::ReadAudioFormat;
+using namespace agentlink::cloud_limits;
 constexpr const char* TAG = "agent_link.realtime";
 constexpr int kConnectTimeoutMs = 10000;
 constexpr size_t kMicBytes = 640;
-constexpr size_t kTxDepth = 102;
-constexpr size_t kUplinkBatchPackets = 8;
 constexpr size_t kUplinkBatchBytes = kMicBytes * kUplinkBatchPackets;
 constexpr char kAudioPrefix[] = "{\"type\":\"input_audio.append\",\"audio\":\"";
 constexpr size_t kAudioJsonBytes = sizeof(kAudioPrefix) - 1 + (kUplinkBatchBytes + 2) / 3 * 4 + 3;
-constexpr size_t kMessageBytes = 128 * 1024;
-constexpr size_t kDownlinkBytes = 256 * 1024;
-constexpr size_t kDownlinkDepth = 64;
 constexpr int64_t kReadyTimeoutUs = 10000000;
 
 struct Grant {
@@ -70,7 +67,7 @@ struct Tx {
 struct TxScratch {
     uint8_t pcm[kUplinkBatchBytes];
     char json[kAudioJsonBytes];
-    uint8_t read[8192];
+    uint8_t read[kReadBytes];
 };
 
 struct Rx {

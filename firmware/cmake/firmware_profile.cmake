@@ -30,6 +30,15 @@ if(NOT _result EQUAL 0)
 endif()
 set(AGENT_LINK_PROFILE "${_selected_profile}" CACHE STRING "Agent Link firmware profile" FORCE)
 
+execute_process(
+    COMMAND "${_profile_python}" "${_profile_root}/tools/build_firmware.py"
+            "${AGENT_LINK_PROFILE}" --product-header "${CMAKE_BINARY_DIR}/generated/platform_product.h"
+    RESULT_VARIABLE _product_result OUTPUT_VARIABLE _product_output ERROR_VARIABLE _product_error)
+if(NOT _product_result EQUAL 0)
+    message(FATAL_ERROR "${_product_error}")
+endif()
+message(STATUS "${_product_output}")
+
 file(READ "${_profile_root}/profiles/profiles.json" _profile_catalog)
 string(JSON _profile GET "${_profile_catalog}" "${AGENT_LINK_PROFILE}")
 string(JSON _profile_target GET "${_profile}" target)
@@ -66,6 +75,8 @@ if(EXISTS "${_profile_root}/sdkconfig.private")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_profile_root}/profiles/profiles.json"
+    "${_profile_root}/profiles/products.json"
+    "${_profile_root}/boards/common/platform_config.h"
     "${_profile_root}/tools/build_firmware.py" ${SDKCONFIG_DEFAULTS})
 message(STATUS "Agent Link firmware profile: ${AGENT_LINK_PROFILE} (${_profile_target})")
 

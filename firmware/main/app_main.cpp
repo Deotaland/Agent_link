@@ -5,6 +5,8 @@
 #include "agent_link.h"
 #include "agent_link_ota.h"
 #include "application.h"
+#include "platform_config.h"
+#include "platform_product.h"
 
 namespace {
 constexpr const char* TAG = "agent_link.app";
@@ -63,6 +65,11 @@ extern "C" void app_main(void) {
     cfg.on_status   = on_status;       // link progress, same shape on BLE and WiFi
     cfg.model       = board.Model();   // OTA model check + DIS 0x2A24 (firmware_rev: SDK reads PROJECT_VER)
     cfg.platform    = board.Platform();   // WiFi needs it; BLE ignores it — set it either way
+
+    ESP_LOGI(TAG, "platform = %s, model = %s, product_id = %d, product_key = %s",
+             cfg.platform ? cfg.platform->base_url : DEOTALAND_PLATFORM_BASE_URL, board.Model(),
+             cfg.platform ? cfg.platform->product_id : AGENT_LINK_PRODUCT_ID,
+             AGENT_LINK_PRODUCT_KEY[0] ? AGENT_LINK_PRODUCT_KEY : "unregistered");
 
     // The single transport-aware line in the application: which backend to run. Everything above
     // is set unconditionally and each backend takes what it needs, so a board never branches on it.

@@ -33,3 +33,11 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 write_flash 0x412000 boards/r
 `0x412000` is `anim_pack` in `partitions.csv`. On a RoRoLee unit that partition held the production
 animation pack, which this firmware does not use; the font overwrites it, so put the production
 image back before returning the unit to the production firmware.
+
+## Shared resource
+
+The canonical font image, generator and license are now in
+[boards/common/fonts](../../common/fonts/README.md). This directory's generator
+entry point is retained for existing commands. The ignored local cjk_font.bin is
+left untouched; the shared asset can also be flashed at the same offset. The
+Muse profile's existing rendering and manual font-flash workflow are unchanged.

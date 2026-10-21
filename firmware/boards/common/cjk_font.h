@@ -3,7 +3,7 @@
 // TinyTTF straight from flash, so it costs no RAM beyond TinyTTF's glyph cache. Reusable in
 // boards/common.
 //
-// The partition holds an image built by boards/rorolee-muse/font/make_cjk_font.py: a 32-byte
+// The partition holds an image built by boards/common/fonts/make_cjk_font.py: a 32-byte
 // header (magic "AGLKTTF1", version, length, CRC-32) followed by the TTF. Needs LV_USE_TINY_TTF;
 // without it this always answers nullptr.
 
