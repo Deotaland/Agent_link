@@ -59,10 +59,12 @@ it clears incompatible files in the existing build directory.
   six-digit activation code in the console and bind an Agent.
 - **Muse:** pair and provision through the Muse app. See [Muse](components/muse_gadget/README.md).
 
-The console and firmware center are at [bot.zhaojun.work](https://bot.zhaojun.work).
+The console and firmware center are at [bot.deotaland.cn](https://bot.deotaland.cn).
 WiFi product identity comes from the application's `Platform()` settings. The
 shared URL is in [platform_config.h](boards/common/platform_config.h).
 After changing it, rebuild and verify the product ID on the target platform.
+AI Passport WiFi uses product ID 1 on this platform. Other WiFi profiles retain
+their previous product IDs; check their registrations before using them here.
 
 ## Source layout
 

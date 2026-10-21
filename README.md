@@ -20,8 +20,8 @@ firmware choices. You do not need to know the chip or configuration symbols.
 
 Connect a USB data cable. BLE firmware needs the Deotaland phone app; WiFi
 firmware uses hotspot setup and a six-digit activation code in the
-[platform console](https://bot.zhaojun.work). Prebuilt images are available in the
-[firmware center](https://bot.zhaojun.work/#/firmware).
+[platform console](https://bot.deotaland.cn). Prebuilt images are available in the
+[firmware center](https://bot.deotaland.cn/#/firmware).
 
 ## Build from source
 

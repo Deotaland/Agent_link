@@ -57,8 +57,8 @@ Build from the repository root in the existing ESP-IDF 5.5.x or 6.1.x environmen
 python firmware/tools/build_firmware.py ai-passport-wifi --jobs 2
 ```
 
-The product is `FoloToy-AI-Passport`, platform product ID **15**, chip identifier
-`esp32-c3`, at [bot.zhaojun.work](https://bot.zhaojun.work). Firmware keeps the
+The product is `FoloToy-AI-Passport`, platform product ID **1**, chip identifier
+`esp32-c3`, at [bot.deotaland.cn](https://bot.deotaland.cn). Firmware keeps the
 existing `AI-PASSPORT` model string. No account API key belongs in this profile.
 
 After an authorized flash, join the `AIPassport-XXXX` hotspot shown on the screen

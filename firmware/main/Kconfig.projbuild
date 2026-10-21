@@ -132,7 +132,7 @@ config AI_PASSPORT_PRODUCT_ID
     int "AI Passport platform product ID"
     depends on BOARD_TYPE_FOLOTOY_AI_PASSPORT_WIFI
     range 1 2147483647
-    default 15
+    default 1
     help
         Registered FoloToy-AI-Passport product on the Deotaland platform.
 

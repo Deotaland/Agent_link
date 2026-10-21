@@ -68,7 +68,7 @@ in [skills/](skills/README.md) for device tasks.
    `transport` against the selected catalog entry. Keep the matching ELF for crash
    decoding. Report flashing, boot verification and online setup separately.
 
-Without a terminal, guide the user through the [firmware center](https://bot.zhaojun.work/#/firmware)
+Without a terminal, guide the user through the [firmware center](https://bot.deotaland.cn/#/firmware)
 in desktop Chrome or Edge. Select the identified product's full package, connect
 its serial port and leave full-chip erase off. If no package is available, build
 from source with a terminal-capable assistant.
@@ -83,7 +83,7 @@ from source with a terminal-capable assistant.
 
 WiFi hotspots include `KorvoCloud-XXXX`, `M5StopWatch-XXXX` and `PaperS31-XXXX`.
 Agent selection happens in the platform console; devices manage that Agent's
-conversations. The configured platform is [bot.zhaojun.work](https://bot.zhaojun.work).
+conversations. The configured platform is [bot.deotaland.cn](https://bot.deotaland.cn).
 If it becomes unavailable, confirm the replacement address with the user rather
 than silently changing the compiled URL.
 

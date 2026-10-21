@@ -44,7 +44,7 @@ a configuration message. The firmware model remains WS-EPAPER-397.
 1. Join `WavePaper397-XXXX`, open `http://192.168.4.1`, and enter 2.4 GHz WiFi
    credentials. Successful joins are saved; unsuccessful attempts keep setup open.
 2. Enter the screen's six-digit activation code in the
-   [platform console](https://bot.zhaojun.work) and bind a voice-capable Agent.
+   [platform console](https://bot.deotaland.cn) and bind a voice-capable Agent.
 3. Hold center, choose an existing conversation or create a new one, then press
    center on the home page to start a call. Creation depends on the platform's
    Agent template being available; an API failure is shown instead of a fake session.

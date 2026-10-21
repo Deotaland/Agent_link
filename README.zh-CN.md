@@ -16,8 +16,8 @@ AI 按 [AGENTS.md](AGENTS.md) 识别板子、选择固件方案、构建或查�
 同一块硬件有多个固件时，才需要补充选择 BLE、WiFi 或其他用途，无需知道芯片或配置符号。
 
 请使用 USB 数据线。BLE 需要 Deotaland 手机 App；WiFi 通过设备热点配网，再到
-[平台](https://bot.zhaojun.work) 输入六位激活码并绑定 Agent。
-预编译固件在[固件中心](https://bot.zhaojun.work/#/firmware)。
+[平台](https://bot.deotaland.cn) 输入六位激活码并绑定 Agent。
+预编译固件在[固件中心](https://bot.deotaland.cn/#/firmware)。
 整包烧录可能覆盖设备设置和配对信息，AI 应在写入前说明影响。
 
 ## 自行构建
