@@ -6,15 +6,6 @@ config BOARD_TYPE_WAVESHARE_EPAPER_397_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-epaper-397-wifi"
 
-config WAVESHARE_EPAPER_PRODUCT_ID
-    int "Waveshare ePaper 3.97 platform product ID"
-    depends on BOARD_TYPE_WAVESHARE_EPAPER_397_WIFI
-    range 0 2147483647
-    default 0
-    help
-        Use the platform product registered for this board. Zero leaves WiFi
-        provisioning available but disables platform activation until configured.
-
 config BOARD_TYPE_PAPER_S31_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-wifi"
@@ -127,14 +118,6 @@ config BOARD_TYPE_FOLOTOY_AI_PASSPORT
 config BOARD_TYPE_FOLOTOY_AI_PASSPORT_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "ai-passport-wifi"
-
-config AI_PASSPORT_PRODUCT_ID
-    int "AI Passport platform product ID"
-    depends on BOARD_TYPE_FOLOTOY_AI_PASSPORT_WIFI
-    range 1 2147483647
-    default 1
-    help
-        Registered FoloToy-AI-Passport product on the Deotaland platform.
 
 config AGENT_LINK_TRANSPORT_BLE
     bool

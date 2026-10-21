@@ -56,6 +56,12 @@ class SelectionTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    def test_items_envelope_and_partial_pages(self):
+        self.assertEqual(lookup.parse_products({"code": 0, "data": {
+            "total": len(PRODUCTS), "items": PRODUCTS}}), PRODUCTS)
+        with self.assertRaisesRegex(lookup.ProductError, "incomplete"):
+            lookup.parse_products({"data": {"total": len(PRODUCTS) + 1, "items": PRODUCTS}})
+
     def test_api_contract_only_exports_public_product_fields(self):
         rows = [dict(p, enterprise_id=123, private_field="discard") for p in PRODUCTS]
         self.assertEqual(lookup.parse_products({"code": 0, "success": True, "data": rows}), PRODUCTS)

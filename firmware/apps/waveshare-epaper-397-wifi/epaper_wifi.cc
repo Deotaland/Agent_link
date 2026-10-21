@@ -206,7 +206,7 @@ private:
         epaper::Screen screen{}; screen.view = view_;
         if (CLOUD_PRODUCT_ID <= 0) {
             snprintf(screen.title, sizeof screen.title, "Platform product ID is not configured");
-            snprintf(screen.detail, sizeof screen.detail, "Set WAVESHARE_EPAPER_PRODUCT_ID and rebuild. WiFi setup remains available.");
+            snprintf(screen.detail, sizeof screen.detail, "Register this profile in products.json and rebuild.");
         } else {
             snprintf(screen.title, sizeof screen.title, "%s", page_ == Page::kMenu ? "Conversations / setup" :
                      page_ == Page::kSessions ? "Choose conversation" : page_ == Page::kReset ? "Reset activation?" :

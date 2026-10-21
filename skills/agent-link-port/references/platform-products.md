@@ -1,7 +1,9 @@
 # Platform product lookup
 
 `GET /api/products/all` lists products registered on the platform. It returns
-`data[]` records with `id`, `name`, `product_key` and `chip_type`.
+`data[]` records with `id`, `name`, `product_key` and `chip_type`. The lookup helper
+also accepts a complete `data.items` response with `data.total`, and rejects
+incomplete pages rather than selecting from a partial catalog.
 It selects a product identity; device activation still uses
 `POST /api/device-gateway/claim-code` through the SDK.
 
@@ -14,6 +16,12 @@ For a standalone skill outside a checkout, pass `--base-url https://PLATFORM_HOS
 To switch platforms, change the shared header and rebuild. Query the target
 platform again: its account token and product IDs may differ. Update console
 links in the documentation and refresh installed skills as needed.
+
+Record verified products and profile-to-product-key mappings in
+`firmware/profiles/products.json`, including the matching platform origin.
+The build generates the selected product ID; board headers use
+`AGENT_LINK_PRODUCT_ID`, never a numeric fallback or a separate Kconfig ID.
+Register an unknown WiFi product before building; do not reuse an old platform's ID.
 
 ```sh
 python skills/agent-link-port/scripts/find_product.py --list --json

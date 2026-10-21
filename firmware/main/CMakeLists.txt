@@ -1,7 +1,7 @@
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/profile_build.cmake")
 set(APP_DIR "${FIRMWARE_ROOT}/apps/${PROFILE_app}")
 file(GLOB _app_sources "${APP_DIR}/*.cc" "${APP_DIR}/*.cpp" "${APP_DIR}/*.c")
-set(_includes "." "${FIRMWARE_ROOT}/apps/common" "${APP_DIR}"
+set(_includes "." "${FIRMWARE_ROOT}/apps/common" "${APP_DIR}" "${CMAKE_BINARY_DIR}/generated"
               "${FIRMWARE_ROOT}/boards/${PROFILE_board}")
 set(_requires board_support)
 if(PROFILE_backend STREQUAL "NONE")

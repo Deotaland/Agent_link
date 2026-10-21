@@ -8,6 +8,7 @@
 #include "cloud_platform.h"
 #include "cloud_credential.h"
 #include "esp_http_client.h"
+#include <cstdarg>
 #include "sdkconfig.h"
 #include "cloud_limits.h"
 
@@ -27,6 +28,13 @@ struct TestHttp {
     int status = 0;
 };
 std::string device_key;
+std::string captured_logs;
+void platform_test_log(const char*, const char* format, ...) {
+    char line[1024];
+    va_list args; va_start(args, format);
+    std::vsnprintf(line, sizeof line, format, args); va_end(args);
+    captured_logs += line; captured_logs += '\n';
+}
 std::vector<Expected> expected;
 size_t consumed = 0, allocations = 0;
 const char* dev_identity_sn() { return "test-device-exact"; }
@@ -161,6 +169,13 @@ int main() {
     Expect(HTTP_METHOD_GET, kListPath.c_str(),
            R"({"code":1005,"success":false,"data":{}})");
     CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_ERR_INVALID_RESPONSE);
+    captured_logs.clear();
+    Expect(HTTP_METHOD_GET, kListPath.c_str(),
+           R"({"code":1002,"success":false,"message":"invalid rotated-test-device-key","data":{"auth_key":"response-secret"}})", "", 403);
+    CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_ERR_INVALID_RESPONSE);
+    CHECK(captured_logs.find("HTTP 403, code=1002, message=invalid [redacted]") != std::string::npos);
+    CHECK(captured_logs.find(device_key) == std::string::npos);
+    CHECK(captured_logs.find("response-secret") == std::string::npos);
     Expect(HTTP_METHOD_GET, kListPath.c_str(), R"({"code":0,"data":{}})", "", 401);
     CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_ERR_INVALID_RESPONSE);
 

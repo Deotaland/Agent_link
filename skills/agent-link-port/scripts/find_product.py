@@ -39,10 +39,16 @@ def parse_products(payload):
         raise ProductError("The platform did not return a successful product list.")
     if payload.get("code", 0) not in (0, 200):
         raise ProductError("The platform rejected the product-list request.")
-    if not isinstance(payload.get("data"), list):
+    rows = payload.get("data")
+    if isinstance(rows, dict):
+        total = rows.get("total")
+        rows = rows.get("items")
+        if type(total) is not int or not isinstance(rows, list) or total != len(rows):
+            raise ProductError("Expected the complete product catalog; paginated results are incomplete.")
+    if not isinstance(rows, list):
         raise ProductError("Expected the product list in response.data.")
     products, ids = [], set()
-    for item in payload["data"]:
+    for item in rows:
         if not isinstance(item, dict):
             raise ProductError("Invalid product record.")
         product_id = item.get("id")

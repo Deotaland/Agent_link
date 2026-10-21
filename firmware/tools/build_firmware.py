@@ -14,6 +14,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "profiles/profiles.json"
+PRODUCTS = ROOT / "profiles/products.json"
 PRIVATE = ROOT / "sdkconfig.private"
 STATE = ROOT / ".firmware-profile.json"
 SCHEMA = 3
@@ -176,7 +177,57 @@ def load_profiles():
             raise ValueError(f"{name}: defaults do not select the declared profile")
         if expected_settings(profile).get(profile_symbol(name)) != "y":
             raise ValueError(f"{name}: defaults do not select the declared profile choice")
+    load_products(profiles)
     return profiles
+
+
+def load_products(profiles):
+    catalog = json.loads(PRODUCTS.read_text(encoding="utf-8"))
+    platform = (ROOT / "boards/common/platform_config.h").read_text(encoding="utf-8")
+    origin = re.search(r'^#define DEOTALAND_PLATFORM_BASE_URL "([^"]+)"$', platform, re.MULTILINE)
+    if not origin or catalog.get("platform") != origin[1]:
+        raise ValueError("products.json belongs to another platform; verify product IDs for the configured URL")
+    products, mappings = catalog["products"], catalog["profiles"]
+    ids = set()
+    for key, product in products.items():
+        value = product.get("id")
+        if (not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", key) or
+                type(value) is not int or not 0 < value <= 2147483647 or value in ids or
+                not isinstance(product.get("name"), str) or not product["name"].strip() or
+                not re.fullmatch(r"esp32(?:-[a-z][0-9]+)?", product.get("chip_type", ""))):
+            raise ValueError(f"products.json: invalid or duplicate product: {key}")
+        ids.add(value)
+    for name, key in mappings.items():
+        if name not in profiles or (key is not None and key not in products):
+            raise ValueError(f"products.json: unknown profile or product: {name}")
+        if key is not None and products[key]["chip_type"].replace("-", "") != profiles[name]["target"]:
+            raise ValueError(f"{name}: platform product chip does not match firmware target")
+    for name, profile in profiles.items():
+        if profile["backend"] == "WIFI" and name not in mappings:
+            raise ValueError(f"{name}: declare a product mapping (or null if not registered) in products.json")
+    return catalog
+
+
+def product_for(profile, catalog):
+    key = catalog["profiles"].get(profile["name"])
+    if key is None:
+        if profile["backend"] == "WIFI":
+            raise ValueError(f"{profile['name']}: no registered product on {catalog['platform']}; "
+                             "query the platform and add its product to profiles/products.json before building")
+        return {"id": 0, "key": ""}
+    return dict(catalog["products"][key], key=key)
+
+
+def write_product_header(profile, output):
+    catalog = load_products(load_profiles())
+    product = product_for(profile, catalog)
+    content = ("// Generated from profiles/products.json; do not edit.\n#pragma once\n"
+               f"#define AGENT_LINK_PRODUCT_ID {product['id']}\n"
+               f"#define AGENT_LINK_PRODUCT_KEY {json.dumps(product['key'])}\n")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if not output.is_file() or output.read_text(encoding="utf-8") != content:
+        output.write_text(content, encoding="utf-8", newline="\n")
+    print(f"Platform product: {product['key'] or 'unregistered'} (id={product['id']})")
 
 
 def check_private(path=PRIVATE):
@@ -309,6 +360,7 @@ def verify_merged(build_dir):
 
 
 def build(args, profile):
+    product_for(profile, load_products(load_profiles()))
     context = idf_context()
     idf_path = Path(context.get("path", ""))
     idf = idf_path / "tools/idf.py"
@@ -367,6 +419,7 @@ def main():
     parser.add_argument("--validate", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--resolve", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--prepare", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--product-header", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--fallback", help=argparse.SUPPRESS)
     parser.add_argument("--sdkconfig", type=Path, default=ROOT / "sdkconfig", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -386,6 +439,8 @@ def main():
             build(args, profiles[args.profile])
         elif args.profile not in profiles:
             parser.error("choose a supported profile with --list")
+        elif args.product_header:
+            write_product_header(profiles[args.profile], args.product_header)
         elif args.prepare:
             prepare_config(args.profile, profiles[args.profile], args.sdkconfig, args.reset_config)
         elif args.validate:

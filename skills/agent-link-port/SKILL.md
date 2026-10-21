@@ -29,6 +29,12 @@ for a number. For a custom board, choose a suitable registered reference product
 after checking its chip and behavior. Keep the board's own pins, capabilities and
 firmware model; a reused product ID does not make its hardware or OTA image compatible.
 
+Store the verified products and profile mappings in `firmware/profiles/products.json`.
+Use the generated `platform_product.h` / `AGENT_LINK_PRODUCT_ID` in applications
+instead of duplicating numeric IDs in board headers or Kconfig. Build validation
+checks the platform origin and chip. Leave unregistered WiFi mappings null until
+the platform has a matching registered product.
+
 Add the catalog entry, profile manifest, dedicated defaults, Kconfig profile
 choice and derived board/backend mappings together. Select dependencies from
 the profile manifest. Preserve existing firmware model strings for OTA.

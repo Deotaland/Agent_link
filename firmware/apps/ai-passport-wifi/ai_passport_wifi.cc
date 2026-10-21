@@ -2,6 +2,7 @@
 #include "ai_passport_hardware.h"
 #include "agent_link_platform.h"
 #include "platform_config.h"
+#include "platform_product.h"
 #include "passport_wifi_audio.h"
 #include "passport_wifi_controls.h"
 #include "passport_wifi_ui.h"
@@ -46,7 +47,7 @@ public:
             ESP_ERROR_CHECK(xTaskCreate(KeyEntry, "passport_keys", 3072, this, 4, nullptr) == pdPASS
                             ? ESP_OK : ESP_ERR_NO_MEM);
         ESP_LOGI(TAG, "WiFi voice ready: product=%d, internal free=%u largest=%u",
-                 CONFIG_AI_PASSPORT_PRODUCT_ID,
+                 AGENT_LINK_PRODUCT_ID,
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
     }
@@ -54,7 +55,7 @@ public:
     const char* Model() const override { return "AI-PASSPORT"; }
     const agent_platform_t* Platform() const override {
         static const agent_platform_t platform = {
-            .base_url = DEOTALAND_PLATFORM_BASE_URL, .product_id = CONFIG_AI_PASSPORT_PRODUCT_ID,
+            .base_url = DEOTALAND_PLATFORM_BASE_URL, .product_id = AGENT_LINK_PRODUCT_ID,
             .chip_type = "esp32-c3",
         };
         return &platform;

@@ -13,8 +13,9 @@ does not flash. Hardware and live-platform acceptance remain pending.
 
 ## WiFi setup and controls
 
-`paper-s31-wifi` uses the SDK WiFi backend, platform product 16 and chip type
-`esp32-s31`. With no saved network, join `PaperS31-XXXX` and open
+`paper-s31-wifi` uses the SDK WiFi backend, platform product 8 (`paper-s31`)
+from `profiles/products.json` on `bot.deotaland.cn`, and chip type `esp32-s31`.
+With no saved network, join `PaperS31-XXXX` and open
 `http://192.168.4.1`. Claim the six-digit code in the platform console and bind
 an Agent.
 

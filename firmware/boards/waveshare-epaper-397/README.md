@@ -35,11 +35,11 @@ Activate the existing ESP-IDF 5.5.x installation (validated with 5.5.4), then ru
 python firmware/tools/build_firmware.py waveshare-epaper-397-wifi --jobs 2
 ```
 
-`CONFIG_WAVESHARE_EPAPER_PRODUCT_ID` in the dedicated profile defaults selects
-the platform product. This profile uses product ID 20, product key
+`profiles/products.json` selects the platform product for this profile.
+On `bot.deotaland.cn` this profile uses product ID 5, product key
 `esp32-s3-epaper-397`, and platform name `waveShare-ESP32-S3-ePaper-3.97`.
-Zero leaves WiFi setup available and displays
-a configuration message. The firmware model remains WS-EPAPER-397.
+An absent or wrong-chip product mapping stops the build. The firmware model
+remains WS-EPAPER-397.
 
 1. Join `WavePaper397-XXXX`, open `http://192.168.4.1`, and enter 2.4 GHz WiFi
    credentials. Successful joins are saved; unsuccessful attempts keep setup open.

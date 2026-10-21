@@ -2,6 +2,8 @@
 
 #include "cloud_api.h"
 #include "cloud_platform.h"
+#include "cloud_credential.h"
+#include "cloud_log.h"
 
 #include <cstdio>
 #include <cstring>
@@ -134,7 +136,7 @@ esp_err_t Exchange(const char* path, const char* url, const char* body,
 // and sets *data to body.data, which may be any JSON type including null. The HTTP status is only
 // logged: platform errors arrive as 200 too (note 1 in cloud_api.h).
 esp_err_t PostJson(const char* path, const char* body, cJSON** root_out, cJSON** data_out,
-                   cloud_api_err_t* err) {
+                   cloud_api_err_t* err, const char* submitted_key = nullptr) {
     if (root_out) *root_out = nullptr;
     if (data_out) *data_out = nullptr;
     if (!s_rx) { SetErr(err, -1, false, "api not initialised"); return ESP_ERR_INVALID_STATE; }
@@ -166,11 +168,16 @@ esp_err_t PostJson(const char* path, const char* body, cJSON** root_out, cJSON**
     cJSON*       jdata = cJSON_GetObjectItemCaseSensitive(root, "data");
 
     const int  code = cJSON_IsNumber(jcode) ? jcode->valueint : -1;
-    const bool ok   = cJSON_IsBool(jok) ? cJSON_IsTrue(jok) : (code == CLOUD_API_OK);
+    const bool ok   = (cJSON_IsBool(jok) ? cJSON_IsTrue(jok) : (code == CLOUD_API_OK)) &&
+                      status >= 200 && status < 300;
     SetErr(err, code, ok, cJSON_IsString(jmsg) ? jmsg->valuestring : "");
 
     if (!ok || code != CLOUD_API_OK) {
-        ESP_LOGW(TAG, "POST %s -> code=%d", path, code);
+        char message[192];
+        cloud_log_safe_message(message, sizeof message,
+                               cJSON_IsString(jmsg) ? jmsg->valuestring : "",
+                               cloud_cred_auth_key(), submitted_key);
+        ESP_LOGW(TAG, "POST %s -> HTTP %d, code=%d, message=%s", path, status, code, message);
         cJSON_Delete(root);
         return ESP_ERR_INVALID_RESPONSE;
     }
@@ -316,7 +323,7 @@ esp_err_t cloud_api_auth(const char* auth_key, const char* mac, const char* fw_v
 
     cJSON* root = nullptr;
     cJSON* data = nullptr;
-    esp_err_t r = PostJson("/api/device-gateway/auth", body, &root, &data, err);
+    esp_err_t r = PostJson("/api/device-gateway/auth", body, &root, &data, err, auth_key);
     if (r != ESP_OK) {
         if (err && (err->code == CLOUD_API_NO_AGENT || err->code == CLOUD_API_KEY_REVOKED))
             cloud_platform_set_bound_agent(nullptr);
@@ -347,7 +354,7 @@ esp_err_t cloud_api_heartbeat(const char* auth_key, cloud_api_err_t* err) {
     snprintf(body, sizeof body, "{\"auth_key\":\"%s\"}", auth_key);
 
     cJSON* root = nullptr;
-    esp_err_t r = PostJson("/api/device-gateway/heartbeat", body, &root, nullptr, err);
+    esp_err_t r = PostJson("/api/device-gateway/heartbeat", body, &root, nullptr, err, auth_key);
     if (root) cJSON_Delete(root);
     return r;
 }
@@ -361,7 +368,7 @@ esp_err_t cloud_api_mqtt_token(const char* auth_key, cloud_mqtt_token_t* out, cl
 
     cJSON* root = nullptr;
     cJSON* data = nullptr;
-    esp_err_t r = PostJson("/api/device-gateway/mqtt-token", body, &root, &data, err);
+    esp_err_t r = PostJson("/api/device-gateway/mqtt-token", body, &root, &data, err, auth_key);
     if (r != ESP_OK) return r;
 
     cJSON* channels = Obj(data, "channels");

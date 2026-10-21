@@ -28,6 +28,32 @@ application supports it.
 
 ## Configuration
 
+Platform products are registered in `products.json`: the `products` section stores
+the platform's IDs, names and chip types; `profiles` maps firmware profiles to
+product keys. The catalog is specific to the origin in `platform`, which must match
+`boards/common/platform_config.h`. CMake generates `build/generated/platform_product.h`
+for the selected profile; do not edit the generated file or put product IDs in
+board headers, Kconfig or defaults.
+
+For `https://bot.deotaland.cn`, Korvo WiFi uses `korvo-s3` (6), Korvo BLE uses
+`korvo-s3-ble` (7), StopWatch uses 4, Waveshare ePaper 3.97 uses 5 and AI Passport
+uses 1. Paper-S31 uses 8, ROROLEE uses 2 and WOWNNY uses 3. Muse uses a separate
+backend; recording a product in the catalog does not change its Muse identity or
+connection flow.
+
+Before adding a board or changing platform origins, query the platform product
+catalog with `python skills/agent-link-port/scripts/find_product.py --list --json`
+from the repository root, then record the verified product key and ID here.
+The tool needs an account token in `DEOTALAND_TOKEN`; never put it in firmware.
+Normal builds and device startup use the checked-in mapping without a product-list
+request. Validation rejects duplicate IDs, unknown mappings and wrong-chip products.
+An unregistered WiFi profile must use a null mapping and cannot build until its
+product is registered. IDs from another platform must not be reused.
+
+Startup logs include the platform origin, firmware model, product ID and key.
+WiFi API errors include HTTP status, business code and message. Request bodies,
+response data and auth keys are not logged; echoed device keys in messages are redacted.
+
 `profiles.json` is read before IDF dependency expansion. It records:
 
 | Field | Meaning |

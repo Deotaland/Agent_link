@@ -8,6 +8,7 @@
 #include <driver/i2s_types.h>
 #include <hal/spi_types.h>
 #include "platform_config.h"
+#include "platform_product.h"
 
 // ── System I2C: PMIC, IO expander, codec, touch, IMU and RTC share it ────────
 #define SYS_I2C_PORT            I2C_NUM_0
@@ -72,5 +73,5 @@
 // ── Platform, for the WiFi link (BLE ignores it) ─────────────────────────────
 // Retain the legacy reference ID for existing bindings. New ports query the product catalog.
 #define CLOUD_BASE_URL          DEOTALAND_PLATFORM_BASE_URL
-#define CLOUD_PRODUCT_ID        1
+#define CLOUD_PRODUCT_ID        AGENT_LINK_PRODUCT_ID
 #define CLOUD_CHIP_TYPE         "esp32-s3"
