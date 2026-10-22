@@ -13,6 +13,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 
 namespace {
 constexpr const char* TAG = "agent_link.api";
@@ -128,6 +129,12 @@ esp_err_t Exchange(const char* path, const char* url, const char* body,
 
     s_reusable = esp_http_client_is_complete_data_received(cl) &&
                  esp_http_client_is_persistent_connection(cl);
+#if CONFIG_IDF_TARGET_ESP32C3
+    // The C3 has no PSRAM: do not retain an idle third TLS connection alongside
+    // MQTT and realtime voice. Close on this client's owner task after reading
+    // the response, never asynchronously from the audio/network worker.
+    s_reusable = false;
+#endif
     if (!s_reusable) DropConnection();
     return ESP_OK;
 }

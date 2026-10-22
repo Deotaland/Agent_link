@@ -1,12 +1,24 @@
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
 #include "passport_wifi_controls.h"
 #include "realtime_audio.h"
+#include "realtime_buffer.h"
 #include "cloud_limits.h"
 #include "voice_playback.h"
 
 namespace {
+bool fail_resize = false;
+size_t live_buffers = 0;
+void* ResizeFixture(void* data, size_t bytes) {
+    if (!bytes) { std::free(data); --live_buffers; return nullptr; }
+    if (fail_resize) return nullptr;
+    void* result = std::realloc(data, bytes);
+    if (result && !data) ++live_buffers;
+    return result;
+}
 using TickType_t = uint32_t;
 uint32_t tick_hz = 100;
 TickType_t last_delay = 0;
@@ -59,6 +71,56 @@ int main() {
     Message oversized(buffer.data(), buffer.size());
     assert(oversized.Append(2, true, true, false, buffer.data(), buffer.size()) == Message::kMore);
     assert(oversized.Append(0, true, true, true, first, 1) == Message::kError);
+
+    // C3 starts small, but fragmented messages retain every byte across a
+    // reallocation and still accept the old 16 KB maximum without truncation.
+    {
+        using agentlink::realtime::MessageBuffer;
+        MessageBuffer storage(2048, 16384, ResizeFixture);
+        assert(storage.Capacity() == 2048 && live_buffers == 1);
+        Message growing(storage.Data(), storage.Capacity());
+        const std::vector<uint8_t> part(2048, 0xa5);
+        for (unsigned n = 0; n < 8; ++n) {
+            assert(storage.Reserve(growing.Size() + part.size()));
+            growing.Rebind(storage.Data(), storage.Capacity());
+            assert(growing.Append(n ? 0 : 2, true, true, n == 7, part.data(), part.size()) ==
+                   (n == 7 ? Message::kComplete : Message::kMore));
+        }
+        assert(!growing.Active() && growing.Size() == 16384);
+        for (size_t n = 0; n < growing.Size(); ++n) assert(storage.Data()[n] == 0xa5);
+        assert(!storage.Reserve(16385));
+        storage.Trim();
+        assert(storage.Capacity() == 2048);
+        growing.Rebind(storage.Data(), storage.Capacity());
+        assert(growing.Append(1, true, true, true, first, 3) == Message::kComplete);
+        fail_resize = true;
+        assert(!storage.Reserve(4096));
+        assert(storage.Capacity() == 2048 && std::memcmp(storage.Data(), first, 3) == 0);
+        fail_resize = false;
+    }
+    assert(live_buffers == 0);
+
+    // The shared codec worker must keep 20 ms boundaries even when the mic
+    // supplies partial packets; ending a turn flushes exactly one padded frame.
+    {
+        agentlink::realtime::PcmFrames<640> frames;
+        std::vector<std::vector<uint8_t>> encoded;
+        auto encode = [&](const uint8_t* pcm) { encoded.emplace_back(pcm, pcm + 640); return true; };
+        std::vector<uint8_t> pcm(960, 0x31);
+        assert(frames.Append(pcm.data(), 320, encode) && encoded.empty());
+        assert(frames.Append(pcm.data() + 320, 640, encode) && encoded.size() == 1);
+        assert(frames.Flush(encode) && encoded.size() == 2);
+        for (size_t n = 0; n < 640; ++n) assert(encoded[0][n] == 0x31);
+        for (size_t n = 0; n < 640; ++n) assert(encoded[1][n] == (n < 320 ? 0x31 : 0));
+        assert(frames.Flush(encode) && encoded.size() == 2);
+        assert(!frames.Append(pcm.data(), 640, [](const uint8_t*) { return false; }));
+        frames.Reset();
+        assert(frames.Flush(encode) && encoded.size() == 2);
+    }
+    fail_resize = true;
+    { agentlink::realtime::MessageBuffer failed(2048, 16384, ResizeFixture); assert(!failed.Data()); }
+    fail_resize = false;
+    assert(live_buffers == 0);
 
     agentlink::realtime::Pcm24To16 converter;
     int16_t out[8]{};

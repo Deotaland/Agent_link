@@ -860,7 +860,9 @@ extern "C" esp_err_t agent_transport_wifi_request_realtime(void) {
 }
 
 extern "C" esp_err_t agent_transport_wifi_request_realtime_session(int agent_id, const char* session_id) {
-    if (!cloud_platform_enabled() || !cloud_mqtt_started() ||
+    // This path obtains a grant over authenticated HTTP; only the legacy
+    // cloud_json_request_realtime() path above needs an MQTT connection.
+    if (!cloud_platform_enabled() ||
         s_link.load(std::memory_order_acquire) != AGENT_STATE_CONNECTED) return ESP_ERR_INVALID_STATE;
     if (s_realtime_wanted.exchange(true)) return ESP_ERR_INVALID_STATE;
     s_platform_voice.store(true);

@@ -78,10 +78,21 @@ in the platform console, and bind an Agent supporting realtime voice.
 - Speaker playback and its short echo tail upload silence. This is half-duplex
   feedback prevention, not acoustic echo cancellation or spoken interruption.
 
-PCM16 input is 16 kHz mono; output is negotiated at 24 kHz and converted by the
-SDK to the codec's 16 kHz. C3 queues are bounded, the speaker buffer is 8 KB,
-and complete incoming WebSocket messages are limited to 16 KB. Larger messages
-fail explicitly. The screen renders in a shared 240x4 stripe without LVGL.
+WiFi sessions request Opus in both directions, with 20 ms packets, 16 kHz mono
+input and 24 kHz output decoded to the codec's 16 kHz PCM. On C3, encoding and
+decoding share one 40 KB task stack; encoding also runs during playback pacing.
+The encoder uses 24 kbit/s VBR and complexity 0. The queues hold up to eight
+microphone frames and four encoded packets, without requiring PSRAM. The speaker
+buffer is 8 KB. Incoming WebSocket storage starts at 2 KB, grows up to 16 KB for
+complete messages, and shrinks after delivery. Larger messages fail explicitly.
+Codec states are allocated before the voice TLS handshake. The WiFi profile
+disables MQTT (`CONFIG_AGENT_LINK_MQTT_ENABLE=n`), including its task, TLS
+connection and credential buffer. Voice grants, conversation management,
+activation, HTTP heartbeat and Agent configuration polling remain enabled.
+MQTT push commands and OTA commands delivered through MQTT are unavailable.
+Gateway HTTPS connections are closed after each response on C3 to leave RAM
+for voice; subsequent gateway calls pay a new handshake.
+The screen renders in a shared 240x4 stripe without LVGL.
 The small raster fonts cover Latin text; non-Latin answer text shows an explicit
 placeholder while spoken replies remain available. Chinese typography is pending.
 
@@ -91,7 +102,8 @@ management. CW2017 battery reporting is not advertised by this version.
 ## Acceptance
 
 Host checks cover button gestures, PCM packet assembly/conversion, playback
-gating and device-authenticated platform APIs, including the C3 PCM16 path.
+gating, bounded message growth/failure and device-authenticated platform APIs,
+including C3 Opus negotiation.
 A build is not hardware acceptance. Verify hotspot setup, activation, binding,
 both audio directions, volume, call stop, network recovery, conversation paging
 and repeated calls on the physical board. Keep the matching ELF for diagnosis.

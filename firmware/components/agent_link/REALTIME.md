@@ -38,6 +38,30 @@ the microphone only after `session.ready`. Reconnection needs a fresh grant.
 Logs omit URLs with credentials, request bodies and saved device/session IDs.
 Nonzero business codes fail even when HTTP status is 200.
 
+Outgoing text frames (audio and session controls) combine the masked WebSocket
+header and payload in a reusable buffer for one TLS write, with a fresh random
+mask per frame. TLS writes use a 3000 ms transport timeout. Slow successful
+writes log wire size and write duration, at most once a second. A failed or partial frame is never replayed
+on that stream. Platform calls retry transport failures at most twice per call,
+after 2 and 4 seconds, releasing the previous grant and obtaining a fresh token.
+Microphone capture pauses during recovery and queued audio is discarded; speech
+during the interruption must be repeated. Leaving the call cancels recovery.
+Explicit server session errors/close frames, invalid media and grant rejection
+do not trigger automatic retries. MQTT/direct grants retain manual reconnection.
+Logs include operation/result, errno, socket/TLS errors, WiFi association/RSSI,
+internal heap availability and uplink queue duration, without server reason text.
+
+Continuous Opus upload coalesces up to three complete WebSocket messages in one
+TLS write; each retains its own JSON, Opus packet and random mask. The first
+queued packet waits at most 40 ms to form a batch, excluding network stalls.
+PCM and activity-control messages retain their existing packet boundaries.
+Before dequeuing uplink audio, the worker polls writability without blocking;
+while the socket is backpressured it continues receiving replies and checks a
+3-second stall deadline. A write can still block after the readiness check.
+The `writes` counter distinguishes TLS audio writes from the `ws` message count;
+`send` reports average/maximum time per TLS write. Network stalls and queue
+overflows can still lose microphone audio; coalescing does not guarantee delivery.
+
 ## Audio and workers
 
 `cloud_platform.cc` owns device-authenticated APIs. `cloud_realtime.cc` owns
@@ -84,9 +108,15 @@ Its full-refresh display runs on a separate worker.
 AI Passport uses OK to start/end a continuous call and holds OK for its conversation
 menu. UP/DOWN adjust volume, or move through menus. It restores the selected
 conversation for the same bound Agent; the first call selects the latest existing
-conversation or creates one if none exist. Its ESP32-C3 profile requests PCM16,
-uses a raster display and no BLE, and limits incoming complete WebSocket messages
-to 16 KB. Oversized messages fail the call instead of being truncated. See the
+conversation or creates one if none exist. Its ESP32-C3 profile requests Opus,
+disables MQTT to reserve RAM for audio (HTTP heartbeat/configuration polling and
+HTTP-granted WSS voice remain enabled; MQTT push/OTA commands are unavailable),
+uses a raster display and no BLE, and shares one 40 KB codec task stack between
+encoding and decoding. Playback pacing continues pumping microphone frames;
+full uplink queues never block that shared worker. Queues use internal RAM when
+PSRAM is unavailable. Incoming message storage starts at 2 KB, grows to at most
+16 KB, and shrinks after delivery. Oversized messages fail the call instead of
+being truncated. See the
 [board guide](../../boards/ai-passport/README.md).
 
 ## Validation status
