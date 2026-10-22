@@ -7,11 +7,12 @@ namespace agentlink::realtime {
 
 // Client text frame: FIN + mandatory fresh mask. Keep header and payload in
 // one contiguous buffer so the TLS transport sees exactly one write.
-inline size_t EncodeTextFrame(const char* payload, size_t bytes, const uint8_t mask[4],
-                              uint8_t* frame, size_t capacity) {
+inline size_t EncodeFrame(unsigned opcode, const char* payload, size_t bytes, const uint8_t mask[4],
+                          uint8_t* frame, size_t capacity) {
     const size_t header = bytes < 126 ? 6 : 8;
-    if (!payload || !frame || bytes > 65535 || capacity < header || bytes > capacity - header) return 0;
-    frame[0] = 0x81;
+    if ((!payload && bytes) || !frame || bytes > 65535 || capacity < header || bytes > capacity - header ||
+        (opcode != 1 && opcode != 9 && opcode != 10) || (opcode >= 8 && bytes > 125)) return 0;
+    frame[0] = static_cast<uint8_t>(0x80 | opcode);
     frame[1] = static_cast<uint8_t>(0x80 | (bytes < 126 ? bytes : 126));
     size_t offset = 2;
     if (bytes >= 126) {
@@ -21,6 +22,11 @@ inline size_t EncodeTextFrame(const char* payload, size_t bytes, const uint8_t m
     for (size_t i = 0; i < 4; ++i) frame[offset++] = mask[i];
     for (size_t i = 0; i < bytes; ++i) frame[offset + i] = static_cast<uint8_t>(payload[i]) ^ mask[i % 4];
     return header + bytes;
+}
+
+inline size_t EncodeTextFrame(const char* payload, size_t bytes, const uint8_t mask[4],
+                              uint8_t* frame, size_t capacity) {
+    return EncodeFrame(1, payload, bytes, mask, frame, capacity);
 }
 
 template <typename Writer>
@@ -34,13 +40,15 @@ bool WriteTextFrame(const char* payload, size_t bytes, const uint8_t mask[4],
 class OpusBatchGate {
 public:
     static constexpr unsigned kFrames = 3;
+    explicit OpusBatchGate(unsigned frames = kFrames) : frames_(frames) {}
     bool Ready(unsigned queued, int64_t now_ms) {
         if (!queued) { Reset(); return false; }
         if (since_ms_ < 0) since_ms_ = now_ms;
-        return queued >= kFrames || now_ms - since_ms_ >= 40;
+        return queued >= frames_ || now_ms - since_ms_ >= 40;
     }
     void Reset() { since_ms_ = -1; }
 private:
+    const unsigned frames_;
     int64_t since_ms_ = -1;
 };
 

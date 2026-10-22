@@ -1,11 +1,18 @@
 #include "cloud_realtime.h"
 #include "realtime_audio.h"
+#include "realtime_audio_json.h"
 #include "realtime_buffer.h"
 #include "realtime_recovery.h"
 #include "realtime_ws_frame.h"
+#include "realtime_ws_stream.h"
+#include "realtime_ws_upgrade.h"
 #include "audio_downlink.h"
 #include "cloud_platform.h"
 #include "cloud_limits.h"
+#include "cloud_memory.h"
+#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
+#include "realtime_codec_memory.h"
+#endif
 
 #include <atomic>
 #include <algorithm>
@@ -15,6 +22,8 @@
 #include <cerrno>
 #include <cstdlib>
 #include <mutex>
+#include <memory>
+#include <new>
 
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -36,6 +45,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "mbedtls/sha1.h"
 #include "lwip/sockets.h"
 #include "lwip/tcp.h"
 
@@ -47,10 +57,22 @@ constexpr const char* TAG = "agent_link.realtime";
 constexpr int kConnectTimeoutMs = 10000;
 constexpr int kSendTimeoutMs = 3000;
 constexpr size_t kMicBytes = 640;
+#if CONFIG_IDF_TARGET_ESP32C3
+// Negotiation accepts exactly 20 ms, decoded at 16 kHz mono PCM16.
+constexpr size_t kDecodePcmBytes = kMicBytes;
+#else
+constexpr size_t kDecodePcmBytes = 3840;
+#endif
+constexpr unsigned kOpusBatchFrames = kEncodedDepth < 3 ? kEncodedDepth : 3;
 constexpr size_t kUplinkBatchBytes = kMicBytes * kUplinkBatchPackets;
 constexpr char kAudioPrefix[] = "{\"type\":\"input_audio.append\",\"audio\":\"";
 constexpr size_t kAudioJsonBytes = sizeof(kAudioPrefix) - 1 + (kUplinkBatchBytes + 2) / 3 * 4 + 3;
 constexpr int64_t kReadyTimeoutUs = 10000000;
+#if CONFIG_IDF_TARGET_ESP32C3
+using VoiceTls = esp_tls_t*;
+#else
+using VoiceTls = esp_transport_handle_t;
+#endif
 
 void* ResizeMessage(void* data, size_t bytes) {
     if (!bytes) { free(data); return nullptr; }
@@ -267,6 +289,7 @@ bool DirectConfigValid() {
 // Separate from the device gateway client; its credential is not a User API Key.
 esp_err_t DirectHttp(esp_http_client_method_t method, const char* suffix,
                      char* response, size_t capacity, int* status) {
+    agentlink::cloud::NetworkMemoryLock memory;
     char url[512];
     const char* base = CONFIG_AGENT_LINK_REALTIME_BASE_URL;
     size_t base_len = strlen(base);
@@ -381,13 +404,22 @@ void EndDirectSession() {
 }
 #endif
 
-void LogTransportFailure(esp_transport_handle_t transport, const char* operation,
+void LogTransportFailure(VoiceTls transport, const char* operation,
                          int result, int saved_errno) {
     int tls_code = 0, tls_flags = 0;
+#if CONFIG_IDF_TARGET_ESP32C3
+    esp_tls_error_handle_t error = nullptr;
+    (void)esp_tls_get_error_handle(transport, &error);
+    int socket_error = 0, socket = -1;
+    socklen_t size = sizeof socket_error;
+    if (esp_tls_get_conn_sockfd(transport, &socket) == ESP_OK && socket >= 0)
+        (void)getsockopt(socket, SOL_SOCKET, SO_ERROR, &socket_error, &size);
+#else
     const auto error = esp_transport_get_error_handle(transport);
+    const int socket_error = esp_transport_get_errno(transport);
+#endif
     const esp_err_t tls_error = error
         ? esp_tls_get_and_clear_last_error(error, &tls_code, &tls_flags) : ESP_OK;
-    const int socket_error = esp_transport_get_errno(transport);
     wifi_ap_record_t ap = {};
     const bool associated = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
     ESP_LOGW(TAG, "%s: result=%d errno=%d socket_error=%d tls=%s code=%d flags=0x%x "
@@ -399,14 +431,76 @@ void LogTransportFailure(esp_transport_handle_t transport, const char* operation
 }
 
 struct WsSender {
-    esp_transport_handle_t tls;
+    VoiceTls tls;
     uint8_t* wire;
     size_t capacity;
     int64_t last_slow_log = 0;
+#if CONFIG_IDF_TARGET_ESP32C3
+    agentlink::realtime::PendingWrite pending;
+    unsigned audio_frames = 0, audio_messages = 0;
+    size_t audio_bytes = 0;
+    int64_t queued_at = 0;
+#endif
 };
+
+int PollWritable(VoiceTls tls) {
+#if CONFIG_IDF_TARGET_ESP32C3
+    int socket = -1;
+    if (esp_tls_get_conn_sockfd(tls, &socket) != ESP_OK || socket < 0) return -1;
+    fd_set writes; FD_ZERO(&writes); FD_SET(socket, &writes);
+    timeval timeout{};
+    return select(socket + 1, nullptr, &writes, nullptr, &timeout);
+#else
+    return esp_transport_poll_write(tls, 0);
+#endif
+}
+
+#if CONFIG_IDF_TARGET_ESP32C3
+bool TlsWouldBlock(int result) {
+    return result == ESP_TLS_ERR_SSL_WANT_READ || result == ESP_TLS_ERR_SSL_WANT_WRITE;
+}
+
+bool PumpWire(WsSender& sender) {
+    if (!sender.pending.Busy()) return true;
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    if (sender.pending.Expired(now_ms)) {
+        ESP_LOGW(TAG, "voice TLS write stalled for 3000 ms");
+        return false;
+    }
+    // Retry exactly the retained suffix, including after WANT_READ/WANT_WRITE.
+    // This socket stays nonblocking after the verified async TLS handshake.
+    errno = 0;
+    const int sent = esp_tls_conn_write(sender.tls, sender.wire + sender.pending.Offset(),
+                                        sender.pending.Remaining());
+    const bool waiting = TlsWouldBlock(sent);
+    if (!sender.pending.Advance(sent, waiting, esp_timer_get_time() / 1000)) {
+        LogTransportFailure(sender.tls, "write", sent, errno);
+        return false;
+    }
+    if (!sender.pending.Busy()) {
+        memset(sender.wire, 0, sender.pending.Size());
+        if (sender.audio_messages) {
+            const uint32_t elapsed = (esp_timer_get_time() - sender.queued_at) / 1000;
+            s_tx_sent_frames.fetch_add(sender.audio_frames);
+            s_tx_sent_messages.fetch_add(sender.audio_messages);
+            s_tx_bytes.fetch_add(sender.audio_bytes);
+            s_tx_write_calls.fetch_add(1);
+            s_tx_send_ms.fetch_add(elapsed);
+            if (elapsed > s_tx_send_max_ms.load()) s_tx_send_max_ms.store(elapsed);
+            sender.audio_frames = sender.audio_messages = 0;
+            sender.audio_bytes = 0;
+        }
+    }
+    return true;
+}
+#endif
 
 bool WriteWire(WsSender& sender, size_t expected) {
     if (!expected || expected > sender.capacity) return false;
+#if CONFIG_IDF_TARGET_ESP32C3
+    sender.queued_at = esp_timer_get_time();
+    return sender.pending.Begin(expected, sender.queued_at / 1000);
+#else
     errno = 0;
     const int64_t started = esp_timer_get_time();
     const int sent = esp_transport_write(sender.tls, reinterpret_cast<const char*>(sender.wire),
@@ -431,9 +525,13 @@ bool WriteWire(WsSender& sender, size_t expected) {
              static_cast<unsigned>(expected), sent, static_cast<unsigned>(write_ms), kSendTimeoutMs);
     LogTransportFailure(sender.tls, "send", sent, saved_errno);
     return false;
+#endif
 }
 
 size_t AppendFrame(WsSender& sender, size_t offset, const char* json, size_t bytes) {
+#if CONFIG_IDF_TARGET_ESP32C3
+    if (sender.pending.Busy()) return 0;
+#endif
     if (offset > sender.capacity) return 0;
     uint8_t mask[4];
     esp_fill_random(mask, sizeof mask);
@@ -492,35 +590,65 @@ public:
         if (encoder_) esp_opus_enc_close(encoder_);
 #endif
         free(decode_pcm_);
+        free(silence_);
     }
 
-    bool Start() {
+    bool Prepare() {
 #if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
-        // Grants already contain the negotiated format. Allocate the large
-        // codec states before TLS creates many small heap blocks, not after
-        // session.ready. Initialization does not encode/decode on this stack.
+        // The shared worker stack is already resident. TLS handshake scratch
+        // has been released before these per-call codec states are allocated.
         ESP_LOGI(TAG, "before Opus allocation: internal free=%u largest=%u",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
-        if (!OpenDecoder() || (audio_.input_opus && !StartEncoder())) return false;
+        if (SharedCodec() && !codec_memory_.Reserve()) {
+            ESP_LOGE(TAG, "could not reserve the %u-byte Opus workspace",
+                     static_cast<unsigned>(agentlink::realtime::CodecWorkspace::kBytes));
+            return false;
+        }
+        if ((!SharedCodec() && !OpenDecoder()) || (audio_.input_opus && !StartEncoder())) return false;
+        ReportMemory("codec prepared");
 #endif
+        return true;
+    }
+
+    bool Start() {
+#if CONFIG_IDF_TARGET_ESP32C3
+        ESP_LOGI(TAG, "resident voice worker: network + codec, internal free=%u largest=%u stack_free=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+        return true;
+#else
         rx_queue_ = xQueueCreateWithCaps(kDownlinkDepth, sizeof(Rx), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         rx_caps_ = rx_queue_ != nullptr;
         if (!rx_queue_) rx_queue_ = xQueueCreate(kDownlinkDepth, sizeof(Rx));
         if (!rx_queue_) return false;
-#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
-        // C3 runs encoding and decoding serially on one codec stack. WiFi/TLS
-        // stays on its own worker; no PSRAM or second 40 KB stack is needed.
-        constexpr unsigned stack_bytes = 40960;
-#elif CONFIG_AGENT_LINK_REALTIME_OPUS
+#if CONFIG_AGENT_LINK_REALTIME_OPUS
         constexpr unsigned stack_bytes = 24576;
 #else
         constexpr unsigned stack_bytes = 8192;
 #endif
         media_started_ = xTaskCreate(&MediaEntry, "agentlink_audio", stack_bytes, this, 5, nullptr) == pdPASS;
-        if (!media_started_) ESP_LOGE(TAG, "could not start downlink audio worker");
+        if (!media_started_)
+            ESP_LOGE(TAG, "could not start downlink audio worker (%uB stack, internal free=%u largest=%u)",
+                     stack_bytes,
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
         return media_started_;
+#endif
     }
+
+#if CONFIG_IDF_TARGET_ESP32C3
+    void BindNetwork(WsSender* sender, TxScratch* scratch) { sender_ = sender; scratch_ = scratch; }
+    bool Pump() {
+        if (reset_ != s_reset.load()) ResetAudio();
+#if CONFIG_AGENT_LINK_REALTIME_OPUS
+        if (!PumpEncoder()) running_.store(false);
+#endif
+        s_media_stack.store(uxTaskGetStackHighWaterMark(nullptr));
+        return Healthy();
+    }
+#endif
 
     bool Healthy() const { return running_.load(); }
     bool TransportFailed() const { return transport_failed_; }
@@ -528,6 +656,77 @@ public:
         running_.store(false);
         while (media_started_ && !media_done_.load()) vTaskDelay(1);
         while (encoder_started_ && !encoder_done_.load()) vTaskDelay(1);
+    }
+
+    bool SharedCodec() const {
+#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
+        // The Passport application already suppresses mic audio during speaker
+        // playback. Keep its workers resident, but never keep both codec states
+        // resident for a continuous half-duplex call.
+        return continuous_ && audio_.input_opus && audio_.output_opus;
+#else
+        return false;
+#endif
+    }
+
+    void ReportMemory(const char* phase) {
+        (void)phase;
+#if CONFIG_IDF_TARGET_ESP32C3
+        ESP_LOGI(TAG, "voice memory %s: free=%u largest=%u minimum=%u stack_free=%u",
+                 phase,
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+#if CONFIG_AGENT_LINK_REALTIME_OPUS
+        if (SharedCodec())
+            ESP_LOGI(TAG, "Opus workspace: reserved=%u peak=%u allocations=%u",
+                     static_cast<unsigned>(agentlink::realtime::CodecWorkspace::kBytes),
+                     static_cast<unsigned>(codec_memory_.Peak()), static_cast<unsigned>(codec_memory_.Live()));
+#endif
+#endif
+    }
+
+    void ClearCodecUplink() {
+#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
+        // Only queued packets are discarded at a reply boundary. A partially
+        // written TLS/WebSocket frame must finish with its original bytes.
+        std::lock_guard<std::mutex> lock(s_mutex);
+        xQueueReset(s_tx);
+        if (encoded_queue_) xQueueReset(encoded_queue_);
+        s_encoded_pending.store(0);
+        shared_frames_.Reset();
+        batch_gate_.Reset();
+#endif
+    }
+
+    bool BeginReply() {
+#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
+        if (!SharedCodec()) return true;
+        replying_ = true;
+        ClearCodecUplink();
+        if (encoder_) { esp_opus_enc_close(encoder_); encoder_ = nullptr; }
+        ResetDecoder();
+        const bool opened = OpenDecoder();
+        ReportMemory("reply decoder only");
+        return opened;
+#else
+        return true;
+#endif
+    }
+
+    bool EndReply() {
+#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
+        if (!SharedCodec()) return true;
+        replying_ = false;
+        ResetDecoder();
+        ClearCodecUplink();
+        const bool opened = StartEncoder();
+        ReportMemory("listening encoder only");
+        return opened;
+#else
+        return true;
+#endif
     }
 
     bool TxPending() {
@@ -545,6 +744,14 @@ public:
 
     // A busy queue pauses reads, while the network loop continues to send microphone audio.
     bool Deliver(unsigned opcode, const uint8_t* data, size_t bytes, int64_t received_at, uint32_t reset) {
+#if CONFIG_IDF_TARGET_ESP32C3
+        received_at_ = received_at;
+        if (reset != s_reset.load()) return true;
+        const bool handled = opcode == WS_TRANSPORT_OPCODES_BINARY
+                           ? Audio(const_cast<uint8_t*>(data), bytes) : Text(data, bytes);
+        if (!handled) running_.store(false);
+        return true;
+#else
         if (s_downlink_bytes.load() + bytes > kDownlinkBytes || !uxQueueSpacesAvailable(rx_queue_)) return false;
         auto* copy = static_cast<uint8_t*>(heap_caps_malloc(bytes ? bytes : 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         if (!copy) copy = static_cast<uint8_t*>(malloc(bytes ? bytes : 1));
@@ -556,14 +763,15 @@ public:
         s_downlink_bytes.fetch_sub(bytes);
         free(copy);
         return false;
+#endif
     }
 
     bool OpenDecoder() {
 #if CONFIG_AGENT_LINK_REALTIME_OPUS
         if (audio_.output_opus && !decoder_) {
             if (!decode_pcm_) {
-                decode_pcm_ = static_cast<int16_t*>(heap_caps_malloc(3840, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-                if (!decode_pcm_) decode_pcm_ = static_cast<int16_t*>(malloc(3840));
+                decode_pcm_ = static_cast<int16_t*>(heap_caps_malloc(kDecodePcmBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+                if (!decode_pcm_) decode_pcm_ = static_cast<int16_t*>(malloc(kDecodePcmBytes));
                 if (!decode_pcm_) return false;
             }
             esp_opus_dec_cfg_t config = {};
@@ -572,6 +780,9 @@ public:
             config.frame_duration = ESP_OPUS_DEC_FRAME_DURATION_20_MS;
             config.self_delimited = false;
             if (esp_opus_dec_open(&config, sizeof config, &decoder_) != ESP_AUDIO_ERR_OK) {
+#if CONFIG_IDF_TARGET_ESP32C3
+                if (codec_memory_.Reserved() && !decoder_ && !encoder_) codec_memory_.Rollback();
+#endif
                 ESP_LOGE(TAG, "Opus decoder could not be opened (internal free=%u largest=%u)",
                          static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                          static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
@@ -593,14 +804,16 @@ public:
 #if CONFIG_IDF_TARGET_ESP32C3
             // Recreate immediately at a reply boundary, before receiving more
             // messages can consume/fragment the state block just released.
-            if (Healthy() && Current(epoch_) && !OpenDecoder()) running_.store(false);
+            if ((!SharedCodec() || replying_) && Healthy() && Current(epoch_) && !OpenDecoder()) running_.store(false);
 #endif
         }
 #endif
     }
 
     void ResetAudio() {
-        ResetDecoder();
+        if (SharedCodec()) {
+            if (!EndReply()) running_.store(false);
+        } else ResetDecoder();
         play_due_ = 0;
         reset_ = s_reset.load();
         if (s_cb.audio_reset) s_cb.audio_reset();
@@ -623,10 +836,25 @@ public:
         const int64_t entered = esp_timer_get_time();
         const int64_t duration = static_cast<int64_t>(samples) * 1000000 / 16000;
         const int64_t buffer = static_cast<int64_t>(agentlink::audio::BufferMs()) * 750;
-        while (play_due_ + duration - esp_timer_get_time() > buffer) {
+        auto room = [&]() {
+            size_t queued = 0;
+            if (agentlink::audio::BufferLevelBytes(&queued))
+                return agentlink::realtime::PlaybackRoom(queued, samples * 2, agentlink::audio::BufferMs());
+            return play_due_ + duration - esp_timer_get_time() <= buffer;
+        };
+        if (samples * 2 > uint64_t(agentlink::audio::BufferMs()) * 32) {
+            ESP_LOGE(TAG, "decoded frame exceeds playback capacity");
+            running_.store(false); return;
+        }
+        while (!room()) {
             if (!Healthy() || !Current(epoch_) || s_mute || reset_ != s_reset) return;
 #if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
             if (!PumpEncoder()) { running_.store(false); return; }
+#endif
+#if CONFIG_IDF_TARGET_ESP32C3
+            if (sender_ && (!PumpWire(*sender_) || !FlushTx(*sender_, scratch_))) {
+                transport_failed_ = true; running_.store(false); return;
+            }
 #endif
             vTaskDelay(1);
         }
@@ -656,13 +884,14 @@ public:
         }
 #if CONFIG_AGENT_LINK_REALTIME_OPUS
         const int64_t decode_started = esp_timer_get_time();
+        if (SharedCodec() && !replying_ && !BeginReply()) return false;
         if (!OpenDecoder()) return false;
         esp_audio_dec_in_raw_t raw = {};
         raw.buffer = data;
         raw.len = static_cast<uint32_t>(bytes);
         esp_audio_dec_out_frame_t frame = {};
         frame.buffer = reinterpret_cast<uint8_t*>(decode_pcm_);
-        frame.len = 3840;
+        frame.len = kDecodePcmBytes;
         esp_audio_dec_info_t info = {};
         const esp_audio_err_t result = esp_opus_dec_decode(decoder_, &raw, &frame, &info);
         const int64_t decoded_in = esp_timer_get_time() - decode_started;
@@ -680,6 +909,18 @@ public:
     }
 
     bool Text(const uint8_t* data, size_t bytes) {
+#if CONFIG_IDF_TARGET_ESP32C3
+        // The C3 delivers synchronously from its writable message buffer. Keep
+        // Base64 there instead of making a second payload-sized cJSON string.
+        uint8_t* borrowed_audio = nullptr;
+        size_t audio_bytes = 0;
+        if (agentlink::realtime::BorrowAudioDelta(const_cast<uint8_t*>(data), bytes, &borrowed_audio, &audio_bytes)) {
+            if (s_mute || !s_ready) return true;
+            size_t decoded = 0;
+            return mbedtls_base64_decode(borrowed_audio, audio_bytes, &decoded, borrowed_audio, audio_bytes) == 0 &&
+                   Audio(borrowed_audio, decoded);
+        }
+#endif
         cJSON* json = cJSON_ParseWithLength(reinterpret_cast<const char*>(data), bytes);
         if (!json) return false;
         const cJSON* type = cJSON_GetObjectItemCaseSensitive(json, "type");
@@ -693,9 +934,28 @@ public:
 #if !CONFIG_AGENT_LINK_REALTIME_OPUS
             if (format.input_opus || format.output_opus) keep = false;
 #endif
+            if (!keep) { cJSON_Delete(json); return false; }
+#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
+            // The first ready event may refine either direction. Release the
+            // prepared state before switching allocation/half-duplex policy.
+            if (format.input_opus != audio_.input_opus || format.output_opus != audio_.output_opus) {
+                if (decoder_) { esp_opus_dec_close(decoder_); decoder_ = nullptr; }
+                if (encoder_) { esp_opus_enc_close(encoder_); encoder_ = nullptr; }
+                replying_ = false;
+                ClearCodecUplink();
+            }
+#endif
             audio_ = format;
             input_opus_.store(audio_.input_opus);
-            if (!keep || !OpenDecoder()) { cJSON_Delete(json); return false; }
+#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
+            // A first ready event may refine a PCM-input grant to Opus. Free
+            // the decoder from preparation before entering encoder-only mode.
+            if (SharedCodec() && !replying_ && decoder_) {
+                esp_opus_dec_close(decoder_);
+                decoder_ = nullptr;
+            }
+#endif
+            if (!SharedCodec() && !OpenDecoder()) { cJSON_Delete(json); return false; }
 #if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
             // Codec allocation must succeed before enabling capture/UI readiness.
             if (audio_.input_opus && !StartEncoder()) { cJSON_Delete(json); return false; }
@@ -714,17 +974,16 @@ public:
             const cJSON* audio = cJSON_GetObjectItemCaseSensitive(json, "audio");
             if (cJSON_IsString(audio) && !s_mute && s_ready) {
                 const size_t len = strlen(audio->valuestring);
-                const size_t capacity = len / 4 * 3 + 3;
-                auto* decoded = static_cast<uint8_t*>(heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-                if (!decoded) decoded = static_cast<uint8_t*>(malloc(capacity));
+                // mbedTLS validates first, then decodes forwards (4 source
+                // bytes -> 3 destination bytes). Its own string is writable;
+                // decoding in place avoids a third copy of every audio delta.
+                auto* decoded = reinterpret_cast<uint8_t*>(audio->valuestring);
                 size_t got = 0;
-                if (!decoded || mbedtls_base64_decode(decoded, capacity, &got,
-                        reinterpret_cast<const uint8_t*>(audio->valuestring), len) != 0) {
+                if (mbedtls_base64_decode(decoded, len, &got, decoded, len) != 0) {
                     keep = false;
                 } else {
                     keep = Audio(decoded, got);
                 }
-                free(decoded);
             }
         } else if (strcmp(event, "response.audio.done") == 0) {
             ESP_LOGI(TAG, "reply audio end #%u (started=%u, interrupted=%u)",
@@ -735,13 +994,15 @@ public:
             ESP_LOGI(TAG, "reply processing: decode max %u us, sink max %u us, pacing max %u ms",
                      static_cast<unsigned>(max_decode_), static_cast<unsigned>(max_sink_),
                      static_cast<unsigned>(max_pacing_ / 1000));
-            ResetDecoder();
+            if (SharedCodec()) keep = EndReply();
+            else ResetDecoder();
             if (s_cb.audio_end) s_cb.audio_end();
             if (s_cb.state && s_ready)
                 s_cb.state(true, continuous_ ? "Microphone on" : "Hold to talk, release to send");
         } else if (strcmp(event, "response.started") == 0) {
             ESP_LOGI(TAG, "reply started #%u", ++replies_);
-            ResetDecoder();
+            if (SharedCodec()) keep = BeginReply();
+            else ResetDecoder();
             samples_ = encoded_bytes_ = packets_ = 0;
             last_audio_ = max_gap_ = 0;
             max_decode_ = max_sink_ = max_pacing_ = 0;
@@ -764,6 +1025,9 @@ public:
 
     bool FlushTx(WsSender& ws, TxScratch* scratch) {
         if (!s_ready) return true;
+#if CONFIG_IDF_TARGET_ESP32C3
+        if (ws.pending.Busy()) return true;
+#endif
 #if CONFIG_AGENT_LINK_REALTIME_OPUS && !CONFIG_IDF_TARGET_ESP32C3
         if (input_opus_.load() && !StartEncoder()) return false;
 #endif
@@ -771,7 +1035,7 @@ public:
         // Do not wait three seconds in poll_write while reply audio is waiting
         // to be read on this same worker. Keep the packets queued until writable.
         errno = 0;
-        const int writable = esp_transport_poll_write(ws.tls, 0);
+        const int writable = PollWritable(ws.tls);
         const int saved_errno = errno;
         const int64_t now_ms = esp_timer_get_time() / 1000;
         write_stall_.Observe(writable > 0, now_ms);
@@ -787,7 +1051,7 @@ public:
             if (encoded_packet_.kind == TxKind::kPcm) {
                 size_t wire_bytes = 0, json_bytes = 0;
                 unsigned frames = 0;
-                const unsigned limit = continuous_ ? agentlink::realtime::OpusBatchGate::kFrames : 1;
+                const unsigned limit = continuous_ ? kOpusBatchFrames : 1;
                 while (frames < limit && Current(epoch_) &&
                        xQueuePeek(encoded_queue_, &encoded_packet_, 0) == pdTRUE &&
                        encoded_packet_.kind == TxKind::kPcm) {
@@ -861,7 +1125,11 @@ public:
 
 private:
     bool transport_failed_ = false;  // network worker only
-    agentlink::realtime::OpusBatchGate batch_gate_;
+#if CONFIG_IDF_TARGET_ESP32C3
+    WsSender* sender_ = nullptr;
+    TxScratch* scratch_ = nullptr;
+#endif
+    agentlink::realtime::OpusBatchGate batch_gate_{kOpusBatchFrames};
     agentlink::realtime::WriteStall write_stall_;
     static void MediaEntry(void* context) { static_cast<Call*>(context)->MediaLoop(); }
 
@@ -914,6 +1182,11 @@ private:
 
     bool WriteAudio(WsSender& ws, size_t wire_bytes, size_t json_bytes,
                     unsigned pcm_packets, unsigned messages) {
+#if CONFIG_IDF_TARGET_ESP32C3
+        if (!WriteWire(ws, wire_bytes)) { transport_failed_ = true; return false; }
+        ws.audio_frames = pcm_packets; ws.audio_messages = messages; ws.audio_bytes = json_bytes;
+        return true;
+#else
         SetWorkerPhase(1);
         const int64_t started = esp_timer_get_time();
         const bool sent = WriteWire(ws, wire_bytes);
@@ -933,21 +1206,25 @@ private:
         s_tx_sent_messages.fetch_add(messages);
         s_tx_bytes.fetch_add(json_bytes);
         return true;
+#endif
     }
 
 #if CONFIG_AGENT_LINK_REALTIME_OPUS
     bool StartEncoder() {
 #if CONFIG_IDF_TARGET_ESP32C3
-        if (encoder_) return true;
+        if (encoder_) return !SharedCodec() || CacheSilence();
 #else
         if (encoder_started_) return true;
 #endif
-        encoded_queue_ = xQueueCreateWithCaps(kEncodedDepth, sizeof(EncodedTx), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        encoded_queue_caps_ = encoded_queue_ != nullptr;
-        if (!encoded_queue_) encoded_queue_ = xQueueCreate(kEncodedDepth, sizeof(EncodedTx));
+        if (!encoded_queue_) {
+            encoded_queue_ = xQueueCreateWithCaps(kEncodedDepth, sizeof(EncodedTx), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            encoded_queue_caps_ = encoded_queue_ != nullptr;
+            if (!encoded_queue_) encoded_queue_ = xQueueCreate(kEncodedDepth, sizeof(EncodedTx));
+        }
         if (!encoded_queue_) return false;
 #if CONFIG_IDF_TARGET_ESP32C3
-        const bool opened = OpenEncoder();
+        if (SharedCodec() && replying_) return silence_ != nullptr;
+        const bool opened = OpenEncoder() && (!SharedCodec() || CacheSilence());
         ESP_LOGI(TAG, "shared Opus worker: codec=%s queue=%u; internal free=%u largest=%u",
                  opened ? "ready" : "failed", static_cast<unsigned>(kEncodedDepth),
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
@@ -989,6 +1266,15 @@ private:
     }
 
     bool Encode(const uint8_t* pcm, EncodedTx* packet) {
+        if (SharedCodec() && replying_) {
+            // Preserve endpointing cadence while the application is half-duplex.
+            // Reusing a valid encoded silence packet needs no live encoder state.
+            if (!silence_ || !silence_bytes_) return false;
+            memcpy(packet->data, silence_, silence_bytes_);
+            packet->kind = TxKind::kPcm;
+            packet->bytes = silence_bytes_;
+            return QueueEncoded(*packet);
+        }
         esp_audio_enc_in_frame_t input{const_cast<uint8_t*>(pcm), kMicBytes};
         esp_audio_enc_out_frame_t output{};
         output.buffer = packet->data;
@@ -1002,11 +1288,14 @@ private:
             return false;
         }
         packet->kind = TxKind::kPcm;
-        packet->bytes = output.encoded_bytes;
+        packet->bytes = static_cast<uint16_t>(output.encoded_bytes);
         return QueueEncoded(*packet);
     }
 
     bool OpenEncoder() {
+#if CONFIG_IDF_TARGET_ESP32C3
+        if (SharedCodec() && !codec_memory_.Reserve()) return false;
+#endif
         esp_opus_enc_config_t config = ESP_OPUS_ENC_CONFIG_DEFAULT();
         config.sample_rate = 16000;
         config.channel = 1;
@@ -1018,7 +1307,28 @@ private:
                      esp_opus_enc_get_frame_size(encoder_, &input_size, &output_size) == ESP_AUDIO_ERR_OK &&
                      input_size == kMicBytes && output_size <= sizeof(EncodedTx::data);
         if (!valid) ESP_LOGE(TAG, "Opus encoder initialization failed (input=%d output=%d)", input_size, output_size);
+#if CONFIG_IDF_TARGET_ESP32C3
+        if (!valid && codec_memory_.Reserved() && !encoder_ && !decoder_) codec_memory_.Rollback();
+#endif
         return valid;
+    }
+
+    bool CacheSilence() {
+#if CONFIG_IDF_TARGET_ESP32C3
+        if (silence_) return true;
+        uint8_t pcm[kMicBytes]{};
+        esp_audio_enc_in_frame_t input{pcm, sizeof pcm};
+        esp_audio_enc_out_frame_t output{};
+        output.buffer = encoded_packet_.data;
+        output.len = sizeof encoded_packet_.data;
+        if (esp_opus_enc_process(encoder_, &input, &output) != ESP_AUDIO_ERR_OK ||
+            !output.encoded_bytes || output.encoded_bytes > output.len) return false;
+        silence_ = static_cast<uint8_t*>(malloc(output.encoded_bytes));
+        if (!silence_) return false;
+        silence_bytes_ = static_cast<uint16_t>(output.encoded_bytes);
+        memcpy(silence_, output.buffer, silence_bytes_);
+#endif
+        return true;
     }
 
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -1026,8 +1336,11 @@ private:
         if (!s_ready || !input_opus_.load()) return true;
         // An end marker can flush a padded frame plus a control packet. Never
         // wait for network space here: decoding must continue during TX stalls.
-        if (!encoded_queue_ || uxQueueSpacesAvailable(encoded_queue_) < 2) return true;
+        if (!encoded_queue_) return false;
         Tx input;
+        if (xQueuePeek(s_tx, &input, 0) != pdTRUE) return true;
+        const unsigned needed = input.kind == TxKind::kEnd ? 2 : 1;
+        if (uxQueueSpacesAvailable(encoded_queue_) < needed) return true;
         if (xQueueReceive(s_tx, &input, 0) != pdTRUE) return true;
         EncodedTx output{};
         const bool valid = EncodeInput(input, shared_frames_, output);
@@ -1073,6 +1386,9 @@ private:
 
     uint32_t epoch_;
     bool continuous_ = false;
+    bool replying_ = false;
+    uint8_t* silence_ = nullptr;
+    uint16_t silence_bytes_ = 0;
     unsigned replies_ = 0, reply_ends_ = 0, interruptions_ = 0;
     uint32_t reset_ = s_reset.load();
     int64_t play_due_ = 0;
@@ -1097,8 +1413,226 @@ private:
     void* encoder_ = nullptr;
 #endif
     agentlink::realtime::Pcm24To16 converter_;
+#if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
+    // Destroyed after the destructor body has closed both vendor handles.
+    agentlink::realtime::CodecWorkspace codec_memory_;
+#endif
 };
 
+#if CONFIG_IDF_TARGET_ESP32C3
+class NativeWss {
+public:
+    NativeWss() : tls(esp_tls_init()) {}
+    ~NativeWss() { if (tls) esp_tls_conn_destroy(tls); }
+    bool Connect(const WssAddress& addr, uint32_t epoch, TxScratch& scratch,
+                 agentlink::realtime::MessageBuffer& storage, size_t* trailing, int* status) {
+        *trailing = 0; *status = 0;
+        if (!tls) return false;
+        esp_tls_cfg_t config{};
+        config.non_block = true;
+        config.timeout_ms = kConnectTimeoutMs;
+        config.crt_bundle_attach = esp_crt_bundle_attach;
+#if CONFIG_MBEDTLS_DYNAMIC_BUFFER
+        // Reserve the peer's full record after the handshake, before Opus.
+        // Dynamic TX remains small; RX is reused for the life of this call.
+        config.esp_tls_dyn_buf_strategy = ESP_TLS_DYN_BUF_RX_STATIC;
+#endif
+        const int64_t deadline = esp_timer_get_time() + kConnectTimeoutMs * 1000LL;
+        int result = 0;
+        while (Current(epoch) && esp_timer_get_time() < deadline) {
+            result = esp_tls_conn_new_async(addr.host, strlen(addr.host), addr.port, &config, tls);
+            if (result != 0) break;
+            vTaskDelay(1);
+        }
+        if (result != 1 || !Current(epoch)) return false;
+        int socket = -1;
+        const int enabled = 1;
+        if (esp_tls_get_conn_sockfd(tls, &socket) != ESP_OK || socket < 0) return false;
+        (void)setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof enabled);
+
+        uint8_t nonce[16], digest[20];
+        char key[25]{}, challenge[80]{}, accept[29]{};
+        size_t encoded = 0;
+        esp_fill_random(nonce, sizeof nonce);
+        if (mbedtls_base64_encode(reinterpret_cast<uint8_t*>(key), sizeof key, &encoded,
+                                  nonce, sizeof nonce) != 0) return false;
+        const int challenge_size = snprintf(challenge, sizeof challenge, "%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11", key);
+        if (challenge_size <= 0 || challenge_size >= static_cast<int>(sizeof challenge) ||
+            mbedtls_sha1(reinterpret_cast<const uint8_t*>(challenge), challenge_size, digest) != 0 ||
+            mbedtls_base64_encode(reinterpret_cast<uint8_t*>(accept), sizeof accept, &encoded,
+                                  digest, sizeof digest) != 0) return false;
+        const int request_size = snprintf(scratch.json, sizeof scratch.json,
+            "GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: %s\r\n"
+            "Sec-WebSocket-Protocol: tidb-link.realtime.v1\r\n\r\n", addr.path, addr.host, addr.port, key);
+        if (request_size <= 0 || request_size >= static_cast<int>(sizeof scratch.json)) return false;
+        size_t sent = 0, received = 0;
+        auto* header = reinterpret_cast<char*>(storage.Data());
+        while (Current(epoch) && esp_timer_get_time() < deadline) {
+            if (sent < static_cast<size_t>(request_size)) {
+                result = esp_tls_conn_write(tls, scratch.json + sent, request_size - sent);
+                if (result > 0) sent += result;
+                else if (!TlsWouldBlock(result)) return false;
+            } else {
+                if (received >= storage.Capacity() - 1) return false;
+                result = esp_tls_conn_read(tls, header + received, storage.Capacity() - received - 1);
+                if (result > 0) {
+                    received += result; header[received] = '\0';
+                    const char* delimiter = strstr(header, "\r\n\r\n");
+                    if (delimiter) {
+                        const size_t header_size = delimiter + 4 - header;
+                        const char saved = header[header_size];
+                        header[header_size] = '\0';
+                        const bool valid = agentlink::realtime::ValidUpgrade(header, accept, status);
+                        header[header_size] = saved;
+                        if (!valid || received - header_size > sizeof scratch.read) return false;
+                        *trailing = received - header_size;
+                        memcpy(scratch.read, header + header_size, *trailing);
+                        return true;
+                    }
+                } else if (!TlsWouldBlock(result)) return false;
+            }
+            vTaskDelay(1);
+        }
+        return false;
+    }
+    esp_tls_t* tls;
+};
+
+// One resident C3 worker owns TLS, framing and codecs. I2S capture/playback stay
+// on the board's independent workers. No 40 KB task is allocated during a call.
+bool ConnectOnce(const Grant& grant) {
+    WssAddress addr{};
+    if (!ParseWss(grant.url, &addr)) return false;
+    agentlink::cloud::NetworkMemoryLock memory;
+    if (!Current(grant.epoch)) return false;
+    VoiceWifiPower power;
+    agentlink::realtime::MessageBuffer message(kMessageInitialBytes, kMessageBytes, ResizeMessage);
+    std::unique_ptr<TxScratch> scratch(new (std::nothrow) TxScratch{});
+    // Keep metadata off the shared stack: the codec needs most of its depth.
+    std::unique_ptr<Call> owner(new (std::nothrow) Call(grant.epoch, grant.audio, grant.platform));
+    if (!message.Data() || !scratch || !owner) return false;
+    NativeWss connection;
+    size_t trailing = 0;
+    int status = 0;
+    if (s_cb.state) s_cb.state(false, "Connecting voice");
+    if (!connection.Connect(addr, grant.epoch, *scratch, message, &trailing, &status)) {
+        LogTransportFailure(connection.tls, "connect/upgrade", -1, errno);
+        ESP_LOGW(TAG, "WSS connection failed (upgrade HTTP %d)", status);
+        return status <= 0 || status >= 500;
+    }
+    // Keep a full message alongside the fixed TLS record. Growing/shrinking
+    // this buffer during playback otherwise introduces another large realloc.
+    if (!message.Reserve(kMessageBytes)) {
+        ESP_LOGW(TAG, "could not reserve %u-byte voice message", static_cast<unsigned>(kMessageBytes));
+        return false;
+    }
+    ESP_LOGI(TAG, "WSS connected on resident stack: internal free=%u largest=%u stack_free=%u",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    ESP_LOGI(TAG, "voice receive buffers: TLS RX=fixed, message=%uB retained", static_cast<unsigned>(message.Capacity()));
+    Call& call = *owner;
+    if (!Current(grant.epoch) || !call.Prepare() || !call.Start()) return false;
+    WsSender sender{connection.tls, scratch->wire, sizeof scratch->wire};
+    call.BindNetwork(&sender, scratch.get());
+    char hello[sizeof Grant::token * 2 + 128];
+    size_t n = snprintf(hello, sizeof hello, "{\"type\":\"session.connect\",\"connect_token\":\"");
+    for (const char* p = grant.token; *p && n + 4 < sizeof hello; ++p) {
+        if (*p == '"' || *p == '\\') hello[n++] = '\\';
+        hello[n++] = *p;
+    }
+    n += snprintf(hello + n, sizeof hello - n, "\",\"endpointing\":{\"mode\":\"%s\"}}",
+                  grant.platform ? "server" : "client");
+    const bool queued = Send(sender, hello, n);
+    memset(hello, 0, sizeof hello);
+    if (!queued) return true;
+
+    agentlink::realtime::FrameReader reader(kMessageBytes);
+    agentlink::realtime::Message assembler(message.Data(), message.Capacity());
+    uint8_t control[125]{}, pong[125]{};
+    size_t control_size = 0, pong_size = 0;
+    bool pong_pending = false, retryable = false;
+    const int64_t connected_at = esp_timer_get_time();
+    int64_t last_rx = connected_at, last_ping = connected_at, last_yield = connected_at;
+    auto receive = [&](const uint8_t* data, size_t bytes) {
+        return reader.Consume(data, bytes, [&](unsigned opcode, bool first, bool end, bool fin,
+                                              const uint8_t* payload, size_t count) {
+            if (opcode >= 8) {
+                if (first) control_size = 0;
+                if (count > sizeof control - control_size) return false;
+                memcpy(control + control_size, payload, count); control_size += count;
+                if (!end) return true;
+                if (opcode == 8) {
+                    const unsigned code = control_size >= 2 ? (unsigned(control[0]) << 8) | control[1] : 0;
+                    ESP_LOGW(TAG, "voice peer closed (code=%u); automatic retry disabled", code);
+                    return false;
+                }
+                if (opcode == 9) {
+                    memcpy(pong, control, control_size); pong_size = control_size; pong_pending = true;
+                }
+                return true;
+            }
+            const size_t buffered = assembler.Active() ? assembler.Size() : 0;
+            if (!message.Reserve(buffered + count)) return false;
+            assembler.Rebind(message.Data(), message.Capacity());
+            const auto result = assembler.Append(opcode, first, end, fin, payload, count);
+            if (result == agentlink::realtime::Message::kError) return false;
+            if (result == agentlink::realtime::Message::kComplete) {
+                if (assembler.Opcode() == 1 && IsInterruption(message.Data(), assembler.Size())) s_reset.fetch_add(1);
+                call.Deliver(assembler.Opcode(), message.Data(), assembler.Size(), last_rx, s_reset.load());
+                // Retain the reservation through every reply; no realloc here.
+            }
+            return call.Healthy() && Current(grant.epoch);
+        });
+    };
+    // Preserve bytes received with the HTTP upgrade (including an early ping).
+    bool valid = !trailing || receive(scratch->read, trailing);
+    while (valid && Current(grant.epoch) && call.Healthy()) {
+        if (!call.Pump() || !PumpWire(sender)) { retryable = call.Healthy() || call.TransportFailed(); break; }
+        if (!sender.pending.Busy() && pong_pending) {
+            uint8_t mask[4]; esp_fill_random(mask, sizeof mask);
+            const size_t size = agentlink::realtime::EncodeFrame(10, reinterpret_cast<char*>(pong), pong_size,
+                                                                mask, sender.wire, sender.capacity);
+            if (!size || !WriteWire(sender, size)) { retryable = true; break; }
+            pong_pending = false;
+        }
+        if (!call.FlushTx(sender, scratch.get())) { retryable = call.TransportFailed(); break; }
+        const int64_t now = esp_timer_get_time();
+        if ((!s_ready && now - connected_at > kReadyTimeoutUs) || now - last_rx > 45000000) {
+            ESP_LOGW(TAG, "voice session timed out"); retryable = true; break;
+        }
+        if (!sender.pending.Busy() && now - last_ping > 15000000) {
+            uint8_t mask[4]; esp_fill_random(mask, sizeof mask);
+            const size_t size = agentlink::realtime::EncodeFrame(9, nullptr, 0, mask, sender.wire, sender.capacity);
+            if (!size || !WriteWire(sender, size)) { retryable = true; break; }
+            last_ping = now;
+        }
+        SetWorkerPhase(3);
+        errno = 0;
+        const int got = esp_tls_conn_read(connection.tls, scratch->read, sizeof scratch->read);
+        SetWorkerPhase(0);
+        if (got > 0) {
+            s_rx_bytes.fetch_add(got); last_rx = esp_timer_get_time();
+            valid = receive(scratch->read, got);
+            if (!valid) retryable = call.TransportFailed();
+        } else if (!TlsWouldBlock(got)) {
+            LogTransportFailure(connection.tls, "read", got, errno); retryable = true; break;
+        }
+        // Yield even under a burst of replies so I2S and the idle task run.
+        if (got <= 0 || esp_timer_get_time() - last_yield >= 10000) {
+            vTaskDelay(1); last_yield = esp_timer_get_time();
+        }
+    }
+    call.Stop();
+    // Do not append a close/control message behind an incomplete TLS write.
+    if (!retryable && !sender.pending.Busy()) {
+        if (Send(sender, "{\"type\":\"session.end\"}")) (void)PumpWire(sender);
+    }
+    memset(scratch->wire, 0, sizeof scratch->wire);
+    return retryable;
+}
+#else
 // True only for transport failures eligible for a new platform grant.
 bool ConnectOnce(const Grant& grant) {
     bool retryable = false;
@@ -1108,6 +1642,9 @@ bool ConnectOnce(const Grant& grant) {
         return false;
     }
 
+    // Keep background HTTPS out until the codec states, task and TLS are freed.
+    agentlink::cloud::NetworkMemoryLock memory;
+    if (!Current(grant.epoch)) return false;
     VoiceWifiPower power;
     esp_transport_handle_t tls = esp_transport_ssl_init();
     if (!tls) {
@@ -1150,9 +1687,9 @@ bool ConnectOnce(const Grant& grant) {
     }
     if (s_cb.state) s_cb.state(false, "Connecting voice");
     Call call(grant.epoch, grant.audio, grant.platform);
-    // Reserve the codec task's contiguous stack before TLS fragments the heap.
-    const bool media_started = call.Start();
-    if (!media_started) {
+    // Reserve large codec states early, but leave the 40 KB C3 task stack free
+    // for certificate parsing and RSA verification during the TLS handshake.
+    if (!call.Prepare()) {
         free(scratch);
         esp_transport_destroy(ws);
         esp_transport_destroy(tls);
@@ -1168,6 +1705,9 @@ bool ConnectOnce(const Grant& grant) {
         ESP_LOGW(TAG, "WSS connection failed (upgrade HTTP %d)", status);
         retryable = status <= 0 || status >= 500;
     } else {
+        ESP_LOGI(TAG, "WSS connected before audio task: internal free=%u largest=%u",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
         const int socket = esp_transport_get_socket(tls);
         const int enabled = 1;
         if (socket < 0 || setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof enabled) != 0)
@@ -1183,6 +1723,8 @@ bool ConnectOnce(const Grant& grant) {
                 "\",\"endpointing\":{\"mode\":\"%s\"}}", grant.platform ? "server" : "client"));
         if (!Current(grant.epoch)) {
             ESP_LOGI(TAG, "voice connection cancelled before session.connect");
+        } else if (!call.Start()) {
+            ESP_LOGE(TAG, "voice audio startup failed after TLS handshake");
         } else if (!Send(sender, hello, n)) {
             ESP_LOGW(TAG, "session.connect could not be sent");
             retryable = true;
@@ -1197,7 +1739,7 @@ bool ConnectOnce(const Grant& grant) {
             const int64_t connected_at = esp_timer_get_time();
             int64_t last_rx = connected_at, last_ping = connected_at;
             SetWorkerPhase(0);
-            while (media_started && Current(grant.epoch) && call.Healthy()) {
+            while (Current(grant.epoch) && call.Healthy()) {
                 if (!call.FlushTx(sender, scratch)) {
                     retryable = call.TransportFailed();
                     break;
@@ -1316,6 +1858,7 @@ bool ConnectOnce(const Grant& grant) {
     esp_transport_destroy(tls);
     return retryable;
 }
+#endif
 
 void Worker(void*) {
     Grant grant = {};
@@ -1375,20 +1918,34 @@ void Worker(void*) {
 }  // namespace
 
 namespace {
+bool StartWorker() {
+    if (s_task.load(std::memory_order_acquire)) return true;
+    TaskHandle_t task = nullptr;
+#if CONFIG_IDF_TARGET_ESP32C3
+    constexpr unsigned stack_bytes = 40960;
+#else
+    constexpr unsigned stack_bytes = 12288;
+#endif
+    if (xTaskCreate(&Worker, "agentlink_rt", stack_bytes, nullptr, 5, &task) != pdPASS) return false;
+    s_task.store(task, std::memory_order_release);
+#if CONFIG_IDF_TARGET_ESP32C3
+    ESP_LOGI(TAG, "resident voice task ready: stack=%uB, internal free=%u largest=%u",
+             stack_bytes,
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
+    return true;
+}
+
 // Called with s_mutex held; both grant sources share the same worker and queue.
 esp_err_t QueueGrant(Grant* grant) {
     grant->epoch = s_epoch.fetch_add(1) + 1;
     s_ready.store(false);
     s_continuous.store(grant->platform);
     if (xQueueOverwrite(s_grants, grant) != pdPASS) return ESP_FAIL;
-    if (!s_task.load(std::memory_order_acquire)) {
-        TaskHandle_t task = nullptr;
-        constexpr unsigned stack_bytes = 12288;
-        if (xTaskCreate(&Worker, "agentlink_rt", stack_bytes, nullptr, 5, &task) != pdPASS) {
-            xQueueReset(s_grants);
-            return ESP_ERR_NO_MEM;
-        }
-        s_task.store(task, std::memory_order_release);
+    if (!StartWorker()) {
+        xQueueReset(s_grants);
+        return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
 }
@@ -1416,6 +1973,18 @@ esp_err_t cloud_realtime_start(void) {
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     s_run.store(true, std::memory_order_release);
+#if CONFIG_IDF_TARGET_ESP32C3
+    // Reserve the only large stack at SDK startup, before HTTPS fragments RAM.
+    // It waits on the grant queue between calls and is deleted only at SDK stop.
+    if (!StartWorker()) {
+        s_run.store(false);
+        if (s_tx_caps) vQueueDeleteWithCaps(s_tx); else vQueueDelete(s_tx);
+        if (s_grants_caps) vQueueDeleteWithCaps(s_grants); else vQueueDelete(s_grants);
+        s_tx = s_grants = nullptr;
+        s_tx_caps = s_grants_caps = false;
+        return ESP_ERR_NO_MEM;
+    }
+#endif
     return ESP_OK;
 }
 

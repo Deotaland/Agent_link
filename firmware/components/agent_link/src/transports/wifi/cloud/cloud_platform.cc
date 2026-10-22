@@ -2,6 +2,7 @@
 #include "cloud_platform.h"
 #include "cloud_limits.h"
 #include "cloud_log.h"
+#include "cloud_memory.h"
 
 #include <cctype>
 #include <cstdio>
@@ -83,6 +84,7 @@ esp_err_t HttpEvent(esp_http_client_event_t* event) {
 
 esp_err_t Exchange(const char* operation, esp_http_client_method_t method, const char* path, const char* body,
                    size_t capacity, cJSON** root_out, int* status_out) {
+    agentlink::cloud::NetworkMemoryLock memory;
     if (root_out) *root_out = nullptr;
     if (status_out) *status_out = 0;
     const char* device_key = cloud_cred_auth_key();

@@ -12,6 +12,7 @@
 #include "cloud_clock.h"
 #include "cloud_credential.h"
 #include "cloud_mqtt.h"
+#include "cloud_memory.h"
 #include "device_identity.h"
 
 #include "esp_heap_caps.h"
@@ -362,26 +363,30 @@ Leave StayOnline() {
             }
         }
 
-        if (now >= next_beat) {
-            next_beat = now + static_cast<int64_t>(kHeartbeatMs) * 1000;
-            cloud_api_err_t hb = {};
-            if (cloud_api_heartbeat(cloud_cred_auth_key(), &hb) != ESP_OK) {
-                if (HandleRevoked(hb)) { why = Leave::kKeyGone; break; }
-                // Anything else: stay online and retry on the next beat.
-                ESP_LOGW(TAG, "heartbeat failed (code=%d) — staying online", hb.code);
+        // A live C3 Opus call owns the RAM needed for a second TLS handshake.
+        // Leave deadlines due while busy, then refresh once the call releases it.
+        if (agentlink::cloud::NetworkMemoryLock polling(false); polling) {
+            if (now >= next_beat) {
+                next_beat = now + static_cast<int64_t>(kHeartbeatMs) * 1000;
+                cloud_api_err_t hb = {};
+                if (cloud_api_heartbeat(cloud_cred_auth_key(), &hb) != ESP_OK) {
+                    if (HandleRevoked(hb)) { why = Leave::kKeyGone; break; }
+                    // Anything else: stay online and retry on the next beat.
+                    ESP_LOGW(TAG, "heartbeat failed (code=%d) — staying online", hb.code);
+                }
             }
-        }
 
-        if (now >= next_auth) {
-            next_auth = now + static_cast<int64_t>(kHeartbeatMs) * 1000;
-            cloud_api_err_t refreshed = {};
-            if (cloud_api_auth(cloud_cred_auth_key(), StaMac(), agent_link_ota_running_version(),
-                               s_agent_json, kAgentJsonCap, &refreshed) != ESP_OK) {
-                if (HandleRevoked(refreshed)) { why = Leave::kKeyGone; break; }
-                if (refreshed.code == CLOUD_API_NO_AGENT) {
-                    Publish(AGENT_CLOUD_NO_AGENT, &refreshed);
-                    why = Leave::kNoAgent;
-                    break;
+            if (now >= next_auth) {
+                next_auth = now + static_cast<int64_t>(kHeartbeatMs) * 1000;
+                cloud_api_err_t refreshed = {};
+                if (cloud_api_auth(cloud_cred_auth_key(), StaMac(), agent_link_ota_running_version(),
+                                   s_agent_json, kAgentJsonCap, &refreshed) != ESP_OK) {
+                    if (HandleRevoked(refreshed)) { why = Leave::kKeyGone; break; }
+                    if (refreshed.code == CLOUD_API_NO_AGENT) {
+                        Publish(AGENT_CLOUD_NO_AGENT, &refreshed);
+                        why = Leave::kNoAgent;
+                        break;
+                    }
                 }
             }
         }

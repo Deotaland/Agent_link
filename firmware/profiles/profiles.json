@@ -125,6 +125,7 @@
     "hardware": "ai-passport",
     "drivers": [
       "es8311_audio.cc",
+      "raster_cjk_14.c",
       "raster_montserrat_14.c",
       "raster_montserrat_20.c",
       "raster_montserrat_28.c",

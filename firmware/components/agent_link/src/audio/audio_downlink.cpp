@@ -338,6 +338,13 @@ uint32_t BufferMs() {
     return s_buffer_ms.load(std::memory_order_acquire);
 }
 
+bool BufferLevelBytes(size_t* bytes) {
+    std::lock_guard<std::mutex> lock(s_mtx);
+    if (!bytes || !s_buffer_level) return false;
+    *bytes = s_buffer_level(s_buffer_level_ctx);
+    return true;
+}
+
 void OnLinkState(bool connected) {
     if (connected) return;
     Disarm();

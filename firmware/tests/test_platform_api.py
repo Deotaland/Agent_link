@@ -18,6 +18,8 @@ parser.add_argument('--c3', action='store_true', help='verify C3 Opus grants and
 parser.add_argument('--gateway', action='store_true', help='verify claim-code and gateway error logging')
 parser.add_argument('--session', action='store_true', help='verify optional MQTT in the production session loop')
 parser.add_argument('--voice-entry', action='store_true', help='verify HTTP voice starts without MQTT')
+parser.add_argument('--voice-worker', action='store_true', help='verify the resident C3 worker and incremental TLS upgrade')
+parser.add_argument('--voice-memory', action='store_true', help='exercise the production C3 codec lifetime and bounded uplink under memory pressure')
 args = parser.parse_args()
 if not args.idf_path:
     parser.error('provide an existing ESP-IDF path for its cJSON dependency')
@@ -53,9 +55,55 @@ if args.voice_entry:
     source = build / 'realtime_entry_test.cc'
     source.write_text(fixture.replace('// INSERT_PRODUCTION_ENTRIES', production[begin:end]), encoding='utf-8')
     sources = [source]
+if args.voice_worker:
+    if not args.c3:
+        parser.error('--voice-worker requires --c3')
+    production = (root / 'components/agent_link/src/transports/wifi/cloud/cloud_realtime.cc').read_text(encoding='utf-8')
+    fixture = (root / 'tests/realtime_worker_test.cc').read_text(encoding='utf-8')
+    sections = {
+        'CALL_START': ('    bool Start() {', '\n#if CONFIG_IDF_TARGET_ESP32C3\n    void BindNetwork'),
+        'START_WORKER': ('bool StartWorker() {', '\n// Called with s_mutex held; both grant sources'),
+        'QUEUE_GRANT': ('esp_err_t QueueGrant(Grant* grant) {', '\n}  // namespace'),
+        'SDK_START': ('esp_err_t cloud_realtime_start(void) {', '\nvoid cloud_realtime_stop(void)'),
+        'SDK_STOP': ('void cloud_realtime_stop(void) {', '\nesp_err_t cloud_realtime_offer('),
+        'CANCEL': ('void cloud_realtime_cancel(void) {', '\nesp_err_t cloud_realtime_stream_start('),
+        'NATIVE_WSS': ('class NativeWss {', '\n// One resident C3 worker'),
+    }
+    for marker, (start, end) in sections.items():
+        begin = production.index(start)
+        fixture = fixture.replace('// INSERT_' + marker, production[begin:production.index(end, begin)])
+    source = build / 'realtime_worker_test.cc'
+    source.write_text(fixture, encoding='utf-8')
+    sources = [source]
+
+extra_c_sources = []
+extra_defines = []
+if args.voice_memory:
+    if not args.c3:
+        parser.error('--voice-memory requires --c3')
+    production = (root / 'components/agent_link/src/transports/wifi/cloud/cloud_realtime.cc').read_text(encoding='utf-8')
+    fixture = (root / 'tests/realtime_memory_test.cc').read_text(encoding='utf-8')
+    for marker, start, end in [
+        ('TYPES', 'enum class TxKind', '\nstruct WssAddress'),
+        ('CALL', 'class Call {', '\n#if CONFIG_IDF_TARGET_ESP32C3\nclass NativeWss'),
+    ]:
+        begin = production.index(start)
+        fixture = fixture.replace('// INSERT_' + marker, production[begin:production.index(end, begin)])
+    source = build / 'realtime_memory_test.cc'
+    source.write_text(fixture, encoding='utf-8')
+    sources = [source]
+    mbedtls = args.idf_path / 'components/mbedtls/mbedtls'
+    includes.insert(0, root / 'tests/codec_memory_stubs')
+    sources += [root / 'components/agent_link/src/transports/wifi/cloud/realtime_codec_memory.cc']
+    includes += [mbedtls / 'include', mbedtls / 'library']
+    config = build / 'base64_test_config.h'
+    config.write_text('#define MBEDTLS_BASE64_C\n', encoding='utf-8')
+    extra_defines = ['MBEDTLS_CONFIG_FILE="' + config.as_posix() + '"']
+    extra_c_sources = [mbedtls / 'library/base64.c', mbedtls / 'library/constant_time.c']
 environment = os.environ.copy()
 defines = ['CONFIG_AGENT_LINK_REALTIME_OPUS=0'] if args.pcm else []
 defines.append('PLATFORM_TEST_CAPTURE_LOGS=1')
+defines += extra_defines
 if args.c3:
     defines.append('CONFIG_IDF_TARGET_ESP32C3=1')
 vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -75,14 +123,21 @@ if os.name == 'nt' and vswhere.is_file():
         raise SystemExit('Visual C++ activation did not provide cl.exe')
     subprocess.run([compiler, '/nologo', '/c', '/TC', '/D_CRT_SECURE_NO_WARNINGS',
                     str(json_dir / 'cJSON.c'), '/Fo' + str(build / 'cJSON.obj')], env=environment, cwd=build, check=True)
+    extra_objects = []
+    for c_source in extra_c_sources:
+        obj = build / (c_source.stem + '.obj')
+        subprocess.run([compiler, '/nologo', '/c', '/TC', *['/I' + str(p) for p in includes],
+                        *['/D' + d for d in defines], str(c_source), '/Fo' + str(obj)],
+                       env=environment, cwd=build, check=True)
+        extra_objects.append(obj)
     binary = build / 'platform_api_auth_test.exe'
-    subprocess.run([compiler, '/nologo', '/std:c++17', '/EHsc', '/W4', '/D_CRT_SECURE_NO_WARNINGS',
+    subprocess.run([compiler, '/nologo', '/std:c++17', '/EHsc', '/W4', '/utf-8', '/D_CRT_SECURE_NO_WARNINGS',
                     *['/D' + value for value in defines],
-                    *['/I' + str(p) for p in includes], *map(str, sources), str(build / 'cJSON.obj'),
+                    *['/I' + str(p) for p in includes], *map(str, sources), str(build / 'cJSON.obj'), *map(str, extra_objects),
                     '/Fo' + build.as_posix() + '/', '/Fe' + str(binary)], env=environment, cwd=build, check=True)
 else:
     binary = build / ('platform_api_auth_test.exe' if os.name == 'nt' else 'platform_api_auth_test')
     subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', *['-I' + str(p) for p in includes],
                     *['-D' + value for value in defines],
-                    *map(str, sources), str(json_dir / 'cJSON.c'), '-o', str(binary)], cwd=build, check=True)
-subprocess.run([str(binary)], check=True)
+                    *map(str, sources), *map(str, extra_c_sources), str(json_dir / 'cJSON.c'), '-o', str(binary)], cwd=build, check=True)
+subprocess.run([str(binary)], check=True, timeout=30)

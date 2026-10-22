@@ -36,6 +36,7 @@ if(_backend STREQUAL "WIFI" OR _backend STREQUAL "")
             src/transports/wifi/cloud/cloud_credential.cc src/transports/wifi/cloud/cloud_api.cc
             src/transports/wifi/cloud/cloud_session.cc src/transports/wifi/cloud/cloud_mqtt.cc
             src/transports/wifi/cloud/cloud_realtime.cc src/transports/wifi/cloud/cloud_platform.cc
+            src/transports/wifi/cloud/realtime_codec_memory.cc
             src/transports/wifi/cloud/cloud_json.cc src/transports/wifi/cloud/cloud_clock.cc)
         set(_assets portal/portal.html portal/connecting.html)
     endif()

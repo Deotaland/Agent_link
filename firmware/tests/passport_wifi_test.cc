@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <atomic>
 #include "passport_wifi_controls.h"
 #include "realtime_audio.h"
 #include "realtime_buffer.h"
@@ -30,7 +31,28 @@ void PlaybackIdleWait() {
 #undef pdMS_TO_TICKS
 }
 
+class PassportWifiAudio {
+public:
+    static size_t BufferLevel(void* context);
+    static constexpr size_t kBufferBytes = 8192;
+    std::atomic<uint32_t> generation_{0}, cleared_{0};
+    size_t buffer_ = 1024;
+};
+size_t xStreamBufferBytesAvailable(size_t bytes) { return bytes; }
+// INSERT_BUFFER_LEVEL
+
 int main() {
+    PassportWifiAudio audio;
+    assert(PassportWifiAudio::BufferLevel(&audio) == 1024);
+    audio.generation_ = 1;
+    assert(PassportWifiAudio::BufferLevel(&audio) == 8192); // asynchronous reset cannot accept PCM yet
+    audio.cleared_ = 1; audio.buffer_ = 3200;
+    assert(PassportWifiAudio::BufferLevel(&audio) == 3200);
+    assert(agentlink::realtime::PlaybackRoom(5504, 640, 256));
+    assert(!agentlink::realtime::PlaybackRoom(5505, 640, 256));
+    assert(!agentlink::realtime::PlaybackRoom(8192, 640, 256));
+    assert(agentlink::realtime::PlaybackRoom(0, 8192, 256));
+    assert(!agentlink::realtime::PlaybackRoom(0, 8193, 256));
     tick_hz = 100;
     PlaybackIdleWait();
     assert(last_delay == 1); // 5 ms must really block at the profile's 100 Hz.

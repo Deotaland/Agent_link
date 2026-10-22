@@ -16,8 +16,10 @@ playback = audio[audio.index('void PassportWifiAudio::PlayLoop()'):audio.index('
 # Exercise the actual idle-delay statement, including conversion at both tick rates.
 idle_wait = re.search(r'vTaskDelay\([^;]+;', playback).group(0)
 fixture = (root / 'tests/passport_wifi_test.cc').read_text(encoding='utf-8')
+buffer_level = audio[audio.index('size_t PassportWifiAudio::BufferLevel('):audio.index('void PassportWifiAudio::Play(')]
 source = build / 'passport_wifi_test.cc'
-source.write_text(fixture.replace('// INSERT_PLAYBACK_IDLE_WAIT', idle_wait), encoding='utf-8')
+source.write_text(fixture.replace('// INSERT_PLAYBACK_IDLE_WAIT', idle_wait)
+                  .replace('// INSERT_BUFFER_LEVEL', buffer_level), encoding='utf-8')
 environment = os.environ.copy()
 if os.name == 'nt':
     vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'

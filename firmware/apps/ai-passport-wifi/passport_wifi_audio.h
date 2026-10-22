@@ -22,6 +22,7 @@ public:
     void Stop() { enabled_.store(false); Reset(); }
     bool Speaking() const { return echo_.Muted(esp_timer_get_time()); }
 private:
+    static size_t BufferLevel(void* context);
     static void PlayEntry(void* ctx) { static_cast<PassportWifiAudio*>(ctx)->PlayLoop(); }
     static void MicEntry(void* ctx) { static_cast<PassportWifiAudio*>(ctx)->MicLoop(); }
     void PlayLoop();

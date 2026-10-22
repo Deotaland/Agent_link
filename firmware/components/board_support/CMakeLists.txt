@@ -49,3 +49,7 @@ idf_component_register(SRCS ${_sources}
     PRIV_INCLUDE_DIRS "${FIRMWARE_ROOT}/boards/${PROFILE_board}" "${CMAKE_BINARY_DIR}/generated"
     REQUIRES ${_requires})
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
+if("raster_cjk_14.c" IN_LIST _drivers)
+    configure_file("${FIRMWARE_ROOT}/boards/common/fonts/OFL.txt"
+                   "${CMAKE_BINARY_DIR}/fonts-OFL.txt" COPYONLY)
+endif()

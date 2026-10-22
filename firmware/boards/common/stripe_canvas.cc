@@ -9,8 +9,10 @@ namespace {
 int Advance(const raster_font_t& font, uint16_t id, uint16_t next) {
     if (!id) return font.line_height / 2;
     int width = font.glyphs[id].adv_w;
-    const unsigned left = font.kern_left[id], right = font.kern_right[next];
-    if (left && right) width += font.kern_values[(left - 1) * font.kern_right_count + right - 1];
+    if (font.kern_left && font.kern_right && font.kern_values) {
+        const unsigned left = font.kern_left[id], right = font.kern_right[next];
+        if (left && right) width += font.kern_values[(left - 1) * font.kern_right_count + right - 1];
+    }
     return (width + 8) >> 4;
 }
 
@@ -42,11 +44,33 @@ uint32_t NextCodepoint(const char*& text, const char* end) {
 
 uint16_t GlyphId(const raster_font_t& font, uint32_t codepoint) {
     if (codepoint >= 32 && codepoint < 127) return static_cast<uint16_t>(codepoint - 31);
-    if (codepoint < 176 || codepoint - 176 > UINT16_MAX) return 0;
-    const uint16_t relative = static_cast<uint16_t>(codepoint - 176);
+    const uint32_t base = font.sparse_base ? font.sparse_base : 176;
+    if (codepoint < base || codepoint - base > UINT16_MAX || !font.sparse_count) return 0;
+    const uint16_t relative = static_cast<uint16_t>(codepoint - base);
     const auto* found = std::lower_bound(font.sparse, font.sparse + font.sparse_count, relative);
     if (found == font.sparse + font.sparse_count || *found != relative) return 0;
     return static_cast<uint16_t>(96 + found - font.sparse);
+}
+
+void CopyText(char* out, size_t capacity, const char* text) {
+    if (!out || !capacity) return;
+    if (!text) { out[0] = 0; return; }
+    const char* end = text + std::strlen(text);
+    size_t written = 0;
+    while (text < end) {
+        const char* start = text;
+        const uint32_t cp = NextCodepoint(text, end);
+        const size_t size = static_cast<size_t>(text - start);
+        if (cp == 0xfffd) {
+            if (written + 1 >= capacity) break;
+            out[written++] = '?';
+        } else {
+            if (size >= capacity - written) break;
+            std::memcpy(out + written, start, size);
+            written += size;
+        }
+    }
+    out[written] = 0;
 }
 
 int TextWidth(const raster_font_t& font, const char* text, const char* end) {

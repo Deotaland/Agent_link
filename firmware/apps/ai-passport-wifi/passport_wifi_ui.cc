@@ -54,11 +54,11 @@ void Render(void*) {
             canvas.Box({12, 40, 216, 236}, 0x1D2B36, 12);
             Text(canvas, raster_montserrat_14, "AI PASSPORT / WIFI", 16, 12, 212, 1, accent);
             canvas.Clip({24, 52, 192, 212});
-            Text(canvas, pairing ? raster_montserrat_28 : raster_montserrat_20,
+            Text(canvas, pairing ? raster_montserrat_28 : Latin(title) ? raster_montserrat_20 : raster_cjk_14,
                  title, 24, 54, 192, 2, 0xF4F4EC);
-            Text(canvas, raster_montserrat_14, detail, 24, 111, 192, 6, 0xC7D3D9);
+            Text(canvas, raster_cjk_14, detail, 24, 111, 192, 4, 0xC7D3D9);
             if (!link && frame.answer[0])
-                Text(canvas, raster_montserrat_14, frame.answer, 24, 213, 192, 2, accent);
+                Text(canvas, raster_cjk_14, frame.answer, 24, 213, 192, 2, accent);
             canvas.Clip({12, 281, 216, 39});
             Text(canvas, raster_montserrat_14, link ? "UP / DOWN: volume" : frame.footer,
                  14, 284, 212, 2, 0xC7D3D9);
@@ -86,15 +86,15 @@ void SetContent(const char* title, const char* detail, const char* footer) {
     std::lock_guard<std::mutex> guard(lock);
     if (strcmp(input.title, title) == 0 && strcmp(input.detail, detail) == 0 &&
         strcmp(input.footer, footer) == 0) return;
-    snprintf(input.title, sizeof input.title, "%s", title);
-    snprintf(input.detail, sizeof input.detail, "%s", Latin(detail) ? detail : "Conversation selected");
+    raster::CopyText(input.title, sizeof input.title, title);
+    raster::CopyText(input.detail, sizeof input.detail, detail);
     snprintf(input.footer, sizeof input.footer, "%s", footer);
     ++input.revision;
 }
 void SetAnswer(const char* text) {
     if (!text) return;
     std::lock_guard<std::mutex> guard(lock);
-    snprintf(input.answer, sizeof input.answer, "%s", Latin(text) ? text : "Voice reply (text font unavailable)");
+    raster::CopyText(input.answer, sizeof input.answer, text);
     ++input.revision;
 }
 }  // namespace passport_wifi

@@ -25,11 +25,13 @@ typedef struct {
     uint8_t kern_right_count;
     uint8_t line_height;
     uint8_t baseline;
+    uint16_t sparse_base;  // Zero retains the legacy Montserrat base of 176.
 } raster_font_t;
 
 extern const raster_font_t raster_montserrat_14;
 extern const raster_font_t raster_montserrat_20;
 extern const raster_font_t raster_montserrat_28;
+extern const raster_font_t raster_cjk_14;
 
 #ifdef __cplusplus
 }

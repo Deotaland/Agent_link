@@ -11,6 +11,7 @@ struct Rect { int x, y, w, h; };
 
 uint32_t NextCodepoint(const char*& text, const char* end);
 uint16_t GlyphId(const raster_font_t& font, uint32_t codepoint);
+void CopyText(char* out, size_t capacity, const char* text);
 int TextWidth(const raster_font_t& font, const char* text, const char* end);
 
 class TextLayout {

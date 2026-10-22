@@ -4,6 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <atomic>
+#include <functional>
+#include <thread>
+#include "cloud_memory.h"
 
 #define ESP_OK 0
 #define ESP_ERR_NO_MEM -1
@@ -18,6 +22,8 @@ namespace {
 bool kMqttEnabled = false, s_run = true, s_token_ok = false, mqtt_started = false;
 int64_t now_us = 0, s_token_renew = 0, s_token_retry = 0;
 unsigned allocations = 0, tokens = 0, starts = 0, stops = 0, beats = 0, auths = 0, wakes = 0;
+unsigned stop_after = 3;
+std::function<void()> after_wake;
 constexpr unsigned kHeartbeatMs = 60000, kFaultRetryMs = 30000, kNetPollMs = 1000;
 constexpr uint32_t kNotifyMqttRefused = 1;
 constexpr size_t kAgentJsonCap = 2048;
@@ -48,15 +54,21 @@ void ulTaskNotifyValueClear(void*, uint32_t) {}
 const char* cloud_cred_auth_key() { return "fixture-key"; }
 const char* StaMac() { return "fixture-mac"; }
 const char* agent_link_ota_running_version() { return "fixture-version"; }
-int cloud_api_heartbeat(const char*, cloud_api_err_t*) { ++beats; return ESP_OK; }
+int cloud_api_heartbeat(const char*, cloud_api_err_t*) {
+    agentlink::cloud::NetworkMemoryLock http;
+    ++beats; return ESP_OK;
+}
 int cloud_api_auth(const char*, const char*, const char*, char*, size_t, cloud_api_err_t*) {
+    agentlink::cloud::NetworkMemoryLock http;
     ++auths; return ESP_OK;
 }
 bool HandleRevoked(const cloud_api_err_t&) { return false; }
 void Publish(int, const cloud_api_err_t*) {}
 int xTaskNotifyWait(uint32_t, uint32_t, uint32_t*, unsigned) {
     now_us += 61000000;
-    if (++wakes == 3) s_run = false;
+    ++wakes;
+    if (after_wake) after_wake();
+    if (wakes == stop_after) s_run = false;
     return 0;
 }
 void* heap_caps_calloc(size_t count, size_t size, unsigned) {
@@ -86,5 +98,28 @@ int main() {
         assert(beats == 2 && auths == 2);
         std::free(s_token); s_token = nullptr;
     }
-    std::puts("PASS: production session loop skips MQTT token allocation/fetch/start/stop when disabled; HTTP heartbeat and auth still run; enabled behavior retained");
+#if CONFIG_IDF_TARGET_ESP32C3
+    // Hold the production memory gate on a different task, as a voice call does.
+    // The actual session loop must keep checking its state without starting TLS.
+    std::atomic<bool> voice_ready{false}, release_voice{false};
+    std::thread voice([&] {
+        agentlink::cloud::NetworkMemoryLock call;
+        voice_ready.store(true);
+        while (!release_voice.load()) std::this_thread::yield();
+    });
+    while (!voice_ready.load()) std::this_thread::yield();
+    kMqttEnabled = false; s_run = true; s_token_ok = mqtt_started = false;
+    now_us = s_token_renew = s_token_retry = 0;
+    allocations = tokens = starts = stops = beats = auths = wakes = 0;
+    stop_after = 4;
+    after_wake = [&] {
+        if (wakes <= 2) assert(beats == 0 && auths == 0);
+        if (wakes == 2) { release_voice.store(true); voice.join(); }
+    };
+    assert(StayOnline() == Leave::kStopped);
+    assert(tokens == 0 && starts == 0 && stops == 0);
+    assert(beats == 2 && auths == 2); // Overdue polling resumes after voice teardown.
+    after_wake = {};
+#endif
+    std::puts("PASS: optional MQTT, HTTP polling, C3 voice/HTTPS exclusion and deferred polling recovery");
 }

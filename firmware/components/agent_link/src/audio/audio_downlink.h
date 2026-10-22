@@ -44,6 +44,9 @@ void Feed(const uint8_t* data, size_t len);
 void SetBufferMs(uint32_t playable_ms);
 // The value last given to SetBufferMs().
 uint32_t BufferMs();
+// True when the board supplies actual queued PCM bytes. The callback is
+// nonblocking and may also report full while an asynchronous reset is pending.
+bool BufferLevelBytes(size_t* bytes);
 
 // Link up/down: down disarms and resets the codec to the transport default.
 void OnLinkState(bool connected);

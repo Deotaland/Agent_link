@@ -17,9 +17,16 @@ esp_err_t PassportWifiAudio::Init(AiPassportHardware* hardware) {
         vStreamBufferDelete(buffer_); buffer_ = nullptr;
         return ESP_ERR_NO_MEM;
     }
+    agent_link_playback_set_buffer_level_callback(&BufferLevel, this);
     agent_link_playback_set_buffer_ms(kBufferBytes / 32);
     ready_ = true;
     return ESP_OK;
+}
+
+size_t PassportWifiAudio::BufferLevel(void* context) {
+    const auto* audio = static_cast<const PassportWifiAudio*>(context);
+    if (audio->generation_.load() != audio->cleared_.load()) return kBufferBytes;
+    return xStreamBufferBytesAvailable(audio->buffer_);
 }
 
 void PassportWifiAudio::Play(const uint8_t* pcm, size_t bytes) {

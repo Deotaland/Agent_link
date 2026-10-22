@@ -6,6 +6,7 @@
 #include "passport_wifi_audio.h"
 #include "passport_wifi_controls.h"
 #include "passport_wifi_ui.h"
+#include "stripe_canvas.h"
 
 #include <atomic>
 #include <cstdio>
@@ -138,11 +139,7 @@ private:
     void Add(Action action, const char* name, unsigned row = 0) {
         if (count_ >= 6) return;
         Item& item = items_[count_++]; item.action = action; item.row = row;
-        // The tiny raster font covers Latin text. Never expose internal session IDs as titles.
-        bool latin = true;
-        for (const unsigned char* p = reinterpret_cast<const unsigned char*>(name); *p; ++p)
-            if (*p >= 0x80) latin = false;
-        snprintf(item.name, sizeof item.name, "%s", latin ? name : "Conversation");
+        raster::CopyText(item.name, sizeof item.name, name);
     }
     void Menu() {
         EndCall(); SetPage(Page::Menu); passport_wifi::SetAnswer("");

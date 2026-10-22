@@ -4,6 +4,7 @@
 #include "cloud_platform.h"
 #include "cloud_credential.h"
 #include "cloud_log.h"
+#include "cloud_memory.h"
 
 #include <cstdio>
 #include <cstring>
@@ -144,6 +145,7 @@ esp_err_t Exchange(const char* path, const char* url, const char* body,
 // logged: platform errors arrive as 200 too (note 1 in cloud_api.h).
 esp_err_t PostJson(const char* path, const char* body, cJSON** root_out, cJSON** data_out,
                    cloud_api_err_t* err, const char* submitted_key = nullptr) {
+    agentlink::cloud::NetworkMemoryLock memory;
     if (root_out) *root_out = nullptr;
     if (data_out) *data_out = nullptr;
     if (!s_rx) { SetErr(err, -1, false, "api not initialised"); return ESP_ERR_INVALID_STATE; }
