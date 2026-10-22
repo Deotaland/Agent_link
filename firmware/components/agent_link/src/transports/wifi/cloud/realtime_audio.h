@@ -109,6 +109,9 @@ public:
     }
     size_t Size() const { return size_; }
     unsigned Opcode() const { return opcode_; }
+    // A growable owner may move the storage between Append calls.
+    void Rebind(uint8_t* buffer, size_t capacity) { buffer_ = buffer; capacity_ = capacity; }
+    bool Active() const { return active_; }
 
 private:
     uint8_t* buffer_;

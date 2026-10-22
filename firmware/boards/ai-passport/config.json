@@ -50,7 +50,7 @@
             "ble_name": "",
             "fw_model": "AI-PASSPORT",
             "status": "supported",
-            "notes": "Profile ai-passport-wifi; platform product 1, chip_type esp32-c3. PCM16 realtime voice, lightweight raster UI, no BLE or PSRAM. Reuses the 8 MB dual-OTA layout. Device audio and reconnect behavior require hardware acceptance."
+            "notes": "Profile ai-passport-wifi; platform product 1, chip_type esp32-c3. Bidirectional Opus realtime voice with a shared codec worker, MQTT disabled, lightweight raster UI, no BLE or PSRAM. HTTP heartbeat and configuration polling remain enabled. Reuses the 8 MB dual-OTA layout. Device audio and reconnect behavior require hardware acceptance."
         }
     ]
 }
