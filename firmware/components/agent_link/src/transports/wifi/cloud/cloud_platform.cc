@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 
 #include "cJSON.h"
@@ -23,6 +24,11 @@ constexpr const char* TAG = "agent_link.platform";
 using agentlink::cloud_limits::kListBytes;
 using agentlink::cloud_limits::kListPageSize;
 constexpr size_t kSmallBytes = 8 * 1024;
+// Opaque platform cursors already exceed 300 bytes. Bound their heap allocation
+// without putting large cursor, escaped-path and URL arrays on the C3 task stack.
+constexpr size_t kMaxCursorLength = 1024;
+struct FreeBuffer { void operator()(char* buffer) const { free(buffer); } };
+using Buffer = std::unique_ptr<char, FreeBuffer>;
 char s_base[160] = {};
 std::mutex s_agent_mutex;
 agent_link_platform_agent_t s_bound_agent = {};
@@ -91,22 +97,26 @@ esp_err_t Exchange(const char* operation, esp_http_client_method_t method, const
     if (!s_base[0] || !device_key[0] || !path || !root_out)
         return ESP_ERR_INVALID_STATE;
 
-    char url[800];
-    const int url_len = snprintf(url, sizeof url, "%s%s", s_base, path);
-    if (url_len <= 0 || url_len >= static_cast<int>(sizeof url)) return ESP_ERR_INVALID_SIZE;
+    const size_t url_size = strlen(s_base) + strlen(path) + 1;
+    Buffer url(static_cast<char*>(malloc(url_size)));
+    if (!url) return ESP_ERR_NO_MEM;
+    snprintf(url.get(), url_size, "%s%s", s_base, path);
     auto* buffer = static_cast<char*>(heap_caps_calloc(capacity, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!buffer) buffer = static_cast<char*>(calloc(capacity, 1));
     if (!buffer) return ESP_ERR_NO_MEM;
     Response response{buffer, capacity, 0, false};
     esp_http_client_config_t config = {};
-    config.url = url;
+    config.url = url.get();
     config.method = method;
     config.timeout_ms = 12000;
     config.crt_bundle_attach = esp_crt_bundle_attach;
     config.event_handler = HttpEvent;
     config.user_data = &response;
     config.buffer_size = 1024;
-    config.buffer_size_tx = 1024;
+    // ESP-IDF requires the full request line and at least one header to fit.
+    // Keep the usual 1 KB allocation for short URLs; grow only for long cursors.
+    const size_t tx_size = strlen(path) + 256;
+    config.buffer_size_tx = static_cast<int>(tx_size > 1024 ? tx_size : 1024);
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) { free(buffer); return ESP_ERR_NO_MEM; }
 
@@ -221,18 +231,22 @@ extern "C" esp_err_t agent_link_platform_conversations(int agent_id, size_t offs
     if (agent_id <= 0 || !entries || !count || !total || capacity == 0) return ESP_ERR_INVALID_ARG;
     *count = 0; *total = 0;
     if (!BoundAgent(agent_id)) return ESP_ERR_INVALID_STATE;
-    char cursor[160] = {};
+    Buffer cursor;
     size_t skipped = 0;
     for (unsigned page = 0; page < 128; ++page) {
-        char encoded[480] = {}, path[640];
-        if (!EncodeCursor(cursor, encoded, sizeof encoded)) return ESP_ERR_INVALID_SIZE;
-        const int length = snprintf(path, sizeof path,
-            "/api/agents/%d/actions/realtime_voice/conversations?limit=%u%s%s",
-            agent_id, kListPageSize, cursor[0] ? "&cursor=" : "", encoded);
-        if (length < 0 || length >= static_cast<int>(sizeof path)) return ESP_ERR_INVALID_SIZE;
+        const char* current = cursor ? cursor.get() : "";
+        const size_t path_size = 128 + 3 * strlen(current);
+        Buffer path(static_cast<char*>(malloc(path_size)));
+        if (!path) return ESP_ERR_NO_MEM;
+        const int length = snprintf(path.get(), path_size,
+            "/api/agents/%d/actions/realtime_voice/conversations?limit=%u%s",
+            agent_id, kListPageSize, current[0] ? "&cursor=" : "");
+        if (length < 0 || static_cast<size_t>(length) >= path_size ||
+            !EncodeCursor(current, path.get() + length, path_size - length)) return ESP_ERR_INVALID_SIZE;
         cJSON* root = nullptr;
-        esp_err_t result = Exchange("list conversations", HTTP_METHOD_GET, path, nullptr,
+        esp_err_t result = Exchange("list conversations", HTTP_METHOD_GET, path.get(), nullptr,
                                     kListBytes, &root, nullptr);
+        path.reset();
         if (result != ESP_OK) return result;
         const cJSON* data = Data(root);
         const cJSON* rows = Items(data);
@@ -258,15 +272,29 @@ extern "C" esp_err_t agent_link_platform_conversations(int agent_id, size_t offs
         const char* next = String(data, "next_cursor");
         if (!more || *count >= capacity) {
             *total = skipped + (more ? 1u : 0u);
+            ESP_LOGI(TAG, "list conversations: returned=%zu offset=%zu more=%u",
+                     *count, offset, unsigned(more));
             cJSON_Delete(root);
             return ESP_OK;
         }
-        if (!n || !next || !next[0] || strlen(next) >= sizeof cursor || strcmp(next, cursor) == 0) {
+        const size_t next_length = next ? strlen(next) : 0;
+        // Filtering by Agent may remove every row from an upstream page. A valid
+        // advancing cursor still has to be followed, including for a new Agent.
+        if (!next_length || next_length > kMaxCursorLength || strcmp(next, current) == 0) {
+            ESP_LOGW(TAG, "list conversations: invalid pagination (rows=%d, cursor length=%zu, limit=%zu)",
+                     n, next_length, kMaxCursorLength);
             cJSON_Delete(root);
             *count = 0;
             return ESP_ERR_INVALID_RESPONSE;
         }
-        Copy(cursor, sizeof cursor, next);
+        Buffer next_cursor(static_cast<char*>(malloc(next_length + 1)));
+        if (!next_cursor) {
+            cJSON_Delete(root);
+            *count = 0;
+            return ESP_ERR_NO_MEM;
+        }
+        memcpy(next_cursor.get(), next, next_length + 1);
+        cursor = std::move(next_cursor);
         cJSON_Delete(root);
     }
     *count = 0;
