@@ -121,7 +121,15 @@ HTTP-granted WSS voice remain enabled; MQTT push/OTA commands are unavailable),
 uses a raster display and no BLE. One resident 40 KB worker is created at SDK
 startup and owns network I/O plus Opus encoding/decoding. Its stack is retained
 between calls, replacing the separate 12 KB network and 40 KB codec stacks.
-The board's capture/playback workers remain independent. Playback pacing also
+The board's capture/playback workers remain independent. This WiFi profile uses
+1000 Hz FreeRTOS ticks. The application preserves the selected conversation and
+microphone intent while `agent_link_realtime_running()` is true, including SDK
+retry backoff; capture pauses outside READY and resumes when READY returns.
+Only initial startup has a 30-second application deadline. Established calls
+have no application age limit. User/menu/Agent changes cancel recovery, and
+terminal SDK failure or a microphone fault ends the call. Logs record call
+start, recovery and end reasons without session IDs or tokens.
+Playback pacing also
 pumps microphone frames and pending TLS writes; full uplink queues never block
 the shared worker. After the verified WSS upgrade, continuous Opus calls reserve
 one 25 KB workspace. C3 overrides the codec library's weak module allocator only

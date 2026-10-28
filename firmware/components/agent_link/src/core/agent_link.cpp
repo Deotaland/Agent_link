@@ -983,6 +983,11 @@ esp_err_t agent_link_request_realtime_session(int agent_id, const char* session_
     return agent_transport_wifi_request_realtime_session(agent_id, session_id);
 }
 
+bool agent_link_realtime_running(void) {
+    if (!s_tx || s_cfg.transport != AGENT_TRANSPORT_WIFI) return false;
+    return agent_transport_wifi_realtime_running();
+}
+
 esp_err_t agent_link_end_realtime(void) {
     if (!s_tx) return ESP_ERR_INVALID_STATE;
     if (s_cfg.transport != AGENT_TRANSPORT_WIFI) return ESP_ERR_NOT_SUPPORTED;

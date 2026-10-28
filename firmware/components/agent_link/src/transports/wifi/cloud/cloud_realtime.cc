@@ -1872,6 +1872,13 @@ bool ConnectOnce(const Grant& grant) {
 }
 #endif
 
+void FinishGrant(uint32_t epoch) {
+    // Cancellation/new requests also hold s_mutex. An old worker must not clear
+    // the transport's running flag after a newer grant has been queued.
+    std::lock_guard<std::mutex> lock(s_mutex);
+    if (Current(epoch) && s_cb.finished) s_cb.finished();
+}
+
 void Worker(void*) {
     Grant grant = {};
     while (s_run.load(std::memory_order_acquire)) {
@@ -1921,7 +1928,7 @@ void Worker(void*) {
             memset(grant.token, 0, sizeof grant.token);
             return true;
         });
-        if (s_cb.finished) s_cb.finished();
+        FinishGrant(grant.epoch);
         grant = {};
     }
     s_task.store(nullptr, std::memory_order_release);

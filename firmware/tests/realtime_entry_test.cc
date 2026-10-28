@@ -29,9 +29,15 @@ int main() {
     // No MQTT client exists. HTTP-granted voice must still reach the worker.
     assert(agent_transport_wifi_request_realtime_session(4, "fixture-session") == ESP_OK);
     assert(platform_requests == 1 && s_realtime_wanted && s_platform_voice);
+    assert(agent_transport_wifi_realtime_running());
+    s_link = AGENT_STATE_READY;
+    assert(agent_transport_wifi_realtime_running());
+    s_link = AGENT_STATE_CONNECTED; // Recovery still owns the call.
+    assert(agent_transport_wifi_realtime_running());
     assert(agent_transport_wifi_request_realtime_session(4, "fixture-session") == ESP_ERR_INVALID_STATE);
     assert(platform_requests == 1); // A duplicate tap must not request another grant.
     s_realtime_wanted = false; s_platform_voice = false;
+    assert(!agent_transport_wifi_realtime_running());
     platform_enabled = false;
     assert(agent_transport_wifi_request_realtime_session(4, "fixture-session") == ESP_ERR_INVALID_STATE);
     platform_enabled = true; s_link = AGENT_STATE_DISCONNECTED;
@@ -40,6 +46,7 @@ int main() {
     s_link = AGENT_STATE_CONNECTED; request_result = ESP_FAIL;
     assert(agent_transport_wifi_request_realtime_session(4, "fixture-session") == ESP_FAIL);
     assert(platform_requests == 2 && !s_realtime_wanted && !s_platform_voice);
+    assert(!agent_transport_wifi_realtime_running());
     request_result = ESP_OK;
     assert(agent_transport_wifi_request_realtime_session(4, "fixture-session") == ESP_OK);
     assert(platform_requests == 3); // A failed enqueue permits a later attempt.

@@ -76,7 +76,6 @@ void PassportWifiAudio::MicLoop() {
     agent_stream_handle_t stream = nullptr;
     for (;;) {
         const bool ready = agent_link_state() == AGENT_STATE_READY;
-        if (!ready) enabled_.store(false);
         const bool wanted = ready && enabled_.load();
         if (stream && !wanted) {
             // EndCall/transport already cancel the grant. An old mic handle must
@@ -87,10 +86,20 @@ void PassportWifiAudio::MicLoop() {
             if (hardware_->codec.MicOn()) (void)hardware_->codec.StopMic();
             vTaskDelay(pdMS_TO_TICKS(20)); continue;
         }
-        if (!stream && agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &stream) != ESP_OK) {
-            enabled_.store(false); vTaskDelay(pdMS_TO_TICKS(100)); continue;
+        if (!stream) {
+            const esp_err_t result = agent_link_stream_open(AGENT_STREAM_VOICE, nullptr, &stream);
+            if (result != ESP_OK) {
+                // READY can change between the check and stream_open. Allocation
+                // pressure is also temporary; neither revokes the user's call.
+                if (result != ESP_ERR_INVALID_STATE && result != ESP_ERR_NO_MEM) {
+                    ESP_LOGW(TAG, "microphone stream open failed: %s", esp_err_to_name(result));
+                    enabled_.store(false);
+                }
+                vTaskDelay(pdMS_TO_TICKS(100)); continue;
+            }
         }
         if (!hardware_->codec.MicOn() && hardware_->codec.StartMic() != ESP_OK) {
+            ESP_LOGW(TAG, "microphone hardware failed to start");
             enabled_.store(false); continue;
         }
         size_t got = 0;
@@ -100,6 +109,14 @@ void PassportWifiAudio::MicLoop() {
         // Half duplex: keep server endpointing alive without feeding its own speech back.
         if (echo_.Muted(esp_timer_get_time())) memset(pcm, 0, got * sizeof(int16_t));
         const esp_err_t result = agent_link_stream_write(stream, pcm, got * sizeof(int16_t));
-        if (result != ESP_OK && result != ESP_ERR_NO_MEM) enabled_.store(false);
+        if (result == ESP_ERR_INVALID_STATE) {
+            // The grant may have reset while ReadPcm was blocked. Discard the
+            // old stream and reopen on READY without cancelling SDK recovery.
+            (void)agent_link_stream_close(stream, true); stream = nullptr;
+            vTaskDelay(pdMS_TO_TICKS(20));
+        } else if (result != ESP_OK && result != ESP_ERR_NO_MEM) {
+            ESP_LOGW(TAG, "microphone stream write failed: %s", esp_err_to_name(result));
+            enabled_.store(false);
+        }
     }
 }

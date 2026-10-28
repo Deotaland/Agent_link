@@ -113,6 +113,11 @@ bool TlsWouldBlock(int result) {
 }
 int64_t esp_timer_get_time() { return now_us; }
 bool Current(uint32_t epoch) { return s_run && s_epoch == epoch; }
+unsigned finished_calls = 0;
+bool transport_running = true;
+void Finished() { ++finished_calls; transport_running = false; }
+struct Callbacks { void (*finished)() = Finished; } s_cb;
+// INSERT_FINISH_GRANT
 void esp_fill_random(void* data, size_t bytes) { assert(bytes == 16); memcpy(data, "the sample nonce", 16); }
 int mbedtls_base64_encode(uint8_t* out, size_t cap, size_t* written, const uint8_t* input, size_t bytes) {
     const char* value = bytes == 16 ? "dGhlIHNhbXBsZSBub25jZQ==" : "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
@@ -140,7 +145,23 @@ int main() {
         cloud_realtime_cancel();
         assert(s_task && s_run && creates == 1 && queues == 2);
     }
+    Grant old_grant;
+    assert(QueueGrant(&old_grant) == ESP_OK);
+    cloud_realtime_cancel();
+    Grant new_grant;
+    assert(QueueGrant(&new_grant) == ESP_OK);
+    transport_running = true;
+    FinishGrant(old_grant.epoch);
+    assert(transport_running && finished_calls == 0);
+    FinishGrant(new_grant.epoch);
+    assert(!transport_running && finished_calls == 1);
+    s_cb.finished = nullptr;
+    FinishGrant(new_grant.epoch); // Optional callback.
+    s_cb.finished = Finished;
     cloud_realtime_stop();
+    transport_running = true;
+    FinishGrant(new_grant.epoch);
+    assert(transport_running && finished_calls == 1);
     assert(!s_task && !s_run && queues == 0);
     fail_task = true;
     assert(cloud_realtime_start() == ESP_ERR_NO_MEM);

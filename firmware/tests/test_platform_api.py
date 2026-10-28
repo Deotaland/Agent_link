@@ -75,6 +75,7 @@ if args.voice_worker:
         'SDK_START': ('esp_err_t cloud_realtime_start(void) {', '\nvoid cloud_realtime_stop(void)'),
         'SDK_STOP': ('void cloud_realtime_stop(void) {', '\nesp_err_t cloud_realtime_offer('),
         'CANCEL': ('void cloud_realtime_cancel(void) {', '\nesp_err_t cloud_realtime_stream_start('),
+        'FINISH_GRANT': ('void FinishGrant(uint32_t epoch) {', '\nvoid Worker(void*)'),
         'NATIVE_WSS': ('class NativeWss {', '\n// One resident C3 worker'),
     }
     for marker, (start, end) in sections.items():

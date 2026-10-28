@@ -41,3 +41,27 @@ else:
     subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-DCONFIG_IDF_TARGET_ESP32C3=1',
         *['-I' + str(path) for path in includes], str(source), '-o', str(binary)], cwd=build, check=True)
 subprocess.run([str(binary)], check=True)
+
+# Run the actual application transition handlers and mic loop against controlled
+# transport/codec failures, not a duplicate implementation of their behavior.
+app = (root / 'apps/ai-passport-wifi/ai_passport_wifi.cc').read_text(encoding='utf-8')
+fixture = (root / 'tests/passport_wifi_lifecycle_test.cc').read_text(encoding='utf-8')
+sections = {
+    'MIC_LOOP': audio[audio.index('void PassportWifiAudio::MicLoop()'):],
+    'END_CALL': app[app.index('    void EndCall('):app.index('    void Error(')],
+    'UPDATE_CALL': app[app.index('    void UpdateCall('):app.index('    void KeyLoop(')],
+}
+for marker, production in sections.items():
+    fixture = fixture.replace('// INSERT_' + marker, production)
+source = build / 'passport_wifi_lifecycle_test.cc'
+source.write_text(fixture, encoding='utf-8')
+if os.name == 'nt':
+    binary = build / 'passport_wifi_lifecycle_test.exe'
+    subprocess.run([compiler, '/nologo', '/std:c++17', '/EHsc', '/W4',
+        '/I' + str(includes[0]), str(source), '/Fo' + str(build / 'lifecycle.obj'),
+        '/Fe' + str(binary)], env=environment, cwd=build, check=True)
+else:
+    binary = build / 'passport_wifi_lifecycle_test'
+    subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-I' + str(includes[0]),
+                    str(source), '-o', str(binary)], cwd=build, check=True)
+subprocess.run([str(binary)], check=True)

@@ -4,6 +4,7 @@
 #include "platform_config.h"
 #include "platform_product.h"
 #include "passport_wifi_audio.h"
+#include "passport_wifi_call.h"
 #include "passport_wifi_controls.h"
 #include "passport_wifi_ui.h"
 #include "stripe_canvas.h"
@@ -100,9 +101,12 @@ private:
         nvs_close(handle);
         if (result != ESP_OK) ESP_LOGW(TAG, "Settings save failed: %s", esp_err_to_name(result));
     }
-    void EndCall() {
-        calling_ = active_ = false;
-        requested_at_ = 0;
+    void EndCall(const char* reason) {
+        if (call_.Calling())
+            ESP_LOGI(TAG, "call ended: reason=%s age_ms=%lld link=%d sdk_running=%d",
+                     reason, static_cast<long long>((esp_timer_get_time() - call_.StartedAt()) / 1000),
+                     static_cast<int>(agent_link_state()), agent_link_realtime_running());
+        call_.Stop();
         audio_.Stop();
         (void)agent_link_end_realtime();
     }
@@ -114,12 +118,12 @@ private:
         agent_link_platform_agent_t bound{};
         const esp_err_t result = agent_link_platform_bound_agent(&bound);
         if (result != ESP_OK) {
-            if (agent_) { EndCall(); agent_ = 0; }
+            if (agent_) { EndCall("agent_unavailable"); agent_ = 0; }
             if (explain) snprintf(message_, sizeof message_, "Finish activation and bind a voice Agent in the platform console.");
             return false;
         }
         if (agent_ != bound.id) {
-            EndCall(); agent_ = bound.id;
+            EndCall("agent_changed"); agent_ = bound.id;
             if (saved_agent_ != bound.id) {
                 session_[0] = session_name_[0] = 0;
                 saved_agent_ = bound.id; Save();
@@ -142,7 +146,7 @@ private:
         raster::CopyText(item.name, sizeof item.name, name);
     }
     void Menu() {
-        EndCall(); SetPage(Page::Menu); passport_wifi::SetAnswer("");
+        EndCall("menu"); SetPage(Page::Menu); passport_wifi::SetAnswer("");
         Add(Action::Sessions, "Choose conversation");
         Add(Action::New, "New conversation");
         Add(Action::Back, "Back");
@@ -156,7 +160,7 @@ private:
     }
     void Sessions(size_t offset = 0) {
         if (!SyncAgent(true)) return;
-        EndCall(); Busy("Loading conversations");
+        EndCall("conversations"); Busy("Loading conversations");
         if (!Fetch(offset)) return;
         if (!fetched_ && offset && !Fetch(0)) return;
         SetPage(Page::Sessions);
@@ -204,13 +208,14 @@ private:
         const esp_err_t result = agent_link_request_realtime_session(agent_, session_);
         if (result != ESP_OK) { Error(result); return; }
         passport_wifi::SetAnswer(""); message_[0] = 0;
-        calling_ = true; active_ = false; requested_at_ = esp_timer_get_time();
+        call_.Start(esp_timer_get_time());
+        ESP_LOGI(TAG, "call requested");
     }
     void Handle(Gesture gesture) {
         message_[0] = 0;
         if (gesture == Gesture::Hold) { if (page_ == Page::Home) Menu(); else SetPage(Page::Home); return; }
         if (page_ == Page::Home) {
-            if (gesture == Gesture::Click) { if (calling_) EndCall(); else StartCall(); }
+            if (gesture == Gesture::Click) { if (call_.Calling()) EndCall("user"); else StartCall(); }
             return;
         }
         if (gesture == Gesture::Up && cursor_) --cursor_;
@@ -245,9 +250,10 @@ private:
             else snprintf(detail, sizeof detail, "%s\n\n%s\n\nVolume %d%%",
                           agent_name_[0] ? agent_name_ : "Bind Agent in console",
                           session_[0] ? "Conversation selected" : "OK selects latest or creates one", volume_.load());
-            passport_wifi::SetContent(active_ ? (audio_.Speaking() ? "Agent speaking" : "Listening") :
-                                      calling_ ? "Starting call" : "Agent Link", detail,
-                                      calling_ ? "OK: end call" : "OK: call   Hold OK: menu");
+            passport_wifi::SetContent(call_.Active() ? (audio_.Speaking() ? "Agent speaking" : "Listening") :
+                                      call_.Recovering() ? "Reconnecting" :
+                                      call_.Calling() ? "Starting call" : "Agent Link", detail,
+                                      call_.Calling() ? "OK: end call" : "OK: call   Hold OK: menu");
         }
     }
     void ControlLoop() {
@@ -262,16 +268,30 @@ private:
                 (void)SyncAgent(); sync_at = now;
                 if (saved_volume != volume_.load()) { Save(); saved_volume = volume_.load(); }
             }
-            if (calling_) {
-                if (active_ && !audio_.Enabled()) {
-                    EndCall(); snprintf(message_, sizeof message_, "Microphone stopped. Press OK to retry.");
-                } else if (agent_link_state() == AGENT_STATE_READY) {
-                    if (!active_) { audio_.Enable(true); active_ = true; }
-                } else if (active_ || agent_link_state() == AGENT_STATE_DISCONNECTED || now - requested_at_ > 30000000) {
-                    EndCall(); snprintf(message_, sizeof message_, "Call ended. Press OK to retry.");
-                }
-            }
+            UpdateCall(now);
             Publish();
+        }
+    }
+    void UpdateCall(int64_t now) {
+        using Action = passport_wifi::CallState::Action;
+        switch (call_.Poll(agent_link_state() == AGENT_STATE_READY,
+                           agent_link_realtime_running(), audio_.Enabled(), now)) {
+        case Action::StartMic:
+            audio_.Enable(true); ESP_LOGI(TAG, "call ready"); break;
+        case Action::Recovering:
+            ESP_LOGW(TAG, "call paused: SDK recovering; conversation retained"); break;
+        case Action::Resumed:
+            ESP_LOGI(TAG, "call recovered: microphone resumed"); break;
+        case Action::MicStopped:
+            EndCall("microphone_stopped");
+            snprintf(message_, sizeof message_, "Microphone stopped. Press OK to retry."); break;
+        case Action::TransportEnded:
+            EndCall("sdk_finished");
+            snprintf(message_, sizeof message_, "Call ended. Press OK to retry."); break;
+        case Action::StartTimeout:
+            EndCall("start_timeout");
+            snprintf(message_, sizeof message_, "Call timed out. Press OK to retry."); break;
+        case Action::None: break;
         }
     }
     void KeyLoop() {
@@ -308,8 +328,8 @@ private:
     int agent_ = 0;
     int32_t saved_agent_ = 0;
     char session_[80]{}, session_name_[96]{}, agent_name_[80]{}, message_[144]{};
-    bool voice_supported_ = false, calling_ = false, active_ = false;
-    int64_t requested_at_ = 0;
+    bool voice_supported_ = false;
+    passport_wifi::CallState call_;
 };
 
 DECLARE_APPLICATION(AiPassportWifi);

@@ -14,6 +14,7 @@ class PassportWifiAudio {
 public:
     esp_err_t Init(AiPassportHardware* hardware);
     bool Ready() const { return ready_; }
+    // User/Agent intent, retained while the transport temporarily pauses capture.
     bool Enabled() const { return enabled_.load(); }
     void Play(const uint8_t* pcm, size_t bytes);
     void End() { finished_.store(true); }
