@@ -14,6 +14,7 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--idf-path', type=Path, default=os.environ.get('IDF_PATH'))
 parser.add_argument('--pcm', action='store_true', help='verify the PCM16-only S31 grant path')
+parser.add_argument('--chat', action='store_true', help='verify S31 HTTPS chat, JSON tools, WAV validation and prompt preservation')
 parser.add_argument('--c3', action='store_true', help='verify C3 Opus grants and smaller HTTP pages')
 parser.add_argument('--gateway', action='store_true', help='verify claim-code and gateway error logging')
 parser.add_argument('--session', action='store_true', help='verify optional MQTT in the production session loop')
@@ -25,6 +26,8 @@ if not args.idf_path:
     parser.error('provide an existing ESP-IDF path for its cJSON dependency')
 json_dir = args.idf_path / 'components/json/cJSON'
 if not (json_dir / 'cJSON.c').is_file():
+    json_dir = root / 'managed_components/espressif__cjson/cJSON'
+if not (json_dir / 'cJSON.c').is_file():
     parser.error('cJSON.c was not found in this ESP-IDF installation')
 build = root / '.cache/platform-api-auth-tests'
 build.mkdir(parents=True, exist_ok=True)
@@ -32,6 +35,11 @@ includes = [root / 'tests/platform_api_stubs', root / 'components/agent_link/inc
             root / 'components/agent_link/src/transports/wifi/cloud', json_dir]
 sources = [root / 'tests/platform_api_auth_test.cc',
            root / 'components/agent_link/src/transports/wifi/cloud/cloud_platform.cc']
+if args.chat:
+    includes.append(root / 'apps/paper-s31-wifi')
+    sources = [root / 'tests/chat_api_test.cc',
+               root / 'components/agent_link/src/transports/wifi/cloud/cloud_platform.cc',
+               root / 'components/agent_link/src/transports/wifi/cloud/cloud_chat.cc']
 if args.gateway:
     sources = [root / 'tests/cloud_gateway_test.cc',
                root / 'components/agent_link/src/transports/wifi/cloud/cloud_api.cc']

@@ -21,6 +21,7 @@
 
 #include "agent_link_transport.h"
 #include "agent_link.h"          // agent_wifi_config_t, agent_platform_t, agent_link_status_t
+#include "agent_link_network.h"
 #include "cloud_json.h"
 #include "cloud_mqtt.h"
 #include "cloud_platform.h"
@@ -58,7 +59,7 @@ constexpr unsigned kProvFailLimit = 3;
 constexpr int64_t kProvTeardownMs = 4000;
 
 ESP_EVENT_DEFINE_BASE(kWifiControl);
-enum { kWifiTick, kWifiCredentials };
+enum { kWifiTick, kWifiCredentials, kWifiSetup };
 struct WifiCredentials { char ssid[33]; char pass[65]; };
 
 enum class Phase { kIdle, kProvisioning, kStaConnecting, kStaConnected };
@@ -328,7 +329,9 @@ void WifiControl(void*, esp_event_base_t, int32_t id, void* data) {
     bool report = false;
     {
         std::lock_guard<std::mutex> lock(s_wifi_mtx);
-        if (id == kWifiCredentials) {
+        if (id == kWifiSetup) {
+            if (s_phase != Phase::kIdle) { StartProvisioning(); report = true; }
+        } else if (id == kWifiCredentials) {
             if (s_phase == Phase::kIdle) return;
             ApplyProvCreds(*static_cast<const WifiCredentials*>(data));
             report = true;
@@ -815,6 +818,28 @@ agent_transport_t s_wifi = {
 }  // namespace
 
 extern "C" agent_transport_t* agent_transport_wifi(void) { return &s_wifi; }
+
+extern "C" esp_err_t agent_link_wifi_setup(void) {
+    if (!s_wifi_inited || s_phase == Phase::kIdle) return ESP_ERR_INVALID_STATE;
+    return esp_event_post(kWifiControl, kWifiSetup, nullptr, 0, pdMS_TO_TICKS(100));
+}
+extern "C" esp_err_t agent_link_wifi_info(agent_link_wifi_info_t* info) {
+    if (!info) return ESP_ERR_INVALID_ARG;
+    *info = {};
+    std::lock_guard<std::mutex> lock(s_wifi_mtx);
+    if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
+    info->setup_active = al_wifi_prov_active();
+    snprintf(info->setup_ssid, sizeof info->setup_ssid, "%s", s_ap_ssid);
+    wifi_ap_record_t ap{};
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        info->connected = true; info->rssi = ap.rssi;
+        memcpy(info->ssid, ap.ssid, sizeof ap.ssid); info->ssid[32] = 0;
+        esp_netif_ip_info_t ip{};
+        if (esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), &ip) == ESP_OK)
+            snprintf(info->ip, sizeof info->ip, IPSTR, IP2STR(&ip.ip));
+    }
+    return ESP_OK;
+}
 
 extern "C" void agent_transport_wifi_set_config(const agent_wifi_config_t* cfg) { s_cfg = cfg; }
 

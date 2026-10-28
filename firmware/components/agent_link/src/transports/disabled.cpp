@@ -1,5 +1,7 @@
 #include "agent_link_transport.h"
 #include "agent_link_platform.h"
+#include "agent_link_chat.h"
+#include "agent_link_network.h"
 
 #if !AGENT_LINK_BUILD_BLE
 
@@ -17,6 +19,15 @@ extern "C" void agent_transport_ble_update_battery(uint8_t) {}
 extern "C" esp_err_t agent_transport_ble_forget(void) { return ESP_ERR_NOT_SUPPORTED; }
 #endif
 #if !AGENT_LINK_BUILD_WIFI
+extern "C" esp_err_t agent_link_chat_create(int, char*, size_t) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_chat_conversations(int, const char*, char*, size_t) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_chat_messages(int, const char*, const char*, char*, size_t) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_chat_send(int, const char*, const char*, char*, size_t) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_chat_sync_prompt(int, const char*) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_wifi_info(agent_link_wifi_info_t*) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_wifi_setup(void) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_ble_enable(bool) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" bool agent_link_ble_enabled(void) { return false; }
 extern "C" agent_transport_t* agent_transport_wifi(void) { return nullptr; }
 extern "C" esp_err_t agent_transport_wifi_request_realtime_session(int, const char*) {
     return ESP_ERR_NOT_SUPPORTED;

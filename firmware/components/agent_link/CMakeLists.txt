@@ -12,6 +12,11 @@ set(_sources src/core/agent_link.cpp src/core/protocol.cpp src/core/device_ident
              src/audio/audio_downlink.cpp src/ota/ota_service.cpp src/transports/disabled.cpp)
 set(_requires log nvs_flash freertos esp_timer app_update esp_partition esp_app_format mbedtls)
 set(_assets "")
+set(_desktop_ble 0)
+if("$ENV{AGENT_LINK_BUILD_PROFILE}" STREQUAL "paper-s31-wifi")
+    set(_desktop_ble 1)
+    list(APPEND _requires bt)
+endif()
 set(_ble 0)
 set(_wifi 0)
 set(_muse 0)
@@ -33,9 +38,11 @@ if(_backend STREQUAL "WIFI" OR _backend STREQUAL "")
     if(NOT (CONFIG_IDF_TARGET_ESP32C3 AND CONFIG_AGENT_LINK_TRANSPORT_BLE))
         set(_wifi 1)
         list(APPEND _sources src/transports/wifi/transport_wifi.cpp src/transports/wifi/wifi_provision.cpp
+            src/transports/wifi/wifi_ble.cpp
             src/transports/wifi/cloud/cloud_credential.cc src/transports/wifi/cloud/cloud_api.cc
             src/transports/wifi/cloud/cloud_session.cc src/transports/wifi/cloud/cloud_mqtt.cc
             src/transports/wifi/cloud/cloud_realtime.cc src/transports/wifi/cloud/cloud_platform.cc
+            src/transports/wifi/cloud/cloud_chat.cc
             src/transports/wifi/cloud/realtime_codec_memory.cc
             src/transports/wifi/cloud/cloud_json.cc src/transports/wifi/cloud/cloud_clock.cc)
         set(_assets portal/portal.html portal/connecting.html)
@@ -50,5 +57,6 @@ idf_component_register(SRCS ${_sources} INCLUDE_DIRS include
     PRIV_INCLUDE_DIRS src/core src/audio src/ota src/transports/wifi src/transports/wifi/cloud
     REQUIRES esp_common PRIV_REQUIRES ${_requires} EMBED_TXTFILES ${_assets})
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
-    AGENT_LINK_BUILD_BLE=${_ble} AGENT_LINK_BUILD_WIFI=${_wifi} AGENT_LINK_BUILD_MUSE=${_muse})
+    AGENT_LINK_BUILD_BLE=${_ble} AGENT_LINK_BUILD_WIFI=${_wifi} AGENT_LINK_BUILD_MUSE=${_muse}
+    AGENT_LINK_DESKTOP_BLE=${_desktop_ble})
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)

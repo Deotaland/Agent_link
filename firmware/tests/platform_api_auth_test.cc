@@ -205,4 +205,5 @@ int main() {
     CHECK(consumed == expected.size());
     std::puts("PASS: credential rotation, platform rebinding and unbinding invalidate stale sessions");
     std::puts("PASS: HTTP 200 business denial and HTTP 401 are rejected");
+    return 0;
 }

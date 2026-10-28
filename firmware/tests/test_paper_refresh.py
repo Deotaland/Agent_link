@@ -1,4 +1,5 @@
 """Run the production S31 refresh scheduler against deterministic event timings."""
+import argparse
 import os
 from pathlib import Path
 import shutil
@@ -7,7 +8,17 @@ import subprocess
 root = Path(__file__).resolve().parents[1]
 build = root / '.cache/paper-refresh-tests'
 build.mkdir(parents=True, exist_ok=True)
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--busy-diagnostic', action='store_true', help='test production BUSY trace against simulated pin transitions')
+args = parser.parse_args()
 source = root / 'tests/paper_refresh_test.cc'
+if args.busy_diagnostic:
+    production = (root / 'boards/paper-s31/epd.c').read_text(encoding='utf-8')
+    start = production.index('static void lcd_chkstatus_stage(')
+    end = production.index('\nstatic void lcd_chkstatus(void)', start)
+    fixture = (root / 'tests/paper_busy_diag_test.cc').read_text(encoding='utf-8')
+    source = build / 'paper_busy_diag_test.cc'
+    source.write_text(fixture.replace('// INSERT_PRODUCTION_BUSY_WAIT', production[start:end]), encoding='utf-8')
 include = root / 'apps/paper-s31-wifi'
 environment = os.environ.copy()
 if os.name == 'nt':
@@ -24,7 +35,7 @@ if os.name == 'nt':
             environment[name] = value
     compiler = shutil.which('cl.exe', path=environment.get('Path') or environment.get('PATH'))
     binary = build / 'paper_refresh_test.exe'
-    subprocess.run([compiler, '/nologo', '/std:c++17', '/EHsc', '/W4', '/D_CRT_SECURE_NO_WARNINGS',
+    subprocess.run([compiler, '/nologo', '/std:c++17', '/EHsc', '/W4', '/utf-8', '/D_CRT_SECURE_NO_WARNINGS',
         '/I' + str(include), str(source), '/Fo' + str(build) + '/', '/Fe' + str(binary)],
         env=environment, cwd=build, check=True)
 else:

@@ -6,6 +6,7 @@
 #include "realtime_format.h"
 
 void cloud_platform_set_base_url(const char* base_url);
+const char* cloud_platform_base_url(void);
 bool cloud_platform_enabled(void);
 void cloud_platform_set_bound_agent(const cJSON* auth_data);
 esp_err_t cloud_platform_grant(int agent_id, const char* session_id, bool refresh,

@@ -13,19 +13,20 @@ does not flash. Hardware and live-platform acceptance remain pending.
 
 ## WiFi setup and controls
 
+The firmware boots into a bilingual application menu. See the
+[desktop guide](../../apps/paper-s31-wifi/README.md) for keys, daily alarm,
+calendar, SD WAV playback, LLM messages/history, local JSON tools and settings.
+KEY1 moves up, KEY2 moves down, KEY3 confirms and BOOT returns.
+
 `paper-s31-wifi` uses the SDK WiFi backend, platform product 8 (`paper-s31`)
 from `profiles/products.json` on `bot.deotaland.cn`, and chip type `esp32-s31`.
 With no saved network, join `PaperS31-XXXX` and open
 `http://192.168.4.1`. Claim the six-digit code in the platform console and bind
 an Agent.
 
-- Press BOOT to start/end a call. Without a selected conversation it opens the
-  conversation picker.
-- While idle, hold BOOT for more than one second and release to open the picker.
-  Short presses advance; a long press selects. It includes New conversation and
-  Back, and pages through the bound Agent's conversations.
-- Wait for the highlighted item to finish displaying before choosing again.
-  Menu input is ignored while that screen update is pending.
+- Open Voice from the menu to start/end a call or select/create its conversation.
+- Open LLM to send preset messages; ASR is a future input source.
+- Wait for the highlighted item to finish displaying before confirming.
 
 The selected conversation is stored per Agent in NVS. A platform rebind clears
 it and ends the old call. The mic uploads only after the session is ready.
@@ -39,7 +40,14 @@ response is rejected. The platform must accept PCM16.
 
 ## Display behavior
 
-Rendering supports ASCII; other characters appear as `?`. The panel uses full
+The current profile temporarily enables a single-frame diagnostic mode for
+persistent old/new-image superimposition. It displays S31 DISPLAY TEST once,
+then holds even after an error; menu keys and app timers are disabled. See the
+[diagnostic instructions](../../apps/paper-s31-wifi/README.md#current-display-diagnosis)
+for logs and how to restore the normal desktop. The following refresh policy
+applies in normal desktop mode.
+
+Rendering supports Chinese and English using the shared raster CJK font. The panel uses full
 refreshes with visible flashing, typically about 15 seconds. Network and audio
 run on separate workers.
 
@@ -51,9 +59,9 @@ after audio completion or five seconds without a text change. Failed refreshes
 wait at least 60 seconds before retrying. Battery and charging changes accompany
 other updates instead of forcing a refresh.
 
-The LED blinks while offline/connecting. Online and BOOT events give short
-vibration feedback. `Display refresh starting/finished` logs show actual refresh
-count and duration.
+The screen worker coalesces navigation changes while network, keys and audio
+continue on their own workers. Background time/battery updates do not bypass
+the ordinary refresh limit.
 
 ## Wiring
 
@@ -72,8 +80,9 @@ Confirm ribbon orientation and power against the board schematic.
 | USB serial | USB-C, GPIO33/34 |
 
 See `board_pins.h` for the full map. GPIO36 is also a flash-voltage strap; preserve
-its boot level. Camera and TF-card power remain off in this profile.
+its boot level. Camera power remains off. Opening SD music or rescanning the
+card enables SD power and mounts the existing FAT filesystem without formatting.
 
 For acceptance, check panel colors/orientation, keys, motor, battery and audio.
-Also check provisioning, product-16 activation, MQTT and a real PCM16
+Also check provisioning, product-8 activation, local JSON tools and a real PCM16
 call. Host tests and builds do not cover these device checks.

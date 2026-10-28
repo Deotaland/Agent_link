@@ -1,0 +1,11 @@
+# S31 desktop: CJK font + BLE + WiFi need more than the shared 2 MB app slots.
+# Preserve NVS/otadata and the first app offset. First installation requires USB.
+# Name,     Type, SubType,  Offset,   Size,      Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+ota_0,      app,  ota_0,    0x10000,  0x400000,
+ota_1,      app,  ota_1,    0x410000, 0x400000,
+nvs_keys,   data, nvs_keys, 0x810000, 0x1000,
+phy_init,   data, phy,      0x811000, 0x1000,
+anim_pack,  data, 0x99,     0x812000, 0x772000,
+model,      data, spiffs,   0xF84000, 0x7C000,

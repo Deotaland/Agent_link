@@ -14,7 +14,9 @@ class PaperWifiAudio {
 public:
     esp_err_t Init();
     bool Ready() const { return ready_; }
+    bool PlaybackIdle() const { return !buffer_ || xStreamBufferBytesAvailable(buffer_) == 0; }
     void Play(const uint8_t* pcm, size_t bytes);
+    bool PlayLocal(const uint8_t* pcm, size_t bytes, const std::atomic<uint32_t>& generation, uint32_t expected);
     void End() { finished_.store(true); }
     void Reset() { generation_.fetch_add(1); }
     void SetContinuous(bool enabled) { continuous_.store(enabled); }

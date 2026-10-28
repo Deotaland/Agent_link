@@ -5,7 +5,7 @@
 
 namespace paper {
 struct Page {
-    char lines[14][24]{};
+    char lines[14][96]{};
     bool Same(const Page& other) const { return std::memcmp(lines, other.lines, sizeof lines) == 0; }
 };
 

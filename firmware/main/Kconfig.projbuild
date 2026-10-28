@@ -10,6 +10,17 @@ config BOARD_TYPE_PAPER_S31_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-wifi"
 
+config PAPER_S31_DISPLAY_DIAGNOSTIC
+    bool "S31: display one static diagnostic frame, then hold"
+    depends on BOARD_TYPE_PAPER_S31_WIFI
+    default n
+    help
+        Boot into a single white-background display test. After one attempt,
+        including failure, no display writes or retries occur until reboot.
+        Menu input and application timers are disabled; network setup/auth
+        tasks remain running. Log frame statistics and display BUSY timings
+        without changing the panel register values or adding busy waits.
+
 config BOARD_TYPE_ROROLEE_S3
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "rorolee-ble"

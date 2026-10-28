@@ -8,7 +8,6 @@
 #include "esp_heap_caps.h"
 #include "board_pins.h"
 #include "epd.h"
-#include "font8x16.h"
 #include "i2c_bus.h"
 #include "paper_hardware.h"
 
@@ -52,6 +51,11 @@ void paper_vibrate(unsigned duration_ms)
     }
 }
 
+void paper_motor(bool on)
+{
+    gpio_set_level(MOTOR_GPIO, on ? MOTOR_ON_LEVEL : !MOTOR_ON_LEVEL);
+}
+
 void paper_led(bool on)
 {
     gpio_set_level(TOP_LED_EN_GPIO, on);
@@ -77,46 +81,4 @@ esp_err_t paper_battery_read(int *percent, bool *charging)
     *percent = soc;
     *charging = ma > 0;
     return ESP_OK;
-}
-
-static void draw_text(uint8_t *frame, int x, int y, const char *text)
-{
-    for (; *text && y + FONT_H * 2 <= EPD_HEIGHT; ++text, x += FONT_W * 2) {
-        if (x + FONT_W * 2 > EPD_WIDTH) break;
-        unsigned c = (unsigned char)*text;
-        if (c < FONT_FIRST || c > FONT_LAST) c = '?';
-        for (int row = 0; row < FONT_H; ++row) {
-            for (int col = 0; col < FONT_W; ++col) {
-                if (!(font8x16[c - FONT_FIRST][row] & (0x80 >> col))) continue;
-                for (int dy = 0; dy < 2; ++dy) {
-                    for (int dx = 0; dx < 2; ++dx) {
-                        frame[(y + row * 2 + dy) * EPD_WIDTH + x + col * 2 + dx] = 0;
-                    }
-                }
-            }
-        }
-    }
-}
-
-esp_err_t paper_display_lines(const char *const *lines, size_t count)
-{
-    if (!lines || count > 14) return ESP_ERR_INVALID_ARG;
-    uint8_t *frame = heap_caps_malloc(EPD_WIDTH * EPD_HEIGHT, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    ESP_RETURN_ON_FALSE(frame, ESP_ERR_NO_MEM, TAG, "Display requires PSRAM");
-    if (!epd_probe()) { free(frame); return ESP_ERR_NOT_FOUND; }
-    memset(frame, 0xff, EPD_WIDTH * EPD_HEIGHT);
-    for (size_t i = 0; i < count; ++i) {
-        if (lines[i]) draw_text(frame, 16, 12 + i * 38, lines[i]);
-    }
-    static const uint8_t colors[] = {0x00, 0xff, 0xfc, 0xe0, 0x03, 0x1c};
-    for (int y = 560; y < 592; ++y) {
-        for (int x = 8; x < EPD_WIDTH - 8; ++x)
-            frame[y * EPD_WIDTH + x] = colors[(x - 8) * 6 / (EPD_WIDTH - 16)];
-    }
-    int before = epd_busy_timeouts();
-    EPD_init();
-    PIC_display(frame);
-    EPD_sleep();
-    free(frame);
-    return epd_busy_timeouts() == before ? ESP_OK : ESP_ERR_TIMEOUT;
 }

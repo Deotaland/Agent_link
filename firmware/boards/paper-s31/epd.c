@@ -11,6 +11,8 @@
 #include "esp_heap_caps.h"
 #include "esp_rom_sys.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "sdkconfig.h"
 #include "board_pins.h"
 #include "epd.h"
 
@@ -105,27 +107,59 @@ static void write_cmd_data(uint8_t command, const uint8_t *data, size_t len)
     } while (0)
 
 /* 等 BUSY_N 变高（低 = 忙）。原例程是死等，这里加超时并让出 CPU，避免看门狗复位 */
-static void lcd_chkstatus(void)
+static void lcd_chkstatus_stage(const char *stage)
 {
+#if CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC
+    const int64_t entered = esp_timer_get_time();
+    const int initial = gpio_get_level(EPD_BUSY_GPIO);
+    bool observed_low = initial == 0;
+#else
+    (void)stage;
+#endif
     if (s_dead) {
+#if CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC
+        ESP_LOGW(TAG, "[display-diag] %s skipped: previous BUSY timeout, BUSY=%d", stage, initial);
+#endif
         return;
     }
     TickType_t start = xTaskGetTickCount();
     while (gpio_get_level(EPD_BUSY_GPIO) == 0) {
+#if CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC
+        observed_low = true;
+#endif
         if (xTaskGetTickCount() - start > pdMS_TO_TICKS(EPD_BUSY_TIMEOUT_MS)) {
             ESP_LOGE(TAG, "BUSY 超时 %d ms：检查屏幕排线、EPD_3V3，后面的等待全部跳过",
                      EPD_BUSY_TIMEOUT_MS);
             s_busy_timeouts++;
             s_dead = true;
+#if CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC
+            ESP_LOGE(TAG, "[display-diag] %s TIMEOUT initial=%d observed_low=%d BUSY=%d elapsed=%lld ms",
+                     stage, initial, observed_low, gpio_get_level(EPD_BUSY_GPIO),
+                     (long long)((esp_timer_get_time() - entered) / 1000));
+#endif
             return;
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     ESP_LOGD(TAG, "busy %lu ms", (unsigned long)pdTICKS_TO_MS(xTaskGetTickCount() - start));
+#if CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC
+    const int released = gpio_get_level(EPD_BUSY_GPIO);
+    const int64_t waited = esp_timer_get_time() - entered;
+#endif
 #if EPD_PANEL == EPD_PANEL_3IN6
     vTaskDelay(pdMS_TO_TICKS(100));     /* 微雪驱动在 BUSY 释放后多等 100ms */
 #endif
+#if CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC
+    const int settled = gpio_get_level(EPD_BUSY_GPIO);
+    ESP_LOGI(TAG, "[display-diag] %s initial=%d observed_low=%d exit=%d after_settle=%d wait=%lld ms total=%lld ms",
+             stage, initial, observed_low, released, settled, (long long)(waited / 1000),
+             (long long)((esp_timer_get_time() - entered) / 1000));
+    if (strcmp(stage, "DRF") == 0 && (!observed_low || settled == 0))
+        ESP_LOGW(TAG, "[display-diag] DRF completion UNVERIFIED: inspect BUSY transition and final panel image");
+#endif
 }
+
+static void lcd_chkstatus(void) { lcd_chkstatus_stage("idle"); }
 
 #if EPD_COLORS == 2
 /* 黑白屏：往 cmd（DTM 旧 / DTM2 新）发整屏 1 位数据，1 白 0 黑；picData 为空时每字节填 fill */
@@ -261,17 +295,17 @@ static void EPD_W21_Init(void)
 static void display_refresh(void)
 {
     EPD_W21_WriteCMD(PON);
-    lcd_chkstatus();
+    lcd_chkstatus_stage("PON");
     vTaskDelay(pdMS_TO_TICKS(200));
 
     CMD(BTST2, 0x6F, 0x1F, 0x16, 0x29);              /* Second setting */
     vTaskDelay(pdMS_TO_TICKS(200));
 
     CMD(DRF, 0x00);
-    lcd_chkstatus();
+    lcd_chkstatus_stage("DRF");
 
     CMD(POF, 0x00);
-    lcd_chkstatus();
+    lcd_chkstatus_stage("POF");
 }
 
 void EPD_init(void)
@@ -308,7 +342,16 @@ void EPD_sleep(void)
 
 void PIC_display(const unsigned char *picData)
 {
+#if CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC
+    const int64_t started = esp_timer_get_time();
+    ESP_LOGI(TAG, "[display-diag] DTM begin: %u packed bytes, SPI=%u Hz, BUSY=%d",
+             (unsigned)(EPD_ROW_BYTES * EPD_PANEL_H), (unsigned)EPD_SPI_HZ, gpio_get_level(EPD_BUSY_GPIO));
+#endif
     send_frame(picData, 0);
+#if CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC
+    ESP_LOGI(TAG, "[display-diag] DTM end: elapsed=%lld ms, BUSY=%d",
+             (long long)((esp_timer_get_time() - started) / 1000), gpio_get_level(EPD_BUSY_GPIO));
+#endif
     display_refresh();
 }
 

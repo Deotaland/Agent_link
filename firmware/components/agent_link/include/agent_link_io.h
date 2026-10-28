@@ -124,6 +124,9 @@ esp_err_t agent_link_push_reading(const char* id, const void* value, size_t len)
  */
 esp_err_t agent_link_notify_manifest_changed(void);
 
+// Snapshot of the actual registered endpoints; no network transmission is performed.
+esp_err_t agent_link_io_manifest(char* json, size_t capacity);
+
 #ifdef __cplusplus
 }
 #endif

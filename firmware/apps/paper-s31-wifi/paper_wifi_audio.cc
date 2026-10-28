@@ -38,6 +38,21 @@ void PaperWifiAudio::Listen(bool enabled, uint32_t max_ms) {
     asr_.store(enabled);
 }
 
+bool PaperWifiAudio::PlayLocal(const uint8_t* pcm, size_t bytes,
+                              const std::atomic<uint32_t>& generation, uint32_t expected) {
+    if (!ready_) return false;
+    size_t offset = 0;
+    while (offset < bytes && generation.load() == expected) {
+        if (generation_.load() != cleared_.load()) { vTaskDelay(1); continue; }
+        size_t sent;
+        { std::lock_guard<std::mutex> guard(writer_);
+          sent = xStreamBufferSend(buffer_, pcm + offset, bytes - offset, 0); }
+        offset += sent;
+        if (!sent) vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return offset == bytes;
+}
+
 void PaperWifiAudio::PlayLoop() {
     int16_t pcm[256];
     kc_audio::PlaybackGate gate(kc_audio::PrebufferBytes(AUDIO_PLAY_BUF_BYTES, 500),

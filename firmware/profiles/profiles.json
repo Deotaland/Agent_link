@@ -322,13 +322,18 @@
     ],
     "app": "paper-s31-wifi",
     "hardware": "paper-s31",
-    "drivers": [],
+    "drivers": [
+      "raster_cjk_14.c",
+      "stripe_canvas.cc"
+    ],
     "ui": "none",
     "hardware_sources": [
       "epd.c",
       "i2c_bus.c",
       "paper_audio.c",
-      "paper_hardware.c"
+      "paper_hardware.c",
+      "paper_storage.c",
+      "paper_display.cc"
     ]
   },
   "waveshare-epaper-397-wifi": {

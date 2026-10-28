@@ -71,6 +71,15 @@ endmenu
 
 menu "Agent Link realtime voice"
 
+config AGENT_LINK_PROMPT_USER_TOKEN
+    string "Optional account token for updating the bound Agent prompt"
+    depends on AGENT_LINK_TRANSPORT_WIFI
+    default ""
+    help
+        Only used for Agent detail/update requests if the platform does not grant
+        device keys permission to update prompts. Keep in ignored sdkconfig.private.
+        All conversation and voice requests continue to use the device auth_key.
+
 config AGENT_LINK_KORVO_CLOUD_CJK
     bool
     default y if BOARD_TYPE_ESP32S3_KORVO_CLOUD

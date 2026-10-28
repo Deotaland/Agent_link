@@ -404,12 +404,12 @@
       "hardware": "ESP32-S31NRV16, ES8389, Waveshare 3.6-inch e-Paper (E), BQ27220, PCF85063, SC7A20",
       "identify": "paper V2 board; 3.6-inch 400x600 six-color display on U1 (50 pins), H1 BS0 grounded",
       "flash_port": "Type-C USB Serial/JTAG on GPIO33/34; hold BOOT (GPIO61) while connecting for download mode",
-      "use": "WiFi platform device: hotspot setup, six-digit activation, MQTT control, conversation selection and PCM16 realtime voice; status on the 3.6-inch six-color display",
+      "use": "WiFi desktop: bilingual app menu, daily alarm, calendar, SD WAV music, HTTP LLM messages/history with local JSON tools, and PCM16 realtime voice",
       "transport": "WIFI",
       "ble_name": null,
       "fw_model": "PAPER-S31",
       "status": "supported",
-      "notes": "Product ID 16, chip_type esp32-s31. Build verification only; hardware and live platform acceptance pending. PCM16 voice; no Opus library for S31. ASCII text rendering only.",
+      "notes": "Product ID 8, chip_type esp32-s31. ESP-IDF 6.1. Build/host verification only; hardware and live platform acceptance pending. PCM16 voice; no Opus library for S31. Chinese/English UI. MQTT disabled; BLE discovery toggle; phone hotspot WiFi setup.",
       "profile": "paper-s31-wifi",
       "sdkconfig": [
         "CONFIG_AGENT_LINK_PROFILE_PAPER_S31_WIFI=y"

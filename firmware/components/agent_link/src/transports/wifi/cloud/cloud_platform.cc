@@ -160,6 +160,7 @@ void cloud_platform_set_base_url(const char* base_url) {
 }
 
 bool cloud_platform_enabled(void) { return s_base[0] && cloud_cred_is_bound(); }
+const char* cloud_platform_base_url(void) { return s_base; }
 
 extern "C" bool agent_link_platform_available(void) { return cloud_platform_enabled(); }
 

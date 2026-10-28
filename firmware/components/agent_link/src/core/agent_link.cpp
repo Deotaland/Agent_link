@@ -1088,6 +1088,14 @@ esp_err_t agent_link_register_io(const agent_link_io_desc_t* desc,
     return ESP_OK;
 }
 
+esp_err_t agent_link_io_manifest(char* json, size_t capacity) {
+    if (!json || !capacity) return ESP_ERR_INVALID_ARG;
+    const std::string manifest = BuildManifestJson();
+    if (manifest.size() >= capacity) { json[0] = 0; return ESP_ERR_INVALID_SIZE; }
+    memcpy(json, manifest.c_str(), manifest.size() + 1);
+    return ESP_OK;
+}
+
 // Report one sensor reading: look up the registry for the value type -> validate the length ->
 // encode a 0x19 IoReading event -> send_ctrl.
 //   payload = [id_len(1)] [id(UTF-8)] [val_type(1)] [value (per type, little-endian)...].

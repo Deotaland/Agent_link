@@ -45,7 +45,12 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "mbedtls/version.h"
+#if MBEDTLS_VERSION_MAJOR >= 4
+#include "psa/crypto.h"
+#else
 #include "mbedtls/sha1.h"
+#endif
 #include "lwip/sockets.h"
 #include "lwip/tcp.h"
 
@@ -1457,8 +1462,15 @@ public:
         if (mbedtls_base64_encode(reinterpret_cast<uint8_t*>(key), sizeof key, &encoded,
                                   nonce, sizeof nonce) != 0) return false;
         const int challenge_size = snprintf(challenge, sizeof challenge, "%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11", key);
-        if (challenge_size <= 0 || challenge_size >= static_cast<int>(sizeof challenge) ||
-            mbedtls_sha1(reinterpret_cast<const uint8_t*>(challenge), challenge_size, digest) != 0 ||
+        if (challenge_size <= 0 || challenge_size >= static_cast<int>(sizeof challenge)) return false;
+#if MBEDTLS_VERSION_MAJOR >= 4
+        size_t hashed = 0;
+        const bool hash_ok = psa_hash_compute(PSA_ALG_SHA_1,
+            reinterpret_cast<const uint8_t*>(challenge), challenge_size, digest, sizeof digest, &hashed) == PSA_SUCCESS && hashed == sizeof digest;
+#else
+        const bool hash_ok = mbedtls_sha1(reinterpret_cast<const uint8_t*>(challenge), challenge_size, digest) == 0;
+#endif
+        if (!hash_ok ||
             mbedtls_base64_encode(reinterpret_cast<uint8_t*>(accept), sizeof accept, &encoded,
                                   digest, sizeof digest) != 0) return false;
         const int request_size = snprintf(scratch.json, sizeof scratch.json,

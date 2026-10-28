@@ -40,7 +40,8 @@ class ProfileHardwareTests(unittest.TestCase):
                     self.assertEqual(values['CONFIG_ESPTOOLPY_FLASHSIZE_16MB'], 'y')
                     self.assertEqual(values['CONFIG_SPIRAM'], 'y')
                     self.assertEqual(values['CONFIG_SPIRAM_IGNORE_NOTFOUND'], 'n')
-                    self.assertEqual(values['CONFIG_PARTITION_TABLE_CUSTOM_FILENAME'], '"partitions.csv"')
+                    expected_partition = 'partitions_paper_s31.csv' if name == 'paper-s31-wifi' else 'partitions.csv'
+                    self.assertEqual(values['CONFIG_PARTITION_TABLE_CUSTOM_FILENAME'], '"' + expected_partition + '"')
                     if profile['target'] == 'esp32s3':
                         self.assertEqual(values['CONFIG_SPIRAM_MODE_OCT'], 'y')
                         self.assertEqual(values['CONFIG_SPIRAM_SPEED_80M'], 'y')

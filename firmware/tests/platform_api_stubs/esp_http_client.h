@@ -1,7 +1,7 @@
 #pragma once
 #include "esp_err.h"
 #include <cstdint>
-enum esp_http_client_method_t { HTTP_METHOD_GET, HTTP_METHOD_POST, HTTP_METHOD_DELETE };
+enum esp_http_client_method_t { HTTP_METHOD_GET, HTTP_METHOD_POST, HTTP_METHOD_DELETE, HTTP_METHOD_PUT };
 constexpr int HTTP_EVENT_ON_DATA = 3;
 struct esp_http_client_event_t { int event_id; void* data; int data_len; void* user_data; };
 struct esp_http_client_config_t {
