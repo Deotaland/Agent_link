@@ -58,31 +58,36 @@ private:
 
 // The caller owns an immutable masked frame until all plaintext is accepted by
 // TLS. WANT_READ/WANT_WRITE retries use precisely the same suffix; never remask,
-// overwrite, duplicate or interleave another frame. A stall has one deadline.
+// overwrite, duplicate or interleave another frame. Real progress refreshes the
+// inactivity deadline; a separate maximum age bounds a slowly dripping frame.
 class PendingWrite {
 public:
     bool Begin(size_t bytes, int64_t now_ms) {
         if (Busy() || !bytes) return false;
-        size_ = bytes; offset_ = 0; started_ = now_ms;
+        size_ = bytes; offset_ = 0; started_ = last_progress_ = now_ms;
         return true;
     }
     bool Advance(int result, bool would_block, int64_t now_ms) {
         if (!Busy()) return false;
         if (result > 0) {
             if (static_cast<size_t>(result) > Remaining()) return false;
-            offset_ += result;
+            offset_ += result; last_progress_ = now_ms;
             if (!Busy()) return true;
         } else if (!would_block) return false;
-        return now_ms - started_ < 3000;
+        return !Expired(now_ms);
     }
     bool Busy() const { return offset_ < size_; }
-    bool Expired(int64_t now_ms) const { return Busy() && now_ms - started_ >= 3000; }
+    bool Expired(int64_t now_ms) const {
+        return Busy() && (now_ms - last_progress_ >= 3000 || now_ms - started_ >= 15000);
+    }
+    int64_t StalledMs(int64_t now_ms) const { return now_ms - last_progress_; }
+    int64_t AgeMs(int64_t now_ms) const { return now_ms - started_; }
     size_t Offset() const { return offset_; }
     size_t Remaining() const { return size_ - offset_; }
     size_t Size() const { return size_; }
 private:
     size_t size_ = 0, offset_ = 0;
-    int64_t started_ = 0;
+    int64_t started_ = 0, last_progress_ = 0;
 };
 
 }  // namespace agentlink::realtime

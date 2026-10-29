@@ -156,10 +156,10 @@ esp_err_t Es8311Codec::OpenDevice() {
     const int r = esp_codec_dev_open(codec_dev_, &fs);
     if (r != 0) { ESP_LOGE(TAG, "open codec=%d", r); return ESP_FAIL; }
     if (!cfg_.use_default_volume_curve) ApplyVolumeCurve();
-    (void)esp_codec_dev_set_out_vol(codec_dev_, cfg_.out_volume);
     (void)esp_codec_dev_set_in_gain(codec_dev_, static_cast<float>(cfg_.mic_gain));
     dev_open_ = true;
-    return ESP_OK;
+    const esp_err_t volume_error = SetVolume(cfg_.out_volume);
+    return cfg_.verify_max_volume ? volume_error : ESP_OK;
 }
 
 // Existing amplified curve; boards can opt into codec-dev's default curve instead.
@@ -211,6 +211,14 @@ esp_err_t Es8311Codec::WritePcm(const int16_t* data, size_t frames) {
 esp_err_t Es8311Codec::SetVolume(uint8_t vol) {
     const uint8_t next = (vol > 100) ? 100 : vol;
     if (dev_open_ && esp_codec_dev_set_out_vol(codec_dev_, next) != ESP_CODEC_DEV_OK) return ESP_FAIL;
+    // The codec-dev volume wrapper does not propagate the codec's register-write error.
+    if (dev_open_ && cfg_.verify_max_volume && next == 100) {
+        int reg = -1;
+        if (esp_codec_dev_read_reg(codec_dev_, 0x32, &reg) != ESP_CODEC_DEV_OK || reg != 0xff) {
+            ESP_LOGE(TAG, "Maximum DAC volume readback failed (reg=0x%02x)", reg);
+            return ESP_FAIL;
+        }
+    }
     cfg_.out_volume = next;
     return ESP_OK;
 }

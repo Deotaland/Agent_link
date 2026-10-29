@@ -159,6 +159,7 @@ std::atomic<uint32_t> s_tx_send_ms{0}, s_tx_encode_max_us{0};
 std::atomic<uint32_t> s_downlink_bytes{0}, s_media_stack{0}, s_encoder_stack{0};
 std::atomic<uint32_t> s_encoded_pending{0};
 std::atomic<uint32_t> s_tx_send_max_ms{0};
+std::atomic<uint32_t> s_tx_would_block{0}, s_tx_partial{0}, s_tx_select0_accepted{0};
 std::atomic<uint32_t> s_worker_phase{0};
 std::atomic<uint32_t> s_worker_phase_since_ms{0};
 uint32_t s_diag_last_ms = 0;
@@ -216,6 +217,12 @@ void ReportUplink() {
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
 #endif
+    const unsigned waiting = s_tx_would_block.exchange(0);
+    const unsigned partial = s_tx_partial.exchange(0);
+    const unsigned low_water = s_tx_select0_accepted.exchange(0);
+    if (waiting || partial || low_water)
+        ESP_LOGI(TAG, "uplink TLS progress: would_block=%u partial=%u select0_accepted=%u",
+                 waiting, partial, low_water);
     s_diag_last_ms = now;
     s_diag_mic_frames = s_diag_dropped_frames = 0;
     s_diag_prev_sent_frames = sent_frames;
@@ -476,15 +483,27 @@ bool PumpWire(WsSender& sender) {
     if (!sender.pending.Busy()) return true;
     const int64_t now_ms = esp_timer_get_time() / 1000;
     if (sender.pending.Expired(now_ms)) {
-        ESP_LOGW(TAG, "voice TLS write stalled for 3000 ms");
+        ESP_LOGW(TAG, "voice TLS write expired: no_progress_ms=%lld age_ms=%lld pending=%u offset=%u",
+                 static_cast<long long>(sender.pending.StalledMs(now_ms)),
+                 static_cast<long long>(sender.pending.AgeMs(now_ms)),
+                 static_cast<unsigned>(sender.pending.Remaining()),
+                 static_cast<unsigned>(sender.pending.Offset()));
+        LogTransportFailure(sender.tls, "write progress timeout", 0, 0);
         return false;
     }
     // Retry exactly the retained suffix, including after WANT_READ/WANT_WRITE.
     // This socket stays nonblocking after the verified async TLS handshake.
+    // select() has a TCP low-water threshold, not a promise that this small
+    // TLS record cannot fit. Use it only to observe; the nonblocking write is
+    // authoritative and retains the same bytes across WANT_READ/WANT_WRITE.
+    const int writable = PollWritable(sender.tls);
+    const size_t remaining = sender.pending.Remaining();
     errno = 0;
-    const int sent = esp_tls_conn_write(sender.tls, sender.wire + sender.pending.Offset(),
-                                        sender.pending.Remaining());
+    const int sent = esp_tls_conn_write(sender.tls, sender.wire + sender.pending.Offset(), remaining);
     const bool waiting = TlsWouldBlock(sent);
+    if (waiting) s_tx_would_block.fetch_add(1);
+    if (sent > 0 && static_cast<size_t>(sent) < remaining) s_tx_partial.fetch_add(1);
+    if (sent > 0 && writable == 0) s_tx_select0_accepted.fetch_add(1);
     if (!sender.pending.Advance(sent, waiting, esp_timer_get_time() / 1000)) {
         LogTransportFailure(sender.tls, "write", sent, errno);
         return false;
@@ -492,10 +511,10 @@ bool PumpWire(WsSender& sender) {
     if (!sender.pending.Busy()) {
         memset(sender.wire, 0, sender.pending.Size());
         if (sender.audio_messages) {
-            const uint32_t elapsed = (esp_timer_get_time() - sender.queued_at) / 1000;
+            const uint32_t elapsed = static_cast<uint32_t>((esp_timer_get_time() - sender.queued_at) / 1000);
             s_tx_sent_frames.fetch_add(sender.audio_frames);
             s_tx_sent_messages.fetch_add(sender.audio_messages);
-            s_tx_bytes.fetch_add(sender.audio_bytes);
+            s_tx_bytes.fetch_add(static_cast<uint32_t>(sender.audio_bytes));
             s_tx_write_calls.fetch_add(1);
             s_tx_send_ms.fetch_add(elapsed);
             if (elapsed > s_tx_send_max_ms.load()) s_tx_send_max_ms.store(elapsed);
@@ -510,6 +529,7 @@ bool PumpWire(WsSender& sender) {
 bool WriteWire(WsSender& sender, size_t expected) {
     if (!expected || expected > sender.capacity) return false;
 #if CONFIG_IDF_TARGET_ESP32C3
+    if (sender.pending.Busy()) return false;
     sender.queued_at = esp_timer_get_time();
     return sender.pending.Begin(expected, sender.queued_at / 1000);
 #else
@@ -539,6 +559,23 @@ bool WriteWire(WsSender& sender, size_t expected) {
     return false;
 #endif
 }
+
+#if CONFIG_IDF_TARGET_ESP32C3
+bool PumpControl(WsSender& sender, const uint8_t* pong, size_t pong_size,
+                 bool* pong_pending, int64_t* last_ping, int64_t now) {
+    if (sender.pending.Busy()) return true;
+    const bool reply = *pong_pending;
+    if (!reply && now - *last_ping <= 15000000) return true;
+    uint8_t mask[4]; esp_fill_random(mask, sizeof mask);
+    const size_t size = agentlink::realtime::EncodeFrame(reply ? 10 : 9,
+        reply ? reinterpret_cast<const char*>(pong) : nullptr, reply ? pong_size : 0,
+        mask, sender.wire, sender.capacity);
+    if (!size || !WriteWire(sender, size)) return false;
+    if (reply) *pong_pending = false;
+    else *last_ping = now;
+    return true;
+}
+#endif
 
 size_t AppendFrame(WsSender& sender, size_t offset, const char* json, size_t bytes) {
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -1049,8 +1086,9 @@ public:
         if (input_opus_.load() && !StartEncoder()) return false;
 #endif
         if (!TxPending()) return true;
-        // Do not wait three seconds in poll_write while reply audio is waiting
-        // to be read on this same worker. Keep the packets queued until writable.
+#if !CONFIG_IDF_TARGET_ESP32C3
+        // Other targets use the blocking transport adapter. C3 instead queues
+        // one immutable frame and drives actual nonblocking TLS write progress.
         errno = 0;
         const int writable = PollWritable(ws.tls);
         const int saved_errno = errno;
@@ -1062,6 +1100,7 @@ public:
             return false;
         }
         if (!writable) return true;
+#endif
         if (input_opus_.load()) {
 #if CONFIG_AGENT_LINK_REALTIME_OPUS
             if (xQueuePeek(encoded_queue_, &encoded_packet_, 0) != pdTRUE) return true;
@@ -1527,7 +1566,7 @@ public:
 
 // One resident C3 worker owns TLS, framing and codecs. I2S capture/playback stay
 // on the board's independent workers. No 40 KB task is allocated during a call.
-bool ConnectOnce(const Grant& grant) {
+bool ConnectOnce(const Grant& grant, agentlink::realtime::RetryBudget& recovery) {
     WssAddress addr{};
     if (!ParseWss(grant.url, &addr)) return false;
     agentlink::cloud::NetworkMemoryLock memory;
@@ -1581,6 +1620,7 @@ bool ConnectOnce(const Grant& grant) {
     bool pong_pending = false, retryable = false;
     const int64_t connected_at = esp_timer_get_time();
     int64_t last_rx = connected_at, last_ping = connected_at, last_yield = connected_at;
+    uint32_t observed_tx = s_tx_sent_frames.load();
     auto receive = [&](const uint8_t* data, size_t bytes) {
         return reader.Consume(data, bytes, [&](unsigned opcode, bool first, bool end, bool fin,
                                               const uint8_t* payload, size_t count) {
@@ -1616,23 +1656,14 @@ bool ConnectOnce(const Grant& grant) {
     bool valid = !trailing || receive(scratch->read, trailing);
     while (valid && Current(grant.epoch) && call.Healthy()) {
         if (!call.Pump() || !PumpWire(sender)) { retryable = call.Healthy() || call.TransportFailed(); break; }
-        if (!sender.pending.Busy() && pong_pending) {
-            uint8_t mask[4]; esp_fill_random(mask, sizeof mask);
-            const size_t size = agentlink::realtime::EncodeFrame(10, reinterpret_cast<char*>(pong), pong_size,
-                                                                mask, sender.wire, sender.capacity);
-            if (!size || !WriteWire(sender, size)) { retryable = true; break; }
-            pong_pending = false;
+        const int64_t now = esp_timer_get_time();
+        // Reply to server pings and send our keepalive before queuing more audio.
+        if (!PumpControl(sender, pong, pong_size, &pong_pending, &last_ping, now)) {
+            retryable = true; break;
         }
         if (!call.FlushTx(sender, scratch.get())) { retryable = call.TransportFailed(); break; }
-        const int64_t now = esp_timer_get_time();
         if ((!s_ready && now - connected_at > kReadyTimeoutUs) || now - last_rx > 45000000) {
             ESP_LOGW(TAG, "voice session timed out"); retryable = true; break;
-        }
-        if (!sender.pending.Busy() && now - last_ping > 15000000) {
-            uint8_t mask[4]; esp_fill_random(mask, sizeof mask);
-            const size_t size = agentlink::realtime::EncodeFrame(9, nullptr, 0, mask, sender.wire, sender.capacity);
-            if (!size || !WriteWire(sender, size)) { retryable = true; break; }
-            last_ping = now;
         }
         SetWorkerPhase(3);
         errno = 0;
@@ -1645,6 +1676,11 @@ bool ConnectOnce(const Grant& grant) {
         } else if (!TlsWouldBlock(got)) {
             LogTransportFailure(connection.tls, "read", got, errno); retryable = true; break;
         }
+        const uint32_t sent_frames = s_tx_sent_frames.load();
+        if (recovery.Observe(s_ready.load(), sent_frames != observed_tx, got > 0,
+                             esp_timer_get_time() / 1000))
+            ESP_LOGI(TAG, "voice retry budget reset: READY and bidirectional progress stable for 120s");
+        observed_tx = sent_frames;
         // Yield even under a burst of replies so I2S and the idle task run.
         if (got <= 0 || esp_timer_get_time() - last_yield >= 10000) {
             vTaskDelay(1); last_yield = esp_timer_get_time();
@@ -1660,7 +1696,7 @@ bool ConnectOnce(const Grant& grant) {
 }
 #else
 // True only for transport failures eligible for a new platform grant.
-bool ConnectOnce(const Grant& grant) {
+bool ConnectOnce(const Grant& grant, agentlink::realtime::RetryBudget& recovery) {
     bool retryable = false;
     WssAddress addr = {};
     if (!ParseWss(grant.url, &addr)) {
@@ -1764,6 +1800,7 @@ bool ConnectOnce(const Grant& grant) {
             uint32_t pending_reset = 0;
             const int64_t connected_at = esp_timer_get_time();
             int64_t last_rx = connected_at, last_ping = connected_at;
+            uint32_t observed_tx = s_tx_sent_frames.load();
             SetWorkerPhase(0);
             while (Current(grant.epoch) && call.Healthy()) {
                 if (!call.FlushTx(sender, scratch)) {
@@ -1805,6 +1842,11 @@ bool ConnectOnce(const Grant& grant) {
                     retryable = true;
                     break;
                 }
+                const uint32_t sent_frames = s_tx_sent_frames.load();
+                if (recovery.Observe(s_ready.load(), sent_frames != observed_tx, false,
+                                     esp_timer_get_time() / 1000))
+                    ESP_LOGI(TAG, "voice retry budget reset: READY and bidirectional progress stable for 120s");
+                observed_tx = sent_frames;
                 if (!polled) continue;
                 SetWorkerPhase(3);
                 errno = 0;
@@ -1823,6 +1865,9 @@ bool ConnectOnce(const Grant& grant) {
                 frame_read += got;
                 const bool end = frame_read == frame_size;
                 if (frame_size < 0 || frame_read > frame_size || (got == 0 && !end)) break;
+                // An empty ping/pong is still a real received WebSocket frame.
+                if (recovery.Observe(s_ready.load(), false, got > 0 || end, esp_timer_get_time() / 1000))
+                    ESP_LOGI(TAG, "voice retry budget reset: READY and bidirectional progress stable for 120s");
                 last_rx = esp_timer_get_time();
                 if (opcode == WS_TRANSPORT_OPCODES_CLOSE) {
                     // Log only the numeric close code, never a server-supplied reason.
@@ -1901,7 +1946,7 @@ void Worker(void*) {
     while (s_run.load(std::memory_order_acquire)) {
         if (xQueueReceive(s_grants, &grant, pdMS_TO_TICKS(500)) != pdTRUE) continue;
         const char* hint = "Voice ended. Tap Connect to retry";
-        agentlink::realtime::RecoverTransport([&](bool may_retry) {
+        agentlink::realtime::RecoverTransport([&](agentlink::realtime::RetryBudget& recovery) {
             bool granted = !grant.direct && !grant.platform;
 #if CONFIG_AGENT_LINK_REALTIME_DIRECT
             if (grant.direct && Current(grant.epoch)) granted = FetchDirectGrant(&grant, &hint);
@@ -1920,12 +1965,12 @@ void Worker(void*) {
                                      : "Voice access failed. Tap Connect to retry";
             }
             bool retryable = false;
-            if (granted && Current(grant.epoch)) retryable = ConnectOnce(grant);
+            if (granted && Current(grant.epoch)) retryable = ConnectOnce(grant, recovery);
             s_ready.store(false);
             ResetInput();
             if (s_cb.audio_reset) s_cb.audio_reset();
             // Notify applications before cleanup/backoff so the mic stops while offline.
-            const bool retry = grant.platform && retryable && may_retry && Current(grant.epoch);
+            const bool retry = grant.platform && retryable && recovery.CanRetry() && Current(grant.epoch);
             SetRecovering(grant.epoch, retry);
             if (retryable) hint = "Voice network failed. Tap Connect to retry";
             if (s_cb.state) s_cb.state(false, retry ? "Voice interrupted. Reconnecting..." : hint);
@@ -1936,7 +1981,7 @@ void Worker(void*) {
 #endif
             return retry && Current(grant.epoch);
         }, [&](unsigned retries, unsigned delay_ms) {
-            ESP_LOGW(TAG, "voice transport recovery %u/2 in %u ms (fresh grant, old audio discarded)",
+            ESP_LOGW(TAG, "voice transport recovery %u/2 in %u ms (consecutive failures; fresh grant, old audio discarded)",
                      retries, delay_ms);
             const int64_t until = esp_timer_get_time() + delay_ms * 1000LL;
             while (Current(grant.epoch) && esp_timer_get_time() < until) vTaskDelay(pdMS_TO_TICKS(50));
@@ -2128,6 +2173,7 @@ esp_err_t cloud_realtime_stream_start(agent_stream_t type) {
         s_tx_sent_frames.store(0);
         s_tx_sent_messages.store(0);
         s_tx_send_max_ms.store(0);
+        s_tx_would_block.store(0); s_tx_partial.store(0); s_tx_select0_accepted.store(0);
         s_tx_bytes.store(0);
         s_rx_bytes.store(0);
         s_decoded_samples.store(0);

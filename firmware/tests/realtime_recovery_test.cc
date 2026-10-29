@@ -157,6 +157,18 @@ int main() {
         }
         assert(audio_ticks == 150 && pending.Expired(3400));
         assert(!pending.Advance(-1, true, 3400));
+        agentlink::realtime::PendingWrite progressing;
+        assert(progressing.Begin(20, 0));
+        assert(progressing.Advance(3, false, 2500));
+        assert(!progressing.Expired(4000)); // Total age > 3 s, but the write is progressing.
+        assert(progressing.Advance(3, false, 4900));
+        assert(!progressing.Expired(7000));
+        assert(progressing.Expired(7900)); // Three full seconds without accepted plaintext.
+        agentlink::realtime::PendingWrite dripping;
+        assert(dripping.Begin(100, 0));
+        for (int64_t now = 2000; now < 15000; now += 2000)
+            assert(dripping.Advance(1, false, now));
+        assert(dripping.Expired(15000)); // Bounded maximum age even under tiny progress.
         agentlink::realtime::PendingWrite failed;
         assert(failed.Begin(4, 0));
         assert(!failed.Advance(-1, false, 1));
@@ -248,13 +260,12 @@ int main() {
         assert(writes == 0);
     }
     using agentlink::realtime::RecoverTransport;
-    // Persistent transport failure exhausts a call-wide budget, even if an
-    // attempt reached READY before its next failure. There is no infinite loop.
+    // Repeated failures without a stable period still exhaust the two-retry budget.
     unsigned attempts = 0;
     std::vector<unsigned> waits;
-    RecoverTransport([&](bool may_retry) {
+    RecoverTransport([&](agentlink::realtime::RetryBudget& budget) {
         ++attempts;
-        assert(may_retry == (attempts < 3));
+        assert(budget.CanRetry() == (attempts < 3));
         return true;
     }, [&](unsigned retry, unsigned delay_ms) {
         assert(retry == waits.size() + 1);
@@ -267,21 +278,58 @@ int main() {
     // Recovery succeeds on the second attempt; no later grant is requested.
     attempts = 0;
     waits.clear();
-    RecoverTransport([&](bool) { return ++attempts == 1; },
+    RecoverTransport([&](agentlink::realtime::RetryBudget&) { return ++attempts == 1; },
                      [&](unsigned, unsigned ms) { waits.push_back(ms); return true; });
     assert(attempts == 2 && waits.size() == 1);
 
     // User exits during backoff: never launch another network request.
     attempts = 0;
-    RecoverTransport([&](bool) { ++attempts; return true; },
+    RecoverTransport([&](agentlink::realtime::RetryBudget&) { ++attempts; return true; },
                      [](unsigned, unsigned) { return false; });
     assert(attempts == 1);
 
     // Explicit server rejection, invalid media or unsupported grant source
     // returns false from the attempt and must not enter the backoff callback.
     attempts = 0;
-    RecoverTransport([&](bool) { ++attempts; return false; },
+    RecoverTransport([&](agentlink::realtime::RetryBudget&) { ++attempts; return false; },
                      [](unsigned, unsigned) { assert(false); return true; });
     assert(attempts == 1);
-    std::puts("Realtime recovery fault scenarios passed");
+    // A third attempt can stay healthy for minutes before its next failure.
+    // Reset the live budget during that attempt, not a snapshot taken at entry.
+    attempts = 0; waits.clear();
+    RecoverTransport([&](agentlink::realtime::RetryBudget& budget) {
+        ++attempts;
+        if (attempts == 3) {
+            assert(!budget.CanRetry());
+            unsigned resets = 0;
+            for (int64_t now = 0; now <= 120000; now += 1000)
+                if (budget.Observe(true, true, now % 15000 == 0, now)) ++resets;
+            assert(resets == 1 && budget.CanRetry()); // Pongs suffice while the user is silent.
+        }
+        return budget.CanRetry();
+    }, [&](unsigned retry, unsigned) { waits.push_back(retry); return true; });
+    assert(attempts == 5 && (waits == std::vector<unsigned>{1, 2, 1, 2}));
+    agentlink::realtime::RetryBudget budget;
+    assert(budget.UseRetry() == 1 && budget.UseRetry() == 2);
+    budget.BeginAttempt();
+    for (int64_t now = 0; now <= 180000; now += 1000)
+        assert(!budget.Observe(true, false, true, now)); // READY/pings without actual TX are insufficient.
+    assert(!budget.CanRetry());
+    budget.BeginAttempt();
+    assert(!budget.Observe(true, true, true, 0));
+    assert(!budget.Observe(true, true, false, 40000)); // Receive progress stalled: restart the stable window.
+    assert(!budget.Observe(true, true, true, 120000));
+    assert(!budget.CanRetry());
+    for (int64_t now = 121000; now <= 240000; now += 1000)
+        budget.Observe(true, true, now % 15000 == 0, now);
+    assert(budget.CanRetry());
+    agentlink::realtime::RetryBudget paused;
+    assert(paused.UseRetry() == 1 && paused.UseRetry() == 2);
+    assert(!paused.Observe(true, true, true, 0));
+    assert(!paused.Observe(true, true, true, 120000)); // A gap cannot count as stable time.
+    assert(!paused.CanRetry());
+    for (int64_t now = 121000; now <= 240000; now += 1000)
+        paused.Observe(true, true, now % 15000 == 0, now);
+    assert(paused.CanRetry());
+    std::puts("Realtime recovery and stable bidirectional-progress budget scenarios passed");
 }

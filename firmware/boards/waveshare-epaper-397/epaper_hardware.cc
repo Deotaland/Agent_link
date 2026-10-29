@@ -1,6 +1,8 @@
 #include "epaper_hardware.h"
+#include "epaper_panel_update.h"
 
 #include <algorithm>
+#include <cstring>
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -65,7 +67,10 @@ esp_err_t EpaperHardware::Init(int volume) {
     audio.pin_pa_en = GPIO_NUM_NC;  // PA is gated by the playback worker.
     audio.es8311_addr = ES8311_ADDR; audio.i2s_port = I2S_NUM_0;
     audio.sample_rate = AUDIO_SAMPLE_RATE; audio.mic_gain = 30; audio.out_volume = volume;
-    audio.pa_voltage = 3.3f; audio.use_default_volume_curve = true;
+    // The board's PA and DAC both use 3.3 V. The amplified curve reaches the
+    // ES8311 driver's +32 dB / 0xff endpoint at 100%, with readback verification.
+    audio.pa_voltage = 3.3f; audio.use_default_volume_curve = false;
+    audio.verify_max_volume = true;
     audio_ok_ = codec.Init(audio) == ESP_OK;
     if (!audio_ok_) ESP_LOGE(TAG, "ES8311 unavailable");
 
@@ -106,12 +111,16 @@ esp_err_t EpaperHardware::Command(uint8_t command, const uint8_t* data, size_t l
     ESP_RETURN_ON_ERROR(Send(false, &command, 1), TAG, "command");
     return length ? Send(true, data, length) : ESP_OK;
 }
-esp_err_t EpaperHardware::Wait() {
+esp_err_t EpaperHardware::Wait(uint32_t timeout_ms) {
+    const int64_t started = esp_timer_get_time();
     vTaskDelay(pdMS_TO_TICKS(100));
-    const int64_t deadline = esp_timer_get_time() + 20000000;
+    const int64_t deadline = started + static_cast<int64_t>(timeout_ms) * 1000;
     while (gpio_get_level(EPD_BUSY)) {
-        if (esp_timer_get_time() >= deadline) return ESP_ERR_TIMEOUT;
-        vTaskDelay(pdMS_TO_TICKS(20));
+        if (esp_timer_get_time() >= deadline) {
+            ESP_LOGW(TAG, "BUSY timeout after %ums", unsigned(timeout_ms));
+            return ESP_ERR_TIMEOUT;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
     return ESP_OK;
 }
@@ -146,8 +155,22 @@ esp_err_t EpaperHardware::Display(const uint8_t* frame, bool full) {
     ESP_RETURN_ON_ERROR(Command(0x22, &refresh, 1), TAG, "refresh mode");
     ESP_RETURN_ON_ERROR(Command(0x20), TAG, "refresh");
     ESP_RETURN_ON_ERROR(Wait(), TAG, "refresh BUSY");
-    ESP_RETURN_ON_ERROR(Command(0x10, &one, 1), TAG, "deep sleep");
-    vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level(EPD_RST, 0); gpio_set_level(EPD_DC, 0);
-    return Update(0x90, 0x04, 0);
+    // Keep the panel powered and its base RAM intact for subsequent partial updates.
+    return ESP_OK;
+}
+
+esp_err_t EpaperHardware::DisplayPartial(const uint8_t* frame) {
+    static_assert(EPD_WIDTH == epaper::kNativeWidth && EPD_HEIGHT == epaper::kNativeHeight);
+    if (!spi_ || !frame) return ESP_ERR_INVALID_STATE;
+    // Waveshare's partial-update sequence retains the full-refresh base image.
+    gpio_set_level(EPD_RST, 1); vTaskDelay(pdMS_TO_TICKS(50));
+    gpio_set_level(EPD_RST, 0); vTaskDelay(pdMS_TO_TICKS(2));
+    gpio_set_level(EPD_RST, 1); vTaskDelay(pdMS_TO_TICKS(50));
+    // The vendor's partial sequence continues directly after the reset pulse;
+    // BUSY is checked after the update trigger, not with an extra reset delay.
+    esp_err_t error = ESP_OK;
+    if (!epaper::QueuePartialFrame(frame, [this, &error](uint8_t command, const uint8_t* data, size_t bytes) {
+            error = Command(command, data, bytes); return error == ESP_OK;
+        })) return error;
+    return Wait(5000);
 }

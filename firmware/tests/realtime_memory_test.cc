@@ -114,14 +114,17 @@ struct WsSender {
     unsigned audio_frames = 0, audio_messages = 0;
     size_t audio_bytes = 0;
 };
-bool network_writable = true;
+bool network_writable = true, select_writable = true;
 unsigned sent_packets = 0;
 std::vector<uint8_t> last_wire;
 uint8_t last_audio = 0;
-int PollWritable(int) { return network_writable ? 1 : 0; }
+int PollWritable(int) { return select_writable ? 1 : 0; }
 void LogTransportFailure(int, const char*, int, int) {}
-bool PumpWire(WsSender&) { return true; }
-bool WriteWire(WsSender& ws, size_t bytes) {
+bool WriteWire(WsSender& ws, size_t bytes) { return ws.pending.Begin(bytes, now_us / 1000); }
+bool PumpWire(WsSender& ws) {
+    if (!ws.pending.Busy() || !network_writable) return true;
+    const size_t bytes = ws.pending.Remaining();
+    assert(ws.pending.Advance(static_cast<int>(bytes), false, now_us / 1000));
     last_wire.assign(ws.wire, ws.wire + bytes); ++sent_packets;
     size_t offset = 0;
     while (offset < bytes) {
@@ -231,7 +234,9 @@ void Capture(Call& call, WsSender& sender, TxScratch& scratch, unsigned count, u
     for (unsigned i = 0; i < count; ++i) {
         assert(xQueueSend(s_tx, &input, 0) == pdTRUE);
         assert(call.Pump());
-        assert(call.FlushTx(sender, &scratch)); now_us += 20000;
+        assert(PumpWire(sender));
+        assert(call.FlushTx(sender, &scratch));
+        assert(PumpWire(sender)); now_us += 20000;
     }
 }
 size_t json_allocations = 0;
@@ -374,16 +379,26 @@ int main() {
         assert(call.Healthy());
         while (s_encoded_pending) {
             now_us += 40000;
+            assert(PumpWire(sender));
             assert(call.FlushTx(sender, &scratch));
+            assert(PumpWire(sender));
         }
+        // A conservative select() result must not gate a small nonblocking write.
+        select_writable = false;
+        const unsigned before_low_water = sent_packets;
+        Capture(call, sender, scratch, 6, 0x22);
+        assert(sent_packets > before_low_water && call.Healthy());
+        select_writable = true;
         // Bounded congestion: retain queued PCM and keep decoding while TX is blocked.
         network_writable = false;
         Capture(call, sender, scratch, 6, 0x33);
-        assert(s_encoded_pending == 2 && uxQueueMessagesWaiting(s_tx) == 4);
+        assert(sender.pending.Busy() && s_encoded_pending <= kEncodedDepth &&
+               uxQueueMessagesWaiting(s_tx) <= kTxDepth);
         Event(call, "{\"type\":\"response.started\"}");
         assert(!s_encoded_pending && !uxQueueMessagesWaiting(s_tx));
         Event(call, "{\"type\":\"response.audio.delta\",\"audio\":\"+P/+\"}");
         assert(call.Healthy()); network_writable = true;
+        assert(PumpWire(sender));
         // Cancellation must release decoding state before restarting the encoder.
         ++s_reset; assert(call.Pump());
         assert(encoder_live && !decoder_live);

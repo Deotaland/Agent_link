@@ -40,6 +40,7 @@ struct Es8311Config {
     bool       no_dac_ref;
     float      pa_voltage;  // supply of the external PA; 0 when the board has none
     bool       use_default_volume_curve = false;  // keep codec-dev's -50..0 dB curve
+    bool       verify_max_volume = false; // read back the DAC register at 100%
 };
 
 class Es8311Codec {

@@ -35,7 +35,7 @@
 #define EPD_RST GPIO_NUM_46
 #define EPD_BUSY GPIO_NUM_3
 #define CJK_FONT_PARTITION "anim_pack"
-#define CJK_FONT_PX 28
+#define CJK_FONT_PX 24
 #define CJK_FONT_CACHE_GLYPHS 32
 #define EPD_WIDTH 800
 #define EPD_HEIGHT 480

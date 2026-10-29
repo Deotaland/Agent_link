@@ -20,6 +20,7 @@ parser.add_argument('--gateway', action='store_true', help='verify claim-code an
 parser.add_argument('--session', action='store_true', help='verify optional MQTT in the production session loop')
 parser.add_argument('--voice-entry', action='store_true', help='verify HTTP voice starts without MQTT')
 parser.add_argument('--voice-worker', action='store_true', help='verify the resident C3 worker and incremental TLS upgrade')
+parser.add_argument('--voice-send', action='store_true', help='fault-inject production nonblocking TLS writes and control priority')
 parser.add_argument('--voice-diagnostics', action='store_true', help='verify selected server termination fields and credential redaction')
 parser.add_argument('--voice-memory', action='store_true', help='exercise the production C3 codec lifetime and bounded uplink under memory pressure')
 args = parser.parse_args()
@@ -84,6 +85,21 @@ if args.voice_worker:
         begin = production.index(start)
         fixture = fixture.replace('// INSERT_' + marker, production[begin:production.index(end, begin)])
     source = build / 'realtime_worker_test.cc'
+    source.write_text(fixture, encoding='utf-8')
+    sources = [source]
+
+if args.voice_send:
+    production = (root / 'components/agent_link/src/transports/wifi/cloud/cloud_realtime.cc').read_text(encoding='utf-8')
+    fixture = (root / 'tests/realtime_send_test.cc').read_text(encoding='utf-8')
+    for marker, start, end in [
+        ('SENDER', 'struct WsSender {', '\nint PollWritable('),
+        ('PUMP_WIRE', 'bool PumpWire(WsSender& sender) {', '\n#endif'),
+        ('WRITE_WIRE', 'bool WriteWire(WsSender& sender, size_t expected) {', '\n#if CONFIG_IDF_TARGET_ESP32C3\nbool PumpControl'),
+        ('PUMP_CONTROL', 'bool PumpControl(WsSender& sender, const uint8_t* pong', '\n#endif'),
+    ]:
+        begin = production.index(start)
+        fixture = fixture.replace('// INSERT_' + marker, production[begin:production.index(end, begin)])
+    source = build / 'realtime_send_test.cc'
     source.write_text(fixture, encoding='utf-8')
     sources = [source]
 

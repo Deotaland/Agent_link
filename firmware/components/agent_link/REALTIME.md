@@ -42,8 +42,12 @@ Outgoing text frames (audio and session controls) combine the masked WebSocket
 header and payload in a reusable buffer for one TLS write, with a fresh random
 mask per frame. S3/S31 TLS writes use a 3000 ms transport timeout. Slow successful
 writes log wire size and write duration, at most once a second. A failed or partial frame is never replayed
-on that stream. Platform calls retry transport failures at most twice per call,
+on that stream. Platform calls allow two retries during an unstable period,
 after 2 and 4 seconds, releasing the previous grant and obtaining a fresh token.
+The budget resets after 120 seconds of READY with continuing progress in both
+directions (no progress gap over 30 seconds). WebSocket control replies count
+as receive progress, so a silent user does not prevent a healthy reset.
+READY alone, a growing queue or repeated connection failures cannot reset it.
 Microphone capture pauses during recovery and queued audio is discarded; speech
 during the interruption must be repeated. Leaving the call cancels recovery.
 Explicit server session errors/close frames, invalid media and grant rejection
@@ -65,13 +69,19 @@ Continuous Opus upload coalesces up to three complete WebSocket messages in one
 TLS write; each retains its own JSON, Opus packet and random mask. The first
 queued packet waits at most 40 ms to form a batch, excluding network stalls.
 PCM and activity-control messages retain their existing packet boundaries.
-Before dequeuing uplink audio, the worker polls writability without blocking;
-while the socket is backpressured it continues receiving replies and checks a
-3-second stall deadline. On S3/S31 a write can still block after the readiness check.
-On C3, TLS remains nonblocking after verified connection and HTTP upgrade.
-Partial writes retain the exact masked buffer and retry only its remaining
-suffix on later worker passes, with a 3-second deadline. Reads and codec work
-continue during backpressure. Partial frame headers/payloads are retained too,
+S3/S31 poll writability before dequeuing uplink audio and use a 3-second stall
+deadline; a write can still block after that readiness check. On C3, TLS remains
+nonblocking after verified connection and HTTP upgrade. Socket writability is
+observational only: lwIP may report not writable because of its low-water mark
+even when a small TLS write can progress. Actual nonblocking TLS results drive
+backpressure. One pending frame retains the exact masked bytes and retries only
+its remaining suffix; audio queues stay bounded. Accepted plaintext refreshes a
+3-second no-progress deadline, with a separate 15-second maximum frame age.
+Reads and codec work continue during backpressure; ping/pong controls take
+priority before new audio frames, without interrupting an in-flight frame.
+`uplink TLS progress` records WANT results, partial writes and
+`select0_accepted` (writes accepted despite select reporting not writable).
+Accepted plaintext is transport progress, not proof that the Agent processed it. Partial frame headers/payloads are retained too,
 including control frames interleaved between message fragments. The upgrade
 validates HTTP 101, Upgrade/Connection, the accept digest and the subprotocol;
 unnegotiated extensions and masked server frames are rejected.
