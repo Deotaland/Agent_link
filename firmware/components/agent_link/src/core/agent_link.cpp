@@ -988,6 +988,11 @@ bool agent_link_realtime_running(void) {
     return agent_transport_wifi_realtime_running();
 }
 
+bool agent_link_realtime_recovering(void) {
+    if (!s_tx || s_cfg.transport != AGENT_TRANSPORT_WIFI) return false;
+    return agent_transport_wifi_realtime_recovering();
+}
+
 esp_err_t agent_link_end_realtime(void) {
     if (!s_tx) return ESP_ERR_INVALID_STATE;
     if (s_cfg.transport != AGENT_TRANSPORT_WIFI) return ESP_ERR_NOT_SUPPORTED;

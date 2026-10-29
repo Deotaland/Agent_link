@@ -25,6 +25,8 @@ typedef struct {
 void cloud_realtime_set_callbacks(const cloud_realtime_callbacks_t* callbacks);
 void cloud_realtime_cancel(void);
 bool cloud_realtime_ready(void);
+// True only during an actual retry (cleanup/backoff/grant/connect), until READY.
+bool cloud_realtime_recovering(void);
 bool cloud_realtime_direct_enabled(void);
 esp_err_t cloud_realtime_request_direct(void);
 esp_err_t cloud_realtime_request_platform(int agent_id, const char* session_id);

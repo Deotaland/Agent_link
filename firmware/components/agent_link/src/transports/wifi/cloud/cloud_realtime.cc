@@ -3,6 +3,8 @@
 #include "realtime_audio_json.h"
 #include "realtime_buffer.h"
 #include "realtime_recovery.h"
+#include "realtime_end_log.h"
+#include "cloud_credential.h"
 #include "realtime_ws_frame.h"
 #include "realtime_ws_stream.h"
 #include "realtime_ws_upgrade.h"
@@ -137,6 +139,7 @@ bool                       s_grants_caps = false;
 std::atomic<TaskHandle_t>  s_task{nullptr};
 std::atomic<bool>          s_run{false};
 std::atomic<bool>          s_ready{false};
+std::atomic<bool>          s_recovering{false};
 std::atomic<bool>          s_mute{false};
 std::atomic<bool>          s_continuous{false};
 std::atomic<uint32_t>      s_epoch{0};
@@ -265,6 +268,10 @@ bool SafeToken(const char* token) {
 }
 
 bool Current(uint32_t epoch) { return s_run && s_epoch == epoch; }
+void SetRecovering(uint32_t epoch, bool recovering) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    if (Current(epoch)) s_recovering.store(recovering);
+}
 
 class VoiceWifiPower {
 public:
@@ -574,8 +581,9 @@ void ResetInput() {
 
 class Call {
 public:
-    Call(uint32_t epoch, AudioFormat audio, bool continuous)
-        : epoch_(epoch), continuous_(continuous), audio_(audio), input_opus_(audio.input_opus) {}
+    Call(uint32_t epoch, AudioFormat audio, bool continuous, const char* connect_token = nullptr)
+        : epoch_(epoch), continuous_(continuous), audio_(audio), input_opus_(audio.input_opus),
+          connect_token_(connect_token), created_at_(esp_timer_get_time()) {}
     ~Call() {
         Stop();
         if (encoded_queue_) {
@@ -968,6 +976,7 @@ public:
             s_mute.store(false);
             if (!s_ready.exchange(true) && s_cb.state)
                 s_cb.state(true, continuous_ ? "Microphone on" : "Hold to talk, release to send");
+            SetRecovering(epoch_, false);
             ESP_LOGI(TAG, "voice session ready (%s 16 kHz up, %s 24 kHz down, %s)",
                      audio_.input_opus ? "Opus" : "PCM16", audio_.output_opus ? "Opus" : "PCM16",
                      continuous_ ? "server endpointing" : "client PTT");
@@ -1020,8 +1029,11 @@ public:
             if (s_cb.text && cJSON_IsString(text)) s_cb.text(text->valuestring);
         } else if (strcmp(event, "error") == 0 || strcmp(event, "session.error") == 0 ||
                    strcmp(event, "session.ended") == 0) {
-            // Do not print server payloads: they can contain connection credentials.
-            ESP_LOGW(TAG, "server ended or rejected the voice session");
+            agentlink::realtime::EndDiagnostic diagnostic;
+            agentlink::realtime::DescribeServerEnd(json, cloud_cred_auth_key(), connect_token_, &diagnostic);
+            ESP_LOGW(TAG, "voice server terminal: event=%s code=%s reason=%s connection_age_ms=%lld retry=no",
+                     diagnostic.event, diagnostic.code, diagnostic.reason,
+                     static_cast<long long>((esp_timer_get_time() - created_at_) / 1000));
             keep = false;
         }
         cJSON_Delete(json);
@@ -1408,6 +1420,8 @@ private:
     bool rx_caps_ = false, media_started_ = false;
     std::atomic<bool> running_{true}, media_done_{false};
     int16_t* decode_pcm_ = nullptr;
+    const char* connect_token_ = nullptr;
+    const int64_t created_at_;
     int64_t received_at_ = 0;
     size_t samples_ = 0, encoded_bytes_ = 0;
     unsigned packets_ = 0;
@@ -1522,7 +1536,7 @@ bool ConnectOnce(const Grant& grant) {
     agentlink::realtime::MessageBuffer message(kMessageInitialBytes, kMessageBytes, ResizeMessage);
     std::unique_ptr<TxScratch> scratch(new (std::nothrow) TxScratch{});
     // Keep metadata off the shared stack: the codec needs most of its depth.
-    std::unique_ptr<Call> owner(new (std::nothrow) Call(grant.epoch, grant.audio, grant.platform));
+    std::unique_ptr<Call> owner(new (std::nothrow) Call(grant.epoch, grant.audio, grant.platform, grant.token));
     if (!message.Data() || !scratch || !owner) return false;
     NativeWss connection;
     size_t trailing = 0;
@@ -1698,7 +1712,7 @@ bool ConnectOnce(const Grant& grant) {
         return false;
     }
     if (s_cb.state) s_cb.state(false, "Connecting voice");
-    Call call(grant.epoch, grant.audio, grant.platform);
+    Call call(grant.epoch, grant.audio, grant.platform, grant.token);
     // Reserve large codec states early, but leave the 40 KB C3 task stack free
     // for certificate parsing and RSA verification during the TLS handshake.
     if (!call.Prepare()) {
@@ -1876,7 +1890,10 @@ void FinishGrant(uint32_t epoch) {
     // Cancellation/new requests also hold s_mutex. An old worker must not clear
     // the transport's running flag after a newer grant has been queued.
     std::lock_guard<std::mutex> lock(s_mutex);
-    if (Current(epoch) && s_cb.finished) s_cb.finished();
+    if (Current(epoch)) {
+        s_recovering.store(false);
+        if (s_cb.finished) s_cb.finished();
+    }
 }
 
 void Worker(void*) {
@@ -1909,6 +1926,7 @@ void Worker(void*) {
             if (s_cb.audio_reset) s_cb.audio_reset();
             // Notify applications before cleanup/backoff so the mic stops while offline.
             const bool retry = grant.platform && retryable && may_retry && Current(grant.epoch);
+            SetRecovering(grant.epoch, retry);
             if (retryable) hint = "Voice network failed. Tap Connect to retry";
             if (s_cb.state) s_cb.state(false, retry ? "Voice interrupted. Reconnecting..." : hint);
             if (grant.platform && (granted || (grant.url[0] && grant.token[0])))
@@ -1961,6 +1979,7 @@ esp_err_t QueueGrant(Grant* grant) {
     grant->epoch = s_epoch.fetch_add(1) + 1;
     s_ready.store(false);
     s_continuous.store(grant->platform);
+    s_recovering.store(false);
     if (xQueueOverwrite(s_grants, grant) != pdPASS) return ESP_FAIL;
     if (!StartWorker()) {
         xQueueReset(s_grants);
@@ -2012,6 +2031,7 @@ void cloud_realtime_stop(void) {
     {
         std::lock_guard<std::mutex> lock(s_mutex);
         s_run.store(false, std::memory_order_release);
+        s_recovering.store(false);
         s_epoch.fetch_add(1);
         s_ready.store(false);
     }
@@ -2087,12 +2107,14 @@ void cloud_realtime_set_callbacks(const cloud_realtime_callbacks_t* callbacks) {
 }
 
 bool cloud_realtime_ready(void) { return s_ready.load(); }
+bool cloud_realtime_recovering(void) { return s_recovering.load(); }
 
 void cloud_realtime_cancel(void) {
     std::lock_guard<std::mutex> lock(s_mutex);
     s_epoch.fetch_add(1);
     s_ready.store(false);
     s_mute.store(true);
+    s_recovering.store(false);
     s_input = AGENT_STREAM_KIND_COUNT;
     if (s_grants) xQueueReset(s_grants);
     if (s_tx) xQueueReset(s_tx);

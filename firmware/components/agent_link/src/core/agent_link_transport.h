@@ -235,6 +235,7 @@ void agent_transport_wifi_set_audio(void (*pcm)(const uint8_t*, size_t), void (*
 esp_err_t agent_transport_wifi_request_realtime(void);
 esp_err_t agent_transport_wifi_end_realtime(void);
 bool agent_transport_wifi_realtime_running(void);
+bool agent_transport_wifi_realtime_recovering(void);
 
 /**
  * @brief Register the link-state callback.

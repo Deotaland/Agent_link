@@ -47,6 +47,7 @@ extern "C" void agent_transport_wifi_set_audio(void (*)(const uint8_t*, size_t),
 extern "C" esp_err_t agent_transport_wifi_request_realtime(void) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" esp_err_t agent_transport_wifi_end_realtime(void) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" bool agent_transport_wifi_realtime_running(void) { return false; }
+extern "C" bool agent_transport_wifi_realtime_recovering(void) { return false; }
 
 
 extern "C" bool agent_link_platform_available(void) { return false; }

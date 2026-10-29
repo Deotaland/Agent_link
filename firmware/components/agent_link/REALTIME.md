@@ -49,7 +49,17 @@ during the interruption must be repeated. Leaving the call cancels recovery.
 Explicit server session errors/close frames, invalid media and grant rejection
 do not trigger automatic retries. MQTT/direct grants retain manual reconnection.
 Logs include operation/result, errno, socket/TLS errors, WiFi association/RSSI,
-internal heap availability and uplink queue duration, without server reason text.
+internal heap availability and uplink queue duration. A `voice server terminal`
+line distinguishes `error`, `session.error` and `session.ended`, with selected
+code/reason fields, connection age and `retry=no`. Missing fields say
+`unspecified`. Only these fields are inspected: no raw JSON, audio, transcript,
+URL, session/device ID or credential field is serialized. Known auth/connect
+tokens, credential values, URLs and long identifier-like words are redacted;
+control characters are normalized. Some unusual codes/details may be redacted.
+This is diagnostic only; terminal server events remain non-retryable.
+`agent_link_realtime_recovering()` reports an SDK-selected retry, including its
+cleanup, backoff and new grant/connection, until READY. AI Passport shows
+`Reconnecting` only in that state. Terminal cleanup shows `Ending call` instead.
 
 Continuous Opus upload coalesces up to three complete WebSocket messages in one
 TLS write; each retains its own JSON, Opus packet and random mask. The first

@@ -278,11 +278,16 @@ agent_state_t agent_link_state(void);
  */
 esp_err_t agent_link_request_realtime(void);
 
-/** True while a WiFi call is queued, connected or recovering. READY describes
+/** True while a WiFi call is queued, connected, recovering or finishing cleanup. READY describes
  *  media availability; this remains true during bounded transport retries.
  *  False before init, on other transports, after cancellation or final failure.
  */
 bool agent_link_realtime_running(void);
+
+/** True only when the WiFi SDK selected a transport retry. False during terminal
+ *  cleanup, before init and on unsupported transports. Does not request a retry.
+ */
+bool agent_link_realtime_recovering(void);
 
 /** End a realtime call and discard pending grants and microphone packets. */
 esp_err_t agent_link_end_realtime(void);

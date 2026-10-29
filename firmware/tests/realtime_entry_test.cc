@@ -8,7 +8,8 @@ constexpr esp_err_t ESP_OK = 0, ESP_ERR_INVALID_STATE = 1, ESP_FAIL = 2;
 enum agent_state_t { AGENT_STATE_DISCONNECTED, AGENT_STATE_CONNECTED, AGENT_STATE_READY };
 std::atomic<agent_state_t> s_link{AGENT_STATE_CONNECTED};
 std::atomic<bool> s_realtime_wanted{false}, s_platform_voice{false};
-bool platform_enabled = true, mqtt_started = false, direct_enabled = false;
+bool platform_enabled = true, mqtt_started = false, direct_enabled = false, recovering = false;
+bool cloud_realtime_recovering() { return recovering; }
 unsigned platform_requests = 0, mqtt_requests = 0, direct_requests = 0;
 esp_err_t request_result = ESP_OK;
 bool cloud_platform_enabled() { return platform_enabled; }
@@ -30,6 +31,11 @@ int main() {
     assert(agent_transport_wifi_request_realtime_session(4, "fixture-session") == ESP_OK);
     assert(platform_requests == 1 && s_realtime_wanted && s_platform_voice);
     assert(agent_transport_wifi_realtime_running());
+    assert(!agent_transport_wifi_realtime_recovering()); // Initial startup, not a retry.
+    recovering = true;
+    assert(agent_transport_wifi_realtime_recovering());
+    recovering = false;
+    assert(!agent_transport_wifi_realtime_recovering()); // Terminal cleanup still owns the call.
     s_link = AGENT_STATE_READY;
     assert(agent_transport_wifi_realtime_running());
     s_link = AGENT_STATE_CONNECTED; // Recovery still owns the call.
@@ -38,6 +44,8 @@ int main() {
     assert(platform_requests == 1); // A duplicate tap must not request another grant.
     s_realtime_wanted = false; s_platform_voice = false;
     assert(!agent_transport_wifi_realtime_running());
+    recovering = true;
+    assert(!agent_transport_wifi_realtime_recovering()); // A cancelled call cannot resume.
     platform_enabled = false;
     assert(agent_transport_wifi_request_realtime_session(4, "fixture-session") == ESP_ERR_INVALID_STATE);
     platform_enabled = true; s_link = AGENT_STATE_DISCONNECTED;

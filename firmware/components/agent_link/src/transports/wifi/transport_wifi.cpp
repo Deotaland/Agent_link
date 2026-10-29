@@ -905,6 +905,10 @@ extern "C" bool agent_transport_wifi_realtime_running(void) {
     return s_realtime_wanted.load(std::memory_order_acquire);
 }
 
+extern "C" bool agent_transport_wifi_realtime_recovering(void) {
+    return s_realtime_wanted.load(std::memory_order_acquire) && cloud_realtime_recovering();
+}
+
 extern "C" esp_err_t agent_transport_wifi_end_realtime(void) {
     s_realtime_wanted.store(false);
     s_platform_voice.store(false);
@@ -961,5 +965,6 @@ extern "C" void agent_transport_wifi_set_audio(void (*)(const uint8_t*, size_t),
 extern "C" esp_err_t agent_transport_wifi_request_realtime(void) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" esp_err_t agent_transport_wifi_end_realtime(void) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" bool agent_transport_wifi_realtime_running(void) { return false; }
+extern "C" bool agent_transport_wifi_realtime_recovering(void) { return false; }
 
 #endif

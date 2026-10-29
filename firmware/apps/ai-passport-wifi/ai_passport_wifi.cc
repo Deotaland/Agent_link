@@ -252,6 +252,7 @@ private:
                           session_[0] ? "Conversation selected" : "OK selects latest or creates one", volume_.load());
             passport_wifi::SetContent(call_.Active() ? (audio_.Speaking() ? "Agent speaking" : "Listening") :
                                       call_.Recovering() ? "Reconnecting" :
+                                      call_.Closing() ? "Ending call" :
                                       call_.Calling() ? "Starting call" : "Agent Link", detail,
                                       call_.Calling() ? "OK: end call" : "OK: call   Hold OK: menu");
         }
@@ -275,11 +276,13 @@ private:
     void UpdateCall(int64_t now) {
         using Action = passport_wifi::CallState::Action;
         switch (call_.Poll(agent_link_state() == AGENT_STATE_READY,
-                           agent_link_realtime_running(), audio_.Enabled(), now)) {
+                           agent_link_realtime_running(), agent_link_realtime_recovering(), audio_.Enabled(), now)) {
         case Action::StartMic:
             audio_.Enable(true); ESP_LOGI(TAG, "call ready"); break;
         case Action::Recovering:
             ESP_LOGW(TAG, "call paused: SDK recovering; conversation retained"); break;
+        case Action::Closing:
+            ESP_LOGI(TAG, "call ending: SDK cleanup; no retry scheduled"); break;
         case Action::Resumed:
             ESP_LOGI(TAG, "call recovered: microphone resumed"); break;
         case Action::MicStopped:

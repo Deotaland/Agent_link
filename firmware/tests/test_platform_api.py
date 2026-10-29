@@ -20,6 +20,7 @@ parser.add_argument('--gateway', action='store_true', help='verify claim-code an
 parser.add_argument('--session', action='store_true', help='verify optional MQTT in the production session loop')
 parser.add_argument('--voice-entry', action='store_true', help='verify HTTP voice starts without MQTT')
 parser.add_argument('--voice-worker', action='store_true', help='verify the resident C3 worker and incremental TLS upgrade')
+parser.add_argument('--voice-diagnostics', action='store_true', help='verify selected server termination fields and credential redaction')
 parser.add_argument('--voice-memory', action='store_true', help='exercise the production C3 codec lifetime and bounded uplink under memory pressure')
 args = parser.parse_args()
 if not args.idf_path:
@@ -76,6 +77,7 @@ if args.voice_worker:
         'SDK_STOP': ('void cloud_realtime_stop(void) {', '\nesp_err_t cloud_realtime_offer('),
         'CANCEL': ('void cloud_realtime_cancel(void) {', '\nesp_err_t cloud_realtime_stream_start('),
         'FINISH_GRANT': ('void FinishGrant(uint32_t epoch) {', '\nvoid Worker(void*)'),
+        'RECOVERY_STATE': ('void SetRecovering(uint32_t epoch, bool recovering) {', '\nclass VoiceWifiPower'),
         'NATIVE_WSS': ('class NativeWss {', '\n// One resident C3 worker'),
     }
     for marker, (start, end) in sections.items():
@@ -84,6 +86,9 @@ if args.voice_worker:
     source = build / 'realtime_worker_test.cc'
     source.write_text(fixture, encoding='utf-8')
     sources = [source]
+
+if args.voice_diagnostics:
+    sources = [root / 'tests/realtime_end_log_test.cc']
 
 extra_c_sources = []
 extra_defines = []
@@ -94,6 +99,7 @@ if args.voice_memory:
     fixture = (root / 'tests/realtime_memory_test.cc').read_text(encoding='utf-8')
     for marker, start, end in [
         ('TYPES', 'enum class TxKind', '\nstruct WssAddress'),
+        ('RECOVERY_STATE', 'void SetRecovering(uint32_t epoch, bool recovering) {', '\nclass VoiceWifiPower'),
         ('CALL', 'class Call {', '\n#if CONFIG_IDF_TARGET_ESP32C3\nclass NativeWss'),
     ]:
         begin = production.index(start)

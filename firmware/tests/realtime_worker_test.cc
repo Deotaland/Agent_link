@@ -34,7 +34,7 @@ constexpr int AGENT_STREAM_KIND_COUNT = 2;
 QueueHandle_t s_grants = nullptr, s_tx = nullptr;
 bool s_grants_caps = false, s_tx_caps = false;
 std::atomic<TaskHandle_t> s_task{nullptr};
-std::atomic<bool> s_run{false}, s_ready{false}, s_mute{false}, s_continuous{false};
+std::atomic<bool> s_run{false}, s_ready{false}, s_mute{false}, s_continuous{false}, s_recovering{false};
 std::atomic<uint32_t> s_epoch{0};
 int s_input = AGENT_STREAM_KIND_COUNT;
 std::mutex s_mutex;
@@ -118,6 +118,7 @@ bool transport_running = true;
 void Finished() { ++finished_calls; transport_running = false; }
 struct Callbacks { void (*finished)() = Finished; } s_cb;
 // INSERT_FINISH_GRANT
+// INSERT_RECOVERY_STATE
 void esp_fill_random(void* data, size_t bytes) { assert(bytes == 16); memcpy(data, "the sample nonce", 16); }
 int mbedtls_base64_encode(uint8_t* out, size_t cap, size_t* written, const uint8_t* input, size_t bytes) {
     const char* value = bytes == 16 ? "dGhlIHNhbXBsZSBub25jZQ==" : "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
@@ -142,7 +143,9 @@ int main() {
         assert(grant.epoch == s_epoch && creates == 1);
         Call call;
         assert(call.Start() && creates == 1 && queues == 2);
+        s_recovering = true;
         cloud_realtime_cancel();
+        assert(!s_recovering);
         assert(s_task && s_run && creates == 1 && queues == 2);
     }
     Grant old_grant;
@@ -151,10 +154,14 @@ int main() {
     Grant new_grant;
     assert(QueueGrant(&new_grant) == ESP_OK);
     transport_running = true;
+    SetRecovering(new_grant.epoch, true);
+    assert(s_recovering);
+    SetRecovering(old_grant.epoch, false);
     FinishGrant(old_grant.epoch);
+    assert(s_recovering); // Stale workers cannot clear a newer retry.
     assert(transport_running && finished_calls == 0);
     FinishGrant(new_grant.epoch);
-    assert(!transport_running && finished_calls == 1);
+    assert(!transport_running && finished_calls == 1 && !s_recovering);
     s_cb.finished = nullptr;
     FinishGrant(new_grant.epoch); // Optional callback.
     s_cb.finished = Finished;

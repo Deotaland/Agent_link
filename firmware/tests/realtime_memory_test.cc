@@ -15,6 +15,7 @@
 #include "realtime_audio.h"
 #include "realtime_audio_json.h"
 #include "realtime_format.h"
+#include "realtime_end_log.h"
 #include "realtime_ws_frame.h"
 #include "realtime_ws_stream.h"
 #include "cloud_limits.h"
@@ -88,10 +89,12 @@ void vTaskDelay(unsigned ticks) {
 }
 std::mutex s_mutex;
 QueueHandle_t s_tx = nullptr;
-std::atomic<bool> s_ready{true}, s_mute{false};
+std::atomic<bool> s_ready{true}, s_mute{false}, s_recovering{false};
 std::atomic<uint32_t> s_reset{0}, s_encoded_pending{0}, s_downlink_bytes{0};
 std::atomic<uint32_t> s_media_stack{0}, s_encoder_stack{0}, s_decoded_samples{0}, s_tx_encode_max_us{0};
 bool Current(uint32_t epoch) { return epoch == 1; }
+const char* cloud_cred_auth_key() { return "fixture-auth-key"; }
+// INSERT_RECOVERY_STATE
 namespace agentlink::audio {
 unsigned BufferMs() { return 256; }
 bool BufferLevelBytes(size_t* bytes) { *bytes = queued_pcm; return actual_level; }
@@ -287,6 +290,16 @@ void TestBorrowedAudio() {
     }
 }
 int main() {
+    for (const char* terminal : {
+        R"({"type":"error","error":{"code":"upstream_error","message":"upstream unavailable"}})",
+        R"({"type":"session.error","code":401,"reason":"token expired"})",
+        R"({"type":"session.ended","reason":"duration exceeded"})"}) {
+        s_ready = true;
+        Call call(1, {true, true}, true);
+        Event(call, terminal);
+        assert(!call.Healthy() && !call.TransportFailed()); // Still intentionally non-retryable.
+    }
+    s_ready = true;
     cJSON_Hooks hooks{JsonMalloc, free}; cJSON_InitHooks(&hooks);
     TestBorrowedAudio();
     // Verify in-place decoding against the same mbedTLS base64.c used by IDF,

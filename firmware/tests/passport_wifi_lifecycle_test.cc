@@ -7,14 +7,16 @@
 #include <functional>
 #include "passport_wifi_call.h"
 
-#define ESP_LOGI(...) ((void)0)
-#define ESP_LOGW(...) ((void)0)
+constexpr const char* TAG = "fixture";
+template <typename... Args> void Log(const char*, const char*, Args...) {}
+#define ESP_LOGI(...) Log(__VA_ARGS__)
+#define ESP_LOGW(...) Log(__VA_ARGS__)
 #define pdMS_TO_TICKS(ms) (ms)
 using esp_err_t = int;
 constexpr esp_err_t ESP_OK = 0, ESP_ERR_INVALID_STATE = 1, ESP_ERR_NO_MEM = 2, ESP_FAIL = 3;
 enum agent_state_t { AGENT_STATE_DISCONNECTED, AGENT_STATE_CONNECTED, AGENT_STATE_READY };
 agent_state_t link = AGENT_STATE_CONNECTED;
-bool running = false;
+bool running = false, recovering = false;
 int64_t now_us = 0;
 unsigned ends = 0, opens = 0, closes = 0, writes = 0;
 struct Done {};
@@ -24,6 +26,7 @@ int64_t esp_timer_get_time() { return now_us; }
 const char* esp_err_to_name(esp_err_t) { return "fixture error"; }
 agent_state_t agent_link_state() { return link; }
 bool agent_link_realtime_running() { return running; }
+bool agent_link_realtime_recovering() { return running && recovering; }
 int agent_link_end_realtime() { ++ends; running = false; return ESP_OK; }
 void vTaskDelay(unsigned ticks) { assert(ticks > 0); now_us += ticks * 1000; on_delay(); }
 using agent_stream_handle_t = void*;
@@ -74,7 +77,7 @@ void RunMic(PassportWifiAudio& audio) {
 void TestController() {
     WifiApp app;
     auto start = [&] {
-        running = true; link = AGENT_STATE_CONNECTED; now_us += 1000;
+        running = true; recovering = false; link = AGENT_STATE_CONNECTED; now_us += 1000;
         app.call_.Start(now_us); app.UpdateCall(now_us);
         assert(app.call_.Calling() && !app.audio_.Enabled());
         link = AGENT_STATE_READY; app.UpdateCall(now_us);
@@ -83,25 +86,34 @@ void TestController() {
     start();
     now_us += 180000000; // A long call must not trip the initial 30 s deadline.
     app.UpdateCall(now_us); assert(ends == 0 && app.call_.Active());
-    link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us);
+    recovering = true; link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us);
     assert(app.call_.Recovering() && app.audio_.Enabled() && ends == 0);
     for (unsigned i = 0; i < 80; ++i) { now_us += 100000; app.UpdateCall(now_us); }
     assert(app.call_.Recovering() && ends == 0);
     link = AGENT_STATE_READY; app.UpdateCall(now_us);
     assert(app.call_.Active() && app.audio_.Enabled() && ends == 0);
-    link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us);
+    recovering = true; link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us);
+    recovering = false; app.UpdateCall(now_us); // Retry budget exhausted: cleanup is not another retry.
+    assert(app.call_.Closing() && !app.call_.Recovering() && app.audio_.Enabled() && ends == 0);
     running = false; app.UpdateCall(now_us); // SDK exhausted its bounded retries.
     assert(!app.call_.Calling() && !app.audio_.Enabled() && ends == 1);
     app.UpdateCall(now_us); assert(ends == 1);
+    start(); link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us); // Explicit server end.
+    assert(app.call_.Closing() && !app.call_.Recovering() && app.audio_.Enabled());
+    const unsigned before_cleanup = ends;
+    for (unsigned i = 0; i < 20; ++i) app.UpdateCall(now_us += 100000);
+    assert(app.call_.Closing() && ends == before_cleanup);
+    running = false; app.UpdateCall(now_us);
+    assert(!app.call_.Calling() && ends == before_cleanup + 1);
     for (const char* reason : {"user", "menu", "agent_changed"}) {
-        start(); link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us);
+        start(); recovering = true; link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us);
         app.EndCall(reason); const unsigned ended = ends;
         link = AGENT_STATE_READY; app.UpdateCall(now_us);
         assert(!app.call_.Calling() && !app.audio_.Enabled() && ends == ended);
     }
     start(); app.audio_.Enable(false); app.UpdateCall(now_us);
     assert(!app.call_.Calling() && !app.audio_.Enabled());
-    start(); link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us);
+    start(); recovering = true; link = AGENT_STATE_CONNECTED; app.UpdateCall(now_us);
     app.audio_.Enable(false); app.UpdateCall(now_us); // Agent stop during backoff.
     assert(!app.call_.Calling());
     running = true; link = AGENT_STATE_CONNECTED; app.call_.Start(now_us);
