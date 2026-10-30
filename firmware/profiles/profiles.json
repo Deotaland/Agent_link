@@ -394,28 +394,26 @@
       }
     ]
   },
-  "waveshare-amoled-175-touch-test": {
-    "board": "waveshare-amoled-175",
-    "board_type": "WAVESHARE_AMOLED_175_TOUCH_TEST",
+  "ojbadge-wifi": {
+    "board": "ojbadge",
+    "board_type": "OJBADGE_WIFI",
     "target": "esp32s3",
     "backend": "NONE",
     "defaults": [
       "profiles/lvgl.defaults",
-      "profiles/waveshare-amoled-175-touch-test.defaults"
+      "profiles/ojbadge-wifi.defaults"
     ],
-    "app": "waveshare-amoled-175-touch-test",
-    "hardware": "waveshare-amoled-175",
+    "app": "ojbadge-wifi",
+    "hardware": "ojbadge",
     "drivers": [
+      "bq27220.cc",
+      "cst816_touch.cc",
       "cjk_font.cc",
-      "co5300_hal.c",
-      "co5300_panel.cc",
-      "cst9217_touch.cc"
+      "gc9a01_panel.cc"
     ],
     "ui": "lvgl",
     "hardware_sources": [
-      "amoled_hardware.cc",
-      "amoled_fonts.cc",
-      "amoled_audio.cc"
+      "ojbadge_hardware.cc"
     ],
     "flash_assets": [
       {

@@ -2,7 +2,17 @@
 # External SDK consumers without a profile retain the legacy multi-backend build.
 set(_backend "$ENV{AGENT_LINK_BUILD_BACKEND}")
 if(_backend STREQUAL "NONE")
-    idf_component_register()
+    # Local-only badges reuse the same friends worker and wire protocol without
+    # linking provisioning, platform clients, SDK lifecycle or cloud transport.
+    if("$ENV{AGENT_LINK_BUILD_PROFILE}" STREQUAL "ojbadge-wifi")
+        idf_component_register(SRCS src/transports/wifi/wifi_friends.cc
+            src/transports/wifi/wifi_local_standalone.cc INCLUDE_DIRS include
+            PRIV_INCLUDE_DIRS src/transports/wifi
+            PRIV_REQUIRES esp_wifi esp_netif esp_event nvs_flash esp_timer mbedtls)
+        target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
+    else()
+        idf_component_register()
+    endif()
     return()
 endif()
 if(NOT _backend STREQUAL "" AND NOT _backend MATCHES "^(BLE|WIFI|MUSE)$")

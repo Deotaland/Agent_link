@@ -1,4 +1,4 @@
-"""Exercise the actual CST9217 driver and offline touch-test state machine."""
+"""Exercise the actual CST9217 production driver."""
 import json
 import os
 from pathlib import Path
@@ -6,11 +6,10 @@ import shutil
 import subprocess
 
 root = Path(__file__).resolve().parents[1]
-app = root / "apps/waveshare-amoled-175-touch-test"
 build = root / "build/amoled-touch-tests"
 build.mkdir(parents=True, exist_ok=True)
 includes = [root / "tests/amoled_touch_stubs", root / "tests/stopwatch_driver_stubs",
-            root / "tests/platform_api_stubs", root / "boards/common", app]
+            root / "tests/platform_api_stubs", root / "boards/common"]
 sources = [root / "tests/amoled_touch_test.cc", root / "boards/common/cst9217_touch.cc"]
 environment = os.environ.copy()
 if os.name == "nt":
@@ -35,9 +34,9 @@ else:
 subprocess.run(command, env=environment, cwd=build, check=True)
 subprocess.run([str(binary)], check=True)
 profiles = json.loads((root / "profiles/profiles.json").read_text(encoding="utf-8"))
-for name in ("waveshare-amoled-175-wifi", "waveshare-amoled-175-touch-test"):
+for name in ("waveshare-amoled-175-wifi",):
     profile = profiles[name]
     assert "cjk_font.cc" in profile["drivers"]
     assert "amoled_fonts.cc" in profile["hardware_sources"]
     assert profile["flash_assets"] == [{"partition": "anim_pack", "file": "boards/common/fonts/cjk_font.bin"}]
-print("Both AMOLED profiles include the shared Chinese font and resident font loader.")
+print("The AMOLED profile includes the shared Chinese font and resident font loader.")

@@ -67,7 +67,8 @@ review, not a build or device verification of those other profiles.
 | Profiles | Current text path | Reuse status |
 | --- | --- | --- |
 | waveshare-epaper-397-wifi | Manual monochrome renderer using LVGL fonts | This change installs and loads the shared font; keeps the built-in subset as fallback |
-| waveshare-amoled-175-wifi, waveshare-amoled-175-touch-test | LVGL labels with Montserrat plus 14/20/24 px Noto Sans SC fallbacks | Both profiles install the shared asset; test UI reports loading status |
+| waveshare-amoled-175-wifi | LVGL labels with Montserrat plus 14/20/24 px Noto Sans SC fallbacks | Installs the shared font asset |
+| ojbadge-wifi | LVGL labels with Montserrat plus 14/20 px Noto Sans SC fallbacks | Installs the shared font asset; local friends UI |
 | rorolee-muse | LVGL; shared LoadCjkFont and Montserrat fallback already present | Existing compatible consumer; USB font installation is still documented separately |
 | m5stack-stopwatch-wifi | LVGL; SimSun 14 CJK subset for body text | Can use the same loader/resource with label font and cache settings |
 | korvo-wifi | LVGL; SimSun 14 CJK subset for session/voice labels | Can reuse for session labels; SetVoiceText currently ignores incoming reply text, which requires separate UI work |

@@ -2,7 +2,6 @@
 #include <cstdio>
 #include <cstring>
 #include "cst9217_touch.h"
-#include "touch_test_state.h"
 
 unsigned delayed_ms = 0, address_at = 0, transmits = 0, receives = 0;
 int transmit_error = ESP_OK, receive_error = ESP_OK, probe_error = ESP_OK;
@@ -88,51 +87,5 @@ int main() {
     set_report(23, 78);
     assert(horizontal.Poll(&point, raw) == ESP_OK && point.x == 442 && point.y == 78);
 
-    using namespace amoled_touch_test;
-    // Feed reflected hardware reports through the actual driver into the actual
-    // five-target monitor, just as the offline firmware does.
-    Monitor aligned;
-    for (unsigned i = 0; i < kTargetCount; ++i) {
-        set_report(465 - kTargets[i].x, 465 - kTargets[i].y);
-        assert(oriented.Poll(&point, raw) == ESP_OK);
-        assert(aligned.Observe(Read::kValid, point, i * 40) == Event::kDown);
-        assert(aligned.NextTarget() == i + 1);
-        set_report(0, 0, false);
-        assert(oriented.Poll(&point, raw) == ESP_OK);
-        assert(aligned.Observe(Read::kValid, point, i * 40 + 20) == Event::kUp);
-    }
-    assert(aligned.Complete() && aligned.Downs() == 5 && aligned.Ups() == 5);
-    PointerGate pointer;
-    assert(!pointer.Update(false, true, true) && pointer.Down(true));
-    assert(pointer.Update(true, true, false) && !pointer.Down(true));
-    assert(!pointer.Update(false, true, true) && !pointer.Down(true)); // held across fault: cannot click
-    pointer.Update(false, false, true);
-    assert(!pointer.Down(false));
-    pointer.Update(false, true, true); assert(pointer.Down(true)); // genuine fresh press
-    Monitor state;
-    assert(state.Stale(0));
-    auto sample = [&](bool down, int x, int y, int64_t now) {
-        return state.Observe(Read::kValid, {down, static_cast<uint16_t>(x), static_cast<uint16_t>(y)}, now);
-    };
-    assert(sample(true, 233, 252, 0) == Event::kDown && state.NextTarget() == 1);
-    assert(sample(true, 233, 194, 20) == Event::kMove && state.NextTarget() == 1); // dragging is not another tap
-    assert(sample(true, 233, 194, 40) == Event::kNone && state.Downs() == 1);
-    assert(state.Observe(Read::kInvalidReport, {}, 60) == Event::kNone && state.Pressed() && state.Ups() == 0);
-    assert(state.Observe(Read::kBusError, {}, 80) == Event::kNone && state.Pressed() && state.Ups() == 0);
-    assert(!state.Stale(289) && state.Stale(290));
-    assert(sample(true, 233, 194, 300) == Event::kNone && state.NextTarget() == 1); // recovery does not duplicate DOWN
-    assert(sample(false, 0, 0, 320) == Event::kUp && state.X() == 233 && state.Y() == 194);
-    for (unsigned i = 1; i < kTargetCount; ++i) {
-        assert(sample(true, kTargets[i].x, kTargets[i].y, 400 + i * 40) == Event::kDown);
-        assert(sample(false, 0, 0, 420 + i * 40) == Event::kUp);
-    }
-    assert(state.Complete() && state.Downs() == 5 && state.Ups() == 5);
-    assert(state.Invalid() == 1 && state.BusErrors() == 1);
-    state.Reset();
-    assert(state.Stale(1000) && state.Downs() == 0 && state.Valid() == 0 && !state.Pressed());
-    assert(sample(true, 311, 252, 1000) == Event::kDown && state.NextTarget() == 0); // wrong target order
-    sample(false, 0, 0, 1020);
-    assert(sample(true, 233, 464, 1040) == Event::kDown && state.Y() == 464); // no coordinate clamp
-    assert(!InCircle(state.X(), state.Y()) && TargetsFit());
-    puts("AMOLED touch: actual I2C driver/reset/raw reports, five tap targets, drag/release, fault recovery and bounds passed.");
+    puts("CST9217 production driver checks passed");
 }

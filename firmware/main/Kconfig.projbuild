@@ -104,14 +104,14 @@ config BOARD_TYPE_M5STACK_STOPWATCH
         replies on the speaker, the link status on the round screen.
         The supported profile is m5stack-stopwatch-ble.
 
-config BOARD_TYPE_WAVESHARE_AMOLED_175_TOUCH_TEST
+config BOARD_TYPE_OJBADGE_WIFI
     bool
-    default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-amoled-175-touch-test"
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "ojbadge-wifi"
     select LV_FONT_MONTSERRAT_20
-    select LV_FONT_MONTSERRAT_24
+    select LV_FONT_MONTSERRAT_28
     help
-        Offline touchscreen diagnostics for Waveshare ESP32-S3-Touch-AMOLED-1.75C.
-        No network, audio initialization or platform activation.
+        OJBadge 240x240 circular touch UI and local ESP-NOW friendship.
+        No platform startup, provisioning, cloud authentication or audio.
 
 config BOARD_TYPE_WAVESHARE_AMOLED_175_WIFI
     bool

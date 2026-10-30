@@ -17,13 +17,15 @@ python tools/build_firmware.py korvo-wifi --jobs 2
 | WOWNNY | `wownny-muse`, `wownny-old-muse` | Muse; choose the correct revision |
 | FoloToy AI Passport | `ai-passport-ble`, `ai-passport-wifi` | BLE / WiFi; ESP32-C3 |
 | M5Stack StopWatch C152 | `m5stack-stopwatch-ble`, `m5stack-stopwatch-wifi` | BLE / WiFi |
-| Waveshare ESP32-S3-Touch-AMOLED-1.75C | `waveshare-amoled-175-wifi`, `waveshare-amoled-175-touch-test` | WiFi / offline touch diagnostics |
+| Waveshare ESP32-S3-Touch-AMOLED-1.75C | `waveshare-amoled-175-wifi` | WiFi |
 | OpenJumper AIoT Basic V2 | `gc2145-camera-ble` | BLE |
 | ESP32-S3 + ES8311 wiring examples | `es8311-asr-ble`, `es8311-voice-ble` | BLE |
 | Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | WiFi; ESP32-S3 |
 | Mozhifang paper V2 | `paper-s31-wifi` | WiFi; ESP32-S31 |
+| OJBadge | `ojbadge-wifi` | Local ESP-NOW friends; no platform backend |
 
 S3/C3 profiles support ESP-IDF 5.5.x and 6.1.x. S31 needs an S31-capable 6.1 SDK.
+
 ESP32-P4 has no adapted profile. A backend in the SDK does not imply that every
 application supports it.
 

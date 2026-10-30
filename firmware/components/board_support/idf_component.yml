@@ -1,4 +1,9 @@
 dependencies:
+  espressif/esp_lcd_gc9a01:
+    version: "^2.0.0"
+    require: no
+    rules:
+      - if: "target == esp32s3"
   espressif/esp_codec_dev:
     version: "^1.5.0"
     require: no

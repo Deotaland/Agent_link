@@ -1,0 +1,25 @@
+{
+  "manufacturer": "OJBadge",
+  "type": "ojbadge",
+  "target": "esp32s3",
+  "boards": [
+    {
+      "board_type": "OJBADGE_WIFI",
+      "model": "OJBadge",
+      "product": "OJBadge",
+      "vendor": "OJBadge",
+      "buy": [],
+      "docs": [],
+      "aliases": ["OJBadge", "ojbadge-wifi", "OJ Badge"],
+      "hardware": "ESP32-S3R8, 8 MB octal PSRAM, W25Q128 16 MB flash; 240x240 1.28-inch round GC9A01 SPI LCD; CST816D touch; BQ27220 battery gauge; ES8311 codec and AW8010 amplifier (audio not enabled)",
+      "identify": "45.8 x 45.8 x 12.3 mm round touch badge, SW1 hardware power and active-low GPIO0 SW2, 300 mAh battery; pin map supplied by the developer",
+      "flash_port": "Type-C native ESP32-S3 USB on GPIO19/20; SW2 is BOOT/GPIO0",
+      "use": "Chinese round-screen badge UI, battery status, ESP-NOW nearby discovery, mutual code confirmation and acknowledged greetings with waveshare-amoled-175-wifi",
+      "transport": "NONE",
+      "ble_name": null,
+      "fw_model": "OJBadge",
+      "status": "supported",
+      "notes": "Profile ojbadge-wifi is currently local-only: NONE denotes no Agent Link platform backend, not absence of the ESP-NOW WiFi radio. Product ojbadge (id 11, enterprise_id 0, esp32-s3) supplied by the developer; platform lookup requires an account token and was not independently verified. No portal, activation, cloud, microphone or speaker. SW2 short press starts friends or greets a connected peer; hold 1 second returns home and stops the radio. Pairing code must be confirmed on both touchscreens. Hardware and cross-board acceptance pending."
+    }
+  ]
+}

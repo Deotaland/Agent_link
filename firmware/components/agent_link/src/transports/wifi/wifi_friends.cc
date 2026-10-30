@@ -25,6 +25,26 @@ namespace {
 using namespace agentlink::friends;
 constexpr char TAG[] = "agent_link.friends";
 constexpr uint8_t kChannel = 6;
+
+// WiFi callbacks only update counters; the worker prints bounded diagnostics.
+// No key material, pairing code or peer identity is included in these logs.
+struct Diagnostics {
+    std::atomic<uint32_t> queued{0}, enqueue_failed{0}, sent{0}, send_failed{0};
+    std::atomic<uint32_t> received_unicast{0}, received_broadcast{0}, invalid{0}, dropped{0}, auth_failed{0};
+    void Reset() {
+        queued = enqueue_failed = sent = send_failed = 0;
+        received_unicast = received_broadcast = invalid = dropped = auth_failed = 0;
+    }
+} diagnostics;
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+void Sent(const esp_now_send_info_t*, esp_now_send_status_t status) {
+#else
+void Sent(const uint8_t*, esp_now_send_status_t status) {
+#endif
+    if (status == ESP_NOW_SEND_SUCCESS) ++diagnostics.sent;
+    else ++diagnostics.send_failed;
+}
 enum class Command { Start, Stop, Select, Accept, Reject, Greet, Disconnect, Rx };
 struct Event { Command command; uint8_t mac[6] = {}; int rssi = 0; bool unicast = false; Packet packet; };
 std::mutex snapshot_lock, api_lock;
@@ -64,8 +84,8 @@ public:
         result = esp_now_init();
         if (result != ESP_OK) return result;
         now_ = true;
-        uint8_t pmk[16]; esp_fill_random(pmk, sizeof pmk);
-        result = esp_now_set_pmk(pmk); memset(pmk, 0, sizeof pmk);
+        diagnostics.Reset();
+        result = esp_now_register_send_cb(Sent);
         if (result != ESP_OK) return result;
         esp_now_peer_info_t peer = {};
         memcpy(peer.peer_addr, kBroadcast, 6); peer.channel = kChannel; peer.ifidx = WIFI_IF_STA;
@@ -73,7 +93,7 @@ public:
     }
     esp_err_t Close() {
         Forget();
-        if (now_) { esp_now_unregister_recv_cb(); esp_now_deinit(); now_ = false; }
+        if (now_) { esp_now_unregister_recv_cb(); esp_now_unregister_send_cb(); esp_now_deinit(); now_ = false; }
 #if ESP_IDF_VERSION_MAJOR >= 6
         if (private_) psa_destroy_key(private_);
         private_ = 0;
@@ -123,10 +143,26 @@ public:
         memset(material, 0, sizeof material);
         if (result) return false;
         Forget(); memcpy(session_key_, digest, 32); memset(digest, 0, sizeof digest);
+        // Both devices must use the same PMK. Derive it from the shared session
+        // secret with a separate label, before installing the encrypted peer.
+        // A per-device random PMK lets discovery work but breaks confirmations.
+        const uint8_t pmk_label[] = {'P','M','K','1'};
+        if (!Mac(pmk_label, sizeof pmk_label, digest)) { Forget(); return false; }
+        result = esp_now_set_pmk(digest);  // ESP-NOW consumes the first 16 bytes.
+        memset(digest, 0, sizeof digest);
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "pair PMK setup failed: %s", esp_err_to_name(result));
+            Forget(); return false;
+        }
         esp_now_peer_info_t peer = {};
         memcpy(peer.peer_addr, mac, 6); memcpy(peer.lmk, session_key_, 16);
         peer.channel = kChannel; peer.ifidx = WIFI_IF_STA; peer.encrypt = true;
-        if (esp_now_add_peer(&peer) != ESP_OK) { memset(session_key_, 0, 32); return false; }
+        result = esp_now_add_peer(&peer);
+        memset(peer.lmk, 0, sizeof peer.lmk);
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "encrypted peer setup failed: %s", esp_err_to_name(result));
+            Forget(); return false;
+        }
         memcpy(peer_, mac, 6); paired_ = true;
         // A separate HMAC authenticates application messages even if a forged
         // unencrypted unicast is delivered by the radio. The SAS is never a key.
@@ -136,24 +172,32 @@ public:
         }
         *code = static_cast<uint32_t>(digest[0]) << 24 | static_cast<uint32_t>(digest[1]) << 16 |
                 static_cast<uint32_t>(digest[2]) << 8 | digest[3];
-        memset(digest, 0, sizeof digest); return true;
+        memset(digest, 0, sizeof digest);
+        ESP_LOGI(TAG, "pair keys installed: session-derived PMK, channel=%u", kChannel);
+        return true;
     }
     bool Send(const uint8_t mac[6], const Packet& packet, bool encrypted) override {
         Packet outgoing = packet;
         if (encrypted) {
-            if (!paired_ || memcmp(peer_, mac, 6)) return false;
+            if (!paired_ || memcmp(peer_, mac, 6)) { ++diagnostics.enqueue_failed; return false; }
             uint8_t digest[32];
-            if (!Tag(outgoing, digest)) return false;
+            if (!Tag(outgoing, digest)) { ++diagnostics.enqueue_failed; return false; }
             memcpy(outgoing.tag, digest, sizeof outgoing.tag); memset(digest, 0, sizeof digest);
         }
-        return esp_now_send(mac, reinterpret_cast<const uint8_t*>(&outgoing), sizeof outgoing) == ESP_OK;
+        const esp_err_t result = esp_now_send(mac, reinterpret_cast<const uint8_t*>(&outgoing), sizeof outgoing);
+        if (result == ESP_OK) ++diagnostics.queued;
+        else if (++diagnostics.enqueue_failed <= 3)
+            ESP_LOGW(TAG, "send enqueue failed (type=%u): %s", static_cast<unsigned>(packet.type), esp_err_to_name(result));
+        return result == ESP_OK;
     }
     bool Verify(const Packet& packet) override {
         uint8_t digest[32];
-        if (!paired_ || !Tag(packet, digest)) return false;
+        if (!paired_ || !Tag(packet, digest)) { ++diagnostics.auth_failed; return false; }
         uint8_t difference = 0;
         for (size_t i = 0; i < sizeof packet.tag; ++i) difference |= digest[i] ^ packet.tag[i];
-        memset(digest, 0, sizeof digest); return difference == 0;
+        memset(digest, 0, sizeof digest);
+        if (difference) ++diagnostics.auth_failed;
+        return difference == 0;
     }
     void Forget() override {
         if (paired_) { esp_now_del_peer(peer_); paired_ = false; }
@@ -196,22 +240,31 @@ private:
 
 void Publish(const agent_friend_snapshot_t& view) {
     std::lock_guard<std::mutex> guard(snapshot_lock);
-    if (snapshot.state != view.state) ESP_LOGI(TAG, "state %d -> %d", snapshot.state, view.state);
+    if (snapshot.state != view.state || snapshot.local_confirmed != view.local_confirmed ||
+        snapshot.remote_confirmed != view.remote_confirmed)
+        ESP_LOGI(TAG, "state %d -> %d, local_confirmed=%d remote_confirmed=%d event=%d",
+            snapshot.state, view.state, view.local_confirmed, view.remote_confirmed, view.event);
     snapshot = view;
 }
 void Receive(const esp_now_recv_info_t* info, const uint8_t* data, int size) {
-    if (!info || !data || size != sizeof(Packet) || !requested.load() || !events || !info->src_addr || !info->des_addr) return;
+    if (!requested.load() || !events) return;
+    if (!info || !data || size != sizeof(Packet) || !info->src_addr || !info->des_addr) {
+        ++diagnostics.invalid; return;
+    }
     Event event{}; event.command = Command::Rx;
     memcpy(event.mac, info->src_addr, 6); memcpy(&event.packet, data, size);
-    if (!Valid(event.packet)) return;
+    if (!Valid(event.packet)) { ++diagnostics.invalid; return; }
     event.unicast = memcmp(info->des_addr, kBroadcast, 6) != 0;
     event.rssi = info->rx_ctrl ? info->rx_ctrl->rssi : 0;
-    (void)xQueueSend(events, &event, 0);
+    if (event.unicast) ++diagnostics.received_unicast;
+    else ++diagnostics.received_broadcast;
+    if (xQueueSend(events, &event, 0) != pdTRUE) ++diagnostics.dropped;
 }
 void Worker(void*) {
     EspRadio radio;
     Engine engine(radio);
     bool running = false;
+    int64_t diagnostic_at = 0;
     while (true) {
         Event event{};
         const bool received = xQueueReceive(events, &event, pdMS_TO_TICKS(40)) == pdTRUE;
@@ -221,7 +274,7 @@ void Worker(void*) {
             esp_err_t result = radio.Open(key);
             if (result == ESP_OK) result = esp_now_register_recv_cb(Receive);
             if (result == ESP_OK) {
-                engine.Begin(radio.Mac(), key, now); running = true;
+                engine.Begin(radio.Mac(), key, now); running = true; diagnostic_at = now + 5000;
             } else {
                 (void)radio.Close(); requested.store(false);
                 agent_friend_snapshot_t failed{}; failed.state = AGENT_FRIEND_ERROR; failed.error = result; Publish(failed);
@@ -243,7 +296,23 @@ void Worker(void*) {
             default: break;
             }
         }
-        if (running && requested.load()) { engine.Tick(now); Publish(engine.View()); }
+        if (running && requested.load()) {
+            engine.Tick(now); Publish(engine.View());
+            if (now >= diagnostic_at) {
+                diagnostic_at = now + 5000;
+                const auto& view = engine.View();
+                uint8_t channel = 0; wifi_second_chan_t secondary;
+                const esp_err_t channel_result = esp_wifi_get_channel(&channel, &secondary);
+                ESP_LOGI(TAG, "radio state=%d local=%d remote=%d channel=%u channel_error=%s tx_queued=%lu enqueue_fail=%lu mac_ok=%lu mac_fail=%lu",
+                    view.state, view.local_confirmed, view.remote_confirmed, channel, esp_err_to_name(channel_result),
+                    static_cast<unsigned long>(diagnostics.queued.load()), static_cast<unsigned long>(diagnostics.enqueue_failed.load()),
+                    static_cast<unsigned long>(diagnostics.sent.load()), static_cast<unsigned long>(diagnostics.send_failed.load()));
+                ESP_LOGI(TAG, "radio rx_unicast=%lu rx_broadcast=%lu invalid=%lu queue_drop=%lu auth_fail=%lu",
+                    static_cast<unsigned long>(diagnostics.received_unicast.load()), static_cast<unsigned long>(diagnostics.received_broadcast.load()),
+                    static_cast<unsigned long>(diagnostics.invalid.load()), static_cast<unsigned long>(diagnostics.dropped.load()),
+                    static_cast<unsigned long>(diagnostics.auth_failed.load()));
+            }
+        }
     }
 }
 esp_err_t SendCommand(Command command, const uint8_t* mac = nullptr) {

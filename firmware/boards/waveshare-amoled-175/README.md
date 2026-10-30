@@ -1,12 +1,10 @@
 # Waveshare ESP32-S3-Touch-AMOLED-1.75C
 
 Target hardware is the **C variant**, confirmed by the developer on 2026-10-30.
-The legacy directory/profile names `waveshare-amoled-175-wifi` and
-`waveshare-amoled-175-touch-test` remain in use. The installed firmware model
+The legacy directory/profile name `waveshare-amoled-175-wifi` remains in use. The installed firmware model
 `ESP32-S3-Touch-AMOLED-1.75` is retained for OTA compatibility; it does not identify
 this as the non-C PCB. Platform product ID remains 10 and the registered key
 remains `esp32-s3-touch-amoled-175`, as explicitly requested by the developer.
-Offline diagnostics: [touchscreen test](../../apps/waveshare-amoled-175-touch-test/README.md).
 Use these profiles only on the ESP32-S3-Touch-AMOLED-1.75C (SKU 33691/33692).
 
 ## Hardware
@@ -197,8 +195,11 @@ name and RSSI. Advertisements expire after five seconds. Select a peer; both
 screens show a six-digit code. Compare the codes and confirm on both devices.
 Either party may reject. Invitations and confirmations time out after 30 seconds.
 
-P-256 ECDH plus fresh radio-session nonces derive an ephemeral ESP-NOW LMK and
-application authentication key. The six-digit code is a separate short
+P-256 ECDH plus fresh radio-session nonces derive an ephemeral ESP-NOW LMK,
+application authentication key and a separately labelled shared PMK. Both peers
+must use the updated friends module; builds with independent random PMKs cannot
+complete the encrypted confirmation exchange. OJBadge's local-only
+`ojbadge-wifi` profile uses the same module. The six-digit code is a separate short
 verification value, never a transmitted secret key. Discovery/public-key frames
 are public; subsequent traffic uses encrypted unicast plus an HMAC. New nonces
 prevent reuse of messages from a previous pairing. Callback work only copies
@@ -213,6 +214,9 @@ not save a friends address book or carry voice between devices.
 two simulated radios, including loss, retries, consent, replay rejection and
 expiry. This is protocol validation; radio range, two-device pairing, BOOT
 behavior, language persistence and cloud restoration need device acceptance.
+`python firmware/tests/test_friends_radio.py` additionally exercises the production
+radio adapter's symmetric PMK installation, failure cleanup and authentication
+paths using deterministic crypto fakes; it does not replace a two-device RF test.
 
 Official key sampling reference:
 [ButtonTest.cpp](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75/blob/main/firmware/brookesia/components/ButtonTest/ButtonTest.cpp).

@@ -37,6 +37,21 @@ See the [board guide](../../boards/README.md) for porting examples.
 
 ## Backends
 
+ESP-NOW friendship on OJBadge and Waveshare AMOLED uses a session-derived PMK,
+installed before the encrypted peer is added. Both endpoints must run the updated
+shared friends module; older builds used independent random PMKs. Pairing codes,
+LMKs and authentication keys are never logged. Local/remote confirmation flags,
+send completion/error counters, receive/validation counters and the current channel
+are logged every five seconds while friends mode is active. MAC-layer delivery
+does not by itself mean that the application accepted a confirmation or greeting.
+
+The local-only `ojbadge-wifi` profile uses build backend `NONE` and links just
+the shared ESP-NOW friends worker with `wifi_local_standalone.cc`. It does not
+link the SDK core, cloud transport, provisioning or authentication. Its
+application initializes NVS and the UI, then calls the friends API; the radio
+adapter uses RAM configuration and disables WiFi NVS credential loading.
+The existing WiFi profiles continue to use the cloud-aware exclusive radio lease.
+
 | Backend | Implementation |
 | --- | --- |
 | BLE | Phone app; GATT control, voice notifications and L2CAP media/OTA |
