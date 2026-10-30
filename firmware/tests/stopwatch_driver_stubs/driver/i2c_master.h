@@ -14,3 +14,4 @@ int i2c_master_bus_add_device(void*,const i2c_device_config_t*,FakeI2cDevice**);
 int i2c_master_bus_rm_device(FakeI2cDevice*);
 int i2c_master_transmit_receive(FakeI2cDevice*,const uint8_t*,size_t,uint8_t*,size_t,int);
 int i2c_master_transmit(FakeI2cDevice*,const uint8_t*,size_t,int);
+int i2c_master_receive(FakeI2cDevice*,uint8_t*,size_t,int);

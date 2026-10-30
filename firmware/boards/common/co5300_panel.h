@@ -45,6 +45,7 @@ struct Co5300Config {
     uint16_t x_gap        = 0;    // first visible column / row in the controller's RAM
     uint16_t y_gap        = 0;
     bool     bgr          = false;
+    bool     waveshare_175 = false;  // glass-specific CO5300 drive settings
     // Rows per DMA stripe, even. Two stripes of width*rows*2 bytes live in internal RAM.
     uint16_t stripe_rows  = 12;
 };

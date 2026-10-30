@@ -38,6 +38,7 @@ if(_backend STREQUAL "WIFI" OR _backend STREQUAL "")
     if(NOT (CONFIG_IDF_TARGET_ESP32C3 AND CONFIG_AGENT_LINK_TRANSPORT_BLE))
         set(_wifi 1)
         list(APPEND _sources src/transports/wifi/transport_wifi.cpp src/transports/wifi/wifi_provision.cpp
+            src/transports/wifi/wifi_friends.cc
             src/transports/wifi/wifi_ble.cpp
             src/transports/wifi/cloud/cloud_credential.cc src/transports/wifi/cloud/cloud_api.cc
             src/transports/wifi/cloud/cloud_session.cc src/transports/wifi/cloud/cloud_mqtt.cc

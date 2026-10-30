@@ -8,7 +8,8 @@
     "esp32-s3-epaper-397": {"id": 5, "name": "waveShare-ESP32-S3-ePaper-3.97", "chip_type": "esp32-s3"},
     "korvo-s3": {"id": 6, "name": "korvo-s3", "chip_type": "esp32-s3"},
     "korvo-s3-ble": {"id": 7, "name": "korvo-s3-ble", "chip_type": "esp32-s3"},
-    "paper-s31": {"id": 8, "name": "paper-s31", "chip_type": "esp32-s31"}
+    "paper-s31": {"id": 8, "name": "paper-s31", "chip_type": "esp32-s31"},
+    "esp32-s3-touch-amoled-175": {"id": 10, "name": "ESP32-S3-Touch-AMOLED-1.75", "chip_type": "esp32-s3"}
   },
   "profiles": {
     "ai-passport-ble": "folotoy-ai-passport",
@@ -20,6 +21,7 @@
     "waveshare-epaper-397-wifi": "esp32-s3-epaper-397",
     "korvo-wifi": "korvo-s3",
     "korvo-ble": "korvo-s3-ble",
-    "paper-s31-wifi": "paper-s31"
+    "paper-s31-wifi": "paper-s31",
+    "waveshare-amoled-175-wifi": "esp32-s3-touch-amoled-175"
   }
 }

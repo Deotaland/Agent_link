@@ -451,6 +451,70 @@
       ]
     },
     {
+      "board_type": "WAVESHARE_AMOLED_175_TOUCH_TEST",
+      "dir": "waveshare-amoled-175",
+      "target": "esp32s3",
+      "model": "ESP32-S3-Touch-AMOLED-1.75C",
+      "product": "Waveshare ESP32-S3-Touch-AMOLED-1.75C",
+      "vendor": "Waveshare",
+      "buy": [],
+      "docs": [
+        "https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75C"
+      ],
+      "aliases": [
+        "ESP32-S3-Touch-AMOLED-1.75C",
+        "Waveshare AMOLED 1.75C",
+        "waveshare-amoled-175",
+        "33691",
+        "33692"
+      ],
+      "hardware": "ESP32-S3R8, 8 MB octal PSRAM, 32 MB flash; 466x466 CO5300 QSPI AMOLED; CST9217 touch; ES8311 speaker codec and NS4150B amplifier; ES7210 dual microphones; shared audio MCLK GPIO16; AXP2101 power management; QMI8658 IMU",
+      "identify": "Waveshare 1.75C badge-style metal enclosure, BOOT and PWR buttons, native USB-C, 32 MB flash. Not the non-C 1.75 or -B board.",
+      "flash_port": "USB-C native ESP32-S3 USB. Hold BOOT while resetting if recovery is needed.",
+      "use": "Offline touchscreen diagnostics with Chinese text, live coordinates, trails, five ordered tap targets, release detection and I2C/report error counters",
+      "transport": "NONE",
+      "ble_name": null,
+      "fw_model": "ESP32-S3-Touch-AMOLED-1.75",
+      "status": "supported",
+      "notes": "Hardware corrected to the C variant. Existing profile names and firmware model are retained for installed-device/OTA compatibility. Product ID remains 10. Use waveshare-amoled-175-touch-test. No WiFi, BLE, audio or platform activation. Includes the shared Chinese font in the USB package. Tap targets 1-5, then drag around the circle and use Clear to restart. Hardware acceptance pending.",
+      "profile": "waveshare-amoled-175-touch-test",
+      "sdkconfig": [
+        "CONFIG_AGENT_LINK_PROFILE_WAVESHARE_AMOLED_175_TOUCH_TEST=y"
+      ]
+    },
+    {
+      "board_type": "WAVESHARE_AMOLED_175_WIFI",
+      "dir": "waveshare-amoled-175",
+      "target": "esp32s3",
+      "model": "ESP32-S3-Touch-AMOLED-1.75C",
+      "product": "Waveshare ESP32-S3-Touch-AMOLED-1.75C",
+      "vendor": "Waveshare",
+      "buy": [],
+      "docs": [
+        "https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75C"
+      ],
+      "aliases": [
+        "ESP32-S3-Touch-AMOLED-1.75C",
+        "Waveshare AMOLED 1.75C",
+        "waveshare-amoled-175",
+        "33691",
+        "33692"
+      ],
+      "hardware": "ESP32-S3R8, 8 MB octal PSRAM, 32 MB flash; 466x466 CO5300 QSPI AMOLED; CST9217 touch; ES8311 speaker codec and NS4150B amplifier; ES7210 dual microphones; shared audio MCLK GPIO16; AXP2101 power management; QMI8658 IMU",
+      "identify": "Waveshare 1.75C badge-style metal enclosure, BOOT and PWR buttons, native USB-C, 32 MB flash. Not the non-C 1.75 or -B board.",
+      "flash_port": "USB-C native ESP32-S3 USB. Hold BOOT while resetting if recovery is needed.",
+      "use": "Standalone WiFi voice; BOOT call controls, swipe-left app launcher, Chinese/English settings and ESP-NOW nearby discovery, mutual pairing and greetings",
+      "transport": "WIFI",
+      "ble_name": null,
+      "fw_model": "ESP32-S3-Touch-AMOLED-1.75",
+      "status": "supported",
+      "notes": "Hardware corrected to the C variant. Existing profile names and firmware model are retained for installed-device/OTA compatibility. Product ID remains 10. Use waveshare-amoled-175-wifi. Hotspot Amoled175-XXXX. Product esp32-s3-touch-amoled-175 (id 10), supplied by the developer. Short-press BOOT to start/end the selected call. Swipe left for apps and right to return. Settings includes WiFi status and persistent Chinese/English choice. Nearby mode pauses cloud WiFi, pairs two compatible devices after both confirm matching codes, supports acknowledged greetings and restores WiFi on exit. Delete/reset require confirmation. Two-device radio acceptance pending.",
+      "profile": "waveshare-amoled-175-wifi",
+      "sdkconfig": [
+        "CONFIG_AGENT_LINK_PROFILE_WAVESHARE_AMOLED_175_WIFI=y"
+      ]
+    },
+    {
       "board_type": "WAVESHARE_EPAPER_397_WIFI",
       "dir": "waveshare-epaper-397",
       "target": "esp32s3",

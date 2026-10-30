@@ -104,6 +104,28 @@ config BOARD_TYPE_M5STACK_STOPWATCH
         replies on the speaker, the link status on the round screen.
         The supported profile is m5stack-stopwatch-ble.
 
+config BOARD_TYPE_WAVESHARE_AMOLED_175_TOUCH_TEST
+    bool
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-amoled-175-touch-test"
+    select LV_FONT_MONTSERRAT_20
+    select LV_FONT_MONTSERRAT_24
+    help
+        Offline touchscreen diagnostics for Waveshare ESP32-S3-Touch-AMOLED-1.75C.
+        No network, audio initialization or platform activation.
+
+config BOARD_TYPE_WAVESHARE_AMOLED_175_WIFI
+    bool
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-amoled-175-wifi"
+    select LV_FONT_MONTSERRAT_20
+    select LV_FONT_MONTSERRAT_24
+    select LV_FONT_MONTSERRAT_48
+    select MBEDTLS_DYNAMIC_BUFFER
+    select MBEDTLS_DYNAMIC_FREE_CONFIG_DATA
+    select SPIRAM_TRY_ALLOCATE_WIFI_LWIP
+    help
+        Waveshare ESP32-S3-Touch-AMOLED-1.75C: circular touch UI, status ring,
+        WiFi setup, activation and realtime voice with the platform-bound Agent.
+
 config BOARD_TYPE_M5STACK_STOPWATCH_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "m5stack-stopwatch-wifi"
@@ -148,6 +170,7 @@ config AGENT_LINK_TRANSPORT_WIFI
     default y if BOARD_TYPE_PAPER_S31_WIFI
     default y if BOARD_TYPE_ESP32S3_KORVO_CLOUD
     default y if BOARD_TYPE_M5STACK_STOPWATCH_WIFI
+    default y if BOARD_TYPE_WAVESHARE_AMOLED_175_WIFI
 
 config AGENT_LINK_TRANSPORT_MUSE
     bool

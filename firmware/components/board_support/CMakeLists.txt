@@ -44,6 +44,9 @@ endif()
 if("paper_audio.c" IN_LIST _hardware_sources)
     list(APPEND _requires esp_codec_dev)
 endif()
+if("amoled_audio.cc" IN_LIST _hardware_sources)
+    list(APPEND _requires esp_codec_dev)
+endif()
 if("ai_passport_hardware.cc" IN_LIST _hardware_sources)
     list(APPEND _requires esp_adc)
 endif()
@@ -52,7 +55,7 @@ idf_component_register(SRCS ${_sources}
     PRIV_INCLUDE_DIRS "${FIRMWARE_ROOT}/boards/${PROFILE_board}" "${CMAKE_BINARY_DIR}/generated"
     REQUIRES ${_requires})
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
-if("raster_cjk_14.c" IN_LIST _drivers)
+if("raster_cjk_14.c" IN_LIST _drivers OR "cjk_font.cc" IN_LIST _drivers)
     configure_file("${FIRMWARE_ROOT}/boards/common/fonts/OFL.txt"
                    "${CMAKE_BINARY_DIR}/fonts-OFL.txt" COPYONLY)
 endif()

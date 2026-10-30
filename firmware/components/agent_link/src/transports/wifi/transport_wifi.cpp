@@ -22,6 +22,7 @@
 #include "agent_link_transport.h"
 #include "agent_link.h"          // agent_wifi_config_t, agent_platform_t, agent_link_status_t
 #include "agent_link_network.h"
+#include "wifi_local_radio.h"
 #include "cloud_json.h"
 #include "cloud_mqtt.h"
 #include "cloud_platform.h"
@@ -102,6 +103,7 @@ bool s_wifi_inited = false;
 bool s_started = false;
 std::atomic<Phase> s_phase{Phase::kIdle};
 bool s_want_connect = false;
+std::atomic<bool> s_local_radio{false};
 bool s_ignore_leave = false;
 std::mutex s_wifi_mtx;
 agentlink::wifi::JoinWindow s_join;
@@ -605,7 +607,7 @@ void ReportStatus() {
 void UpdateLink() {
     std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
     taskENTER_CRITICAL(&s_status_lock);
-    const bool online = s_last_cloud.state == AGENT_CLOUD_ONLINE;
+    const bool online = !s_local_radio.load() && s_last_cloud.state == AGENT_CLOUD_ONLINE;
     taskEXIT_CRITICAL(&s_status_lock);
     const agent_state_t want = !online ? AGENT_STATE_DISCONNECTED
         : cloud_realtime_ready() ? AGENT_STATE_READY : AGENT_STATE_CONNECTED;
@@ -674,6 +676,7 @@ void DeliverToCore(const uint8_t* frame, size_t len) {
 
 // A command from the platform, on the MQTT task.
 void OnDownlink(const char* data, size_t len, void* /*ctx*/) {
+    if (s_local_radio.load()) return;
     std::lock_guard<std::recursive_mutex> lk(s_core_mtx);
     cloud_json_handle_command(data, len);
 }
@@ -818,6 +821,40 @@ agent_transport_t s_wifi = {
 }  // namespace
 
 extern "C" agent_transport_t* agent_transport_wifi(void) { return &s_wifi; }
+
+esp_err_t agent_wifi_local_end() {
+    {
+        std::lock_guard<std::mutex> lock(s_wifi_mtx);
+        if (!s_local_radio.exchange(false)) return ESP_OK;
+        esp_wifi_stop(); s_started = false;
+    }
+    // The cloud task waits in NetReady(), so no stop/start task race or loss of
+    // binding/session state is introduced by a brief visit to local mode.
+    return wifi_start(nullptr);
+}
+
+esp_err_t agent_wifi_local_begin(uint8_t channel) {
+    if (channel < 1 || channel > 11) return ESP_ERR_INVALID_ARG;
+    esp_err_t result;
+    {
+        std::lock_guard<std::mutex> lock(s_wifi_mtx);
+        if (!s_wifi_inited || s_local_radio.load()) return ESP_ERR_INVALID_STATE;
+        s_local_radio.store(true);
+        s_realtime_wanted.store(false); s_platform_voice.store(false);
+        s_want_connect = false; s_join.Stop(); s_phase = Phase::kIdle;
+        s_portal_close_at = 0; UpdateJoinProgress();
+        if (s_tick_timer) esp_timer_stop(s_tick_timer);
+        al_wifi_prov_stop();
+        if (s_started) { esp_wifi_disconnect(); esp_wifi_stop(); s_started = false; }
+        result = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (result == ESP_OK) result = esp_wifi_start();
+        if (result == ESP_OK) { s_started = true; result = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE); }
+    }
+    cloud_realtime_cancel();
+    UpdateLink();
+    if (result != ESP_OK) (void)agent_wifi_local_end();
+    return result;
+}
 
 extern "C" esp_err_t agent_link_wifi_setup(void) {
     if (!s_wifi_inited || s_phase == Phase::kIdle) return ESP_ERR_INVALID_STATE;

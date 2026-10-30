@@ -86,3 +86,20 @@ WiFi setup and platform device keys are stored in NVS. Put supported build-time
 credentials in ignored `sdkconfig.private`. Never commit tokens/passwords or
 share firmware containing them. Normal WiFi activation needs no account token;
 direct realtime tests are a separate private configuration.
+
+## Exclusive nearby mode
+
+`agent_link_friends.h` provides queued start/stop, peer selection, mutual
+confirmation, greeting and disconnect commands plus a copied status snapshot.
+Start after the SDK WiFi backend is initialized; end application audio first.
+The worker temporarily leases channel 6, suppresses cloud joins/downlinks and
+returns the existing WiFi credential lifecycle on exit. It does not clear NVS or
+restart cloud workers. The feature is opt-in and unused by other applications;
+omitted WiFi backends return `ESP_ERR_NOT_SUPPORTED`.
+
+Only peers in this protocol's discovery mode appear. Pairing requires comparing
+a six-digit verification code and confirming on both devices. The implementation
+uses ephemeral P-256 ECDH keys, fresh nonces, encrypted ESP-NOW unicast and
+application HMACs. Never treat a successful send as delivery: greeting counters
+advance on acknowledgement, with bounded retries and duplicate suppression.
+Read snapshots from the application worker and perform display work there.

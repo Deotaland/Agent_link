@@ -2,6 +2,7 @@
 #include "agent_link_platform.h"
 #include "agent_link_chat.h"
 #include "agent_link_network.h"
+#include "agent_link_friends.h"
 
 #if !AGENT_LINK_BUILD_BLE
 
@@ -19,6 +20,13 @@ extern "C" void agent_transport_ble_update_battery(uint8_t) {}
 extern "C" esp_err_t agent_transport_ble_forget(void) { return ESP_ERR_NOT_SUPPORTED; }
 #endif
 #if !AGENT_LINK_BUILD_WIFI
+extern "C" esp_err_t agent_link_friends_start() { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_friends_stop() { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_friends_select(const uint8_t*) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_friends_confirm(bool) { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_friends_greet() { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" esp_err_t agent_link_friends_disconnect() { return ESP_ERR_NOT_SUPPORTED; }
+extern "C" void agent_link_friends_snapshot(agent_friend_snapshot_t* out) { if (out) *out = {}; }
 extern "C" esp_err_t agent_link_chat_create(int, char*, size_t) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" esp_err_t agent_link_chat_conversations(int, const char*, char*, size_t) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" esp_err_t agent_link_chat_messages(int, const char*, const char*, char*, size_t) { return ESP_ERR_NOT_SUPPORTED; }

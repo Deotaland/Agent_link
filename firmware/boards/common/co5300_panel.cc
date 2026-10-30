@@ -84,6 +84,7 @@ esp_err_t Co5300Panel::InitQspi() {
     q.x_gap              = cfg_.x_gap;
     q.y_gap              = cfg_.y_gap;
     q.bgr                = cfg_.bgr;
+    q.waveshare_175      = cfg_.waveshare_175;
     co5300_hal_handles_t h = {};
     esp_err_t err = co5300_hal_init_qspi(&q, &h);
     if (err != ESP_OK) {

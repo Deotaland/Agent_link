@@ -35,6 +35,7 @@ typedef struct {
     int      rst_gpio;            // < 0: software reset only
     int      x_gap, y_gap;        // where the glass starts in the controller's RAM
     bool     bgr;
+    bool     waveshare_175;
 } co5300_qspi_config_t;
 
 // QSPI bus + panel IO + CO5300, reset and initialised up to sleep-out. The display stays off and

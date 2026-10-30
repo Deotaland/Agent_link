@@ -8,6 +8,8 @@ in [skills/](skills/README.md) for device tasks.
 
 - Work in the user's checkout. Inspect Git status first and preserve existing
   edits. Do not create another checkout, commit, push or merge without permission.
+- Default to compiling and packaging only. Flashing or opening a serial port
+  requires an explicit request for that run; do not reuse earlier flashing consent.
 - For a flashing request, identify the hardware before writing. Build and inspect
   ports first; use existing consent for the requested flash. Explain the image,
   port and settings impact before writing. A full erase needs explicit consent.
@@ -112,6 +114,8 @@ Run `python tools/board_catalog.py` after changing either.
 | C152 | M5Stack StopWatch | `m5stack-stopwatch-wifi` | ESP32-S3 | WiFi | supported |
 | paper V2 | Mozhifang paper V2 (3.6-inch six-color e-paper) | `paper-s31-wifi` | ESP32-S31 | WiFi | supported |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 development board | `gc2145-camera-ble` | ESP32-S3 | BLE | supported |
+| ESP32-S3-Touch-AMOLED-1.75C | Waveshare ESP32-S3-Touch-AMOLED-1.75C | `waveshare-amoled-175-touch-test` | ESP32-S3 | — | supported |
+| ESP32-S3-Touch-AMOLED-1.75C | Waveshare ESP32-S3-Touch-AMOLED-1.75C | `waveshare-amoled-175-wifi` | ESP32-S3 | WiFi | supported |
 | ESP32-S3-ePaper-3.97 | Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | ESP32-S3 | WiFi | supported |
 | — | Wiring example: ESP32-S3 + ES8311 (mic only) | `es8311-asr-ble` | ESP32-S3 | BLE | wiring example |
 | — | Wiring example: ESP32-S3 + ES8311 (speaker and mic) | `es8311-voice-ble` | ESP32-S3 | BLE | wiring example |

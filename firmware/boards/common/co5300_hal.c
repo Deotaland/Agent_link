@@ -161,6 +161,21 @@ static const co5300_lcd_init_cmd_t s_qspi_init_cmds[] = {
     {0x11, NULL, 0, 150},                // sleep out
 };
 
+// Waveshare's 1.75-inch glass needs the page-20 drive configuration before
+// returning to the user page. Keep other CO5300 boards on their existing table.
+static const co5300_lcd_init_cmd_t s_waveshare_175_init_cmds[] = {
+    {0xFE, (uint8_t[]){0x20}, 1, 0},
+    {0x19, (uint8_t[]){0x10}, 1, 0},
+    {0x1C, (uint8_t[]){0xA0}, 1, 0},
+    {0xFE, (uint8_t[]){0x00}, 1, 0},
+    {0xC4, (uint8_t[]){0x80}, 1, 0},
+    {0x35, (uint8_t[]){0x00}, 1, 0},
+    {0x53, (uint8_t[]){0x20}, 1, 0},
+    {0x51, (uint8_t[]){0x00}, 1, 0},
+    {0x63, (uint8_t[]){0xFF}, 1, 0},
+    {0x11, NULL, 0, 600},
+};
+
 esp_err_t co5300_hal_init_qspi(const co5300_qspi_config_t *cfg, co5300_hal_handles_t *out)
 {
     if (cfg == NULL || out == NULL) {
@@ -187,8 +202,10 @@ esp_err_t co5300_hal_init_qspi(const co5300_qspi_config_t *cfg, co5300_hal_handl
     }
 
     co5300_vendor_config_t vendor = {
-        .init_cmds = s_qspi_init_cmds,
-        .init_cmds_size = sizeof(s_qspi_init_cmds) / sizeof(s_qspi_init_cmds[0]),
+        .init_cmds = cfg->waveshare_175 ? s_waveshare_175_init_cmds : s_qspi_init_cmds,
+        .init_cmds_size = cfg->waveshare_175 ?
+            sizeof(s_waveshare_175_init_cmds) / sizeof(s_waveshare_175_init_cmds[0]) :
+            sizeof(s_qspi_init_cmds) / sizeof(s_qspi_init_cmds[0]),
         .flags.use_qspi_interface = 1,
     };
     esp_lcd_panel_dev_config_t panel_cfg = {
