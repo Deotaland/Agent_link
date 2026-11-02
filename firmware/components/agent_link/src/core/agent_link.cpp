@@ -27,6 +27,7 @@
 #include "protocol.h"
 
 #include <cstdint>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -50,8 +51,9 @@ constexpr const char* TAG = "agent_link";
 agent_link_config_t s_cfg   = {};
 agent_output_cb_t   s_out   = {};
 bool                s_have_out = false;
-agent_state_t       s_state = AGENT_STATE_DISCONNECTED;
+std::atomic<agent_state_t> s_state{AGENT_STATE_DISCONNECTED};
 agent_transport_t*  s_tx    = nullptr;
+std::atomic<uint32_t> s_link_generation{0};
 
 // Last published link status, for agent_link_get_status(). Written from transport tasks, so locked.
 agent_link_status_t s_link_status = {};
@@ -285,10 +287,10 @@ std::string BuildManifestJson() {
 //   Each chunk payload = [chunk_idx(1)] [last(1: 0/1)] [json fragment...]; the App concatenates
 //   chunks in order until last=1, then parses the whole JSON.
 // Triggered after the BLE peer subscribes to 0xFFC4, or by a 0x34 fetch command.
-void SendManifest(bool force) {
-    if (s_io_count == 0) return;                    // no endpoints: no manifest
-    if (!force && s_manifest_sent) return;          // already sent in this connection
-    if (!s_tx || !s_tx->send_ctrl) return;
+bool SendManifest(bool force) {
+    if (s_io_count == 0) return true;               // no endpoints: no manifest
+    if (!force && s_manifest_sent) return true;     // already sent in this connection
+    if (!s_tx || !s_tx->send_ctrl) return false;
 
     const std::string json = BuildManifestJson();
 
@@ -298,22 +300,26 @@ void SendManifest(bool force) {
         budget = 1024;
     } else {
         const uint16_t mtu = agent_transport_ble_att_mtu();
-        budget = (mtu > 3 + 8 + 16) ? static_cast<size_t>(mtu - 3 - 8) : 150;
+        if (mtu <= 11) return false;
+        budget = static_cast<size_t>(mtu - 11);
     }
-    if (budget < 16)  budget = 16;
     if (budget > 480) budget = 480;
+    if (json.size() > budget * 256) {
+        ESP_LOGW(TAG, "manifest needs more than 256 fragments; negotiate a larger MTU");
+        return false;
+    }
 
     const uint8_t* jb    = reinterpret_cast<const uint8_t*>(json.data());
     const size_t   total = json.size();
     size_t  off = 0;
-    uint8_t idx = 0;
+    uint16_t idx = 0;
     bool    ok  = true;
     do {
         size_t n = total - off;
         if (n > budget) n = budget;
         std::vector<uint8_t> p;
         p.reserve(2 + n);
-        p.push_back(idx);
+        p.push_back(static_cast<uint8_t>(idx));
         p.push_back((off + n >= total) ? 0x01 : 0x00);   // last flag
         p.insert(p.end(), jb + off, jb + off + n);
         auto ev = agentlink::BuildEvent(0x18, p.data(), p.size());
@@ -330,6 +336,7 @@ void SendManifest(bool force) {
         ESP_LOGW(TAG, "manifest send failed at chunk %u — App can re-fetch via command 0x34",
                  static_cast<unsigned>(idx));
     }
+    return ok;
 }
 
 // BLE: fired after the peer subscribes to the event channel 0xFFC4 (notifications are only
@@ -456,6 +463,7 @@ void HandleStartOta(const std::vector<uint8_t>& pl, uint8_t* status, uint16_t* e
 // and by agent_link_stop(), which otherwise left stream slots marked open against sessions the
 // transport had already torn down — the next write would target a session nobody remembers.
 void ResetLinkState() {
+    s_link_generation.fetch_add(1, std::memory_order_acq_rel);
     s_manifest_sent = false;
     for (auto& st : s_streams) st.open = false;
 }
@@ -536,8 +544,7 @@ void PublishBle(agent_link_phase_t phase) {
 }
 
 void OnConn(bool connected) {
-    // BLE: the protocol is plaintext with no encryption gate, so the link is usable as soon as it
-    // connects -> straight to READY.
+    // BLE calls this only after encryption and bonding have completed.
     SetLinkState(connected ? AGENT_STATE_READY : AGENT_STATE_DISCONNECTED);
     // The phase only reaches READY once the App subscribes (OnLinkReady); pairing may still be in
     // progress until then. On disconnect, advertising resumes.
@@ -655,7 +662,7 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
         }
     } else if (f.command_id == 0x34) {
         // 0x34 GetIoManifest: App-initiated fetch -> (re)send the manifest (0x18), then reply with the usual ACK.
-        SendManifest(/*force=*/true);
+        if (!SendManifest(/*force=*/true)) { status = 1; error = 1005; }
     } else if (f.command_id == 0x35) {
         // 0x35 GetReading: payload = [id_len][id]; reply extra = [val_type][age_ms(2,LE)][value] from cache.
         const std::vector<uint8_t>& pl = f.payload;
@@ -720,6 +727,18 @@ void OnCtrlFrame(const uint8_t* data, size_t len) {
     } else if (f.command_id == 0x3D) {
         // 0x3D StopCapture -> on_listen(false, 0).
         if (s_have_out && s_out.on_listen) s_out.on_listen(false, 0, s_out.ctx);
+    } else if (s_have_out && s_out.on_command_request && [&]() {
+        size_t capacity = AGENT_LINK_CMD_RESP_MAX;
+        if (UsesBleLink()) {
+            const uint16_t mtu = agent_transport_ble_att_mtu();
+            if (mtu <= 13) return false;
+            if (capacity > static_cast<size_t>(mtu - 13)) capacity = mtu - 13;
+        }
+        const agent_command_request_t request = {
+            f.command_id, f.sequence, s_link_generation.load(std::memory_order_acquire), capacity};
+        return s_out.on_command_request(&request, f.payload.data(), f.payload.size(), s_out.ctx);
+    }()) {
+        return;  // the application owns the response, including queue/allocation failures
     } else if (s_have_out && s_out.on_command &&
                s_out.on_command(f.command_id, f.payload.data(), f.payload.size(),
                                 extra, sizeof(extra), &extra_len, s_out.ctx)) {
@@ -1081,6 +1100,22 @@ esp_err_t agent_link_push_prompt(const char* utf8) {
 }
 
 // ── Generic I/O: sensors / actuators — one channel that does not grow a new API per sensor kind ──
+uint32_t agent_link_command_generation(void) { return s_link_generation.load(std::memory_order_acquire); }
+
+esp_err_t agent_link_command_reply(const agent_command_request_t* request, uint16_t error,
+                                   const uint8_t* data, size_t len) {
+    if (!request || (len && !data)) return ESP_ERR_INVALID_ARG;
+    if (len > request->response_capacity || len > AGENT_LINK_CMD_RESP_MAX) return ESP_ERR_INVALID_SIZE;
+    if (!s_tx || !s_tx->send_ctrl || s_state == AGENT_STATE_DISCONNECTED ||
+        request->link_generation != s_link_generation.load(std::memory_order_acquire))
+        return ESP_ERR_INVALID_STATE;
+    const auto response = agentlink::BuildResponse(static_cast<uint8_t>(request->command_id),
+        request->sequence, error ? 1 : 0, error, data, len);
+    if (UsesBleLink())
+        return agent_transport_ble_command_reply(request->link_generation, response.data(), response.size());
+    return s_tx->send_ctrl(s_tx->impl, response.data(), response.size());
+}
+
 esp_err_t agent_link_register_io(const agent_link_io_desc_t* desc,
                                  agent_io_actuate_cb_t cb, void* ctx) {
     if (!desc || !desc->id || !desc->kind) return ESP_ERR_INVALID_ARG;

@@ -489,7 +489,7 @@ void StartProvisioning() {
     esp_wifi_set_mode(WIFI_MODE_APSTA);   // AP for the portal, STA idle so the page can scan + then join
     ApplyApConfig();
     if (!s_started) { esp_wifi_start(); s_started = true; }
-    al_wifi_prov_start(s_ap_ssid, &OnProvCreds);
+    al_wifi_prov_start(s_ap_ssid, &OnProvCreds, s_platform ? s_platform->base_url : nullptr);
 }
 
 // Translate the cloud session state into agent_link_status_t. WiFi-specific states are mapped only

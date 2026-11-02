@@ -33,7 +33,7 @@ typedef enum {
     AGENT_CAP_SENSOR    = 1u << 7,  // General-purpose sensors (temp/humidity/light/PIR/gas…)
     AGENT_CAP_ACTUATOR  = 1u << 8,  // General-purpose actuators (GPIO/servo/relay…)
     AGENT_CAP_RECORDING = 1u << 9,  // Can capture audio to its own storage and upload it later
-    AGENT_CAP_CAMERA    = 1u << 10, // Camera (BLE: still-image snapshot upload via L2CAP; WiFi: video)
+    AGENT_CAP_CAMERA    = 1u << 10, // Camera snapshot upload (currently BLE L2CAP only)
 } agent_cap_t;
 
 /**

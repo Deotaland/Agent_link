@@ -24,3 +24,10 @@ not implemented.
 A short camera frame or `EV-EOF-OVF` means an incomplete capture was dropped.
 Frequent occurrences need camera/DMA scheduling analysis. A disconnect before
 BLE encryption needs the corresponding app log to identify its cause.
+
+ListRecordings requests are copied to a bounded application worker queue. Directory
+scans and file metadata reads do not run on the NimBLE host task. Pages are
+contiguous and bounded by the negotiated MTU and SDK response capacity. Invalid
+requests return 1004, unavailable storage/queue returns 1003, and an entry too
+large for an empty page returns 1005; failures are not successful empty lists.
+The LCD is used locally for preview/menus, without an Agent text-output endpoint.

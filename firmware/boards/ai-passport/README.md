@@ -73,8 +73,10 @@ in the platform console, and bind an Agent supporting realtime voice.
 - The first call uses the latest returned conversation, or creates one if none
   exist. The selection survives restart only for the same bound Agent. The menu
   can select another conversation or create one; it does not delete conversations.
-- Loss of network ends the call and stops capture. Connectivity retries through
-  the SDK; press OK again after recovery to resume with a fresh voice grant.
+- Retryable transport failures pause capture while the SDK obtains a fresh grant
+  and reconnects, with at most two retries. Capture resumes at READY. Terminal
+  server errors end the call; press OK to start another. See the
+  [recovery policy](../../components/agent_link/REALTIME.md).
 - Speaker playback and its short echo tail upload silence. This is half-duplex
   feedback prevention, not acoustic echo cancellation or spoken interruption.
 

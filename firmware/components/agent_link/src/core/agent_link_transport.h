@@ -111,6 +111,11 @@ typedef struct agent_transport_s {
  */
 agent_transport_t* agent_transport_ble(void);
 
+// Deferred replies are validated/sent on the BLE host queue, serialized with
+// disconnect/reconnect events so an old query cannot reply to a new peer.
+uint32_t agent_link_command_generation(void);
+esp_err_t agent_transport_ble_command_reply(uint32_t generation, const uint8_t* frame, size_t len);
+
 /**
  * @brief Set BLE advertising name
  * @param name Device name (used in advertising and GAP)

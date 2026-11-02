@@ -396,9 +396,8 @@ bool Start(uint32_t fw_size, const uint8_t sha256[32], const char* version,
         return fail(kErrBusinessFailed, "already upgrading");
 
 #if CONFIG_AGENT_LINK_OTA_REQUIRE_MODEL_MATCH
-    // The App omits the model on older releases; only a mismatch is refused, never absence.
-    if (model && *model && s_model[0] && strcmp(model, s_model) != 0) {
-        ESP_LOGW(TAG, "model mismatch: firmware '%s' != device '%s'", model, s_model);
+    if (!model || !*model || !s_model[0] || strcmp(model, s_model) != 0) {
+        ESP_LOGW(TAG, "missing or mismatched firmware model");
         return fail(kErrModelMismatch, "model mismatch");
     }
 #else

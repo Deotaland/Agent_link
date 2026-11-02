@@ -1,5 +1,5 @@
 CONFIG_AGENT_LINK_PROFILE_PAPER_S31_WIFI=y
-CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC=y
+# Display diagnostics are opt-in in menuconfig; Kconfig defaults them off.
 
 # Hardware settings for this firmware profile.
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y

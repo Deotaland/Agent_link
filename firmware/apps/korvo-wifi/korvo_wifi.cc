@@ -26,7 +26,6 @@ public:
         if (hardware_.Init() != ESP_OK) return;
         audio_ok_ = (audio_.Init(MakeAudioConfig()) == ESP_OK);
         InitServo();
-        RegisterCaptureEndpoint();  // platform -> snapshot (device-I/O actuator "camera0")
 
         if (kc_ui::Start(&hardware_.lcd, hardware_.touch_ready ? &hardware_.touch : nullptr,
                          audio_ok_ ? &audio_ : nullptr,
@@ -58,7 +57,7 @@ public:
 
     // No RECORDING bit: this board has no TF card.
     uint32_t Capabilities() const override {
-        uint32_t c = AGENT_CAP_CAMERA | AGENT_CAP_SCREEN;
+        uint32_t c = 0;  // Camera preview is local; WiFi has no image upload/text display path.
         if (audio_ok_) c |= AGENT_CAP_SPEAKER | AGENT_CAP_MIC;
         if (servo_queue_) c |= AGENT_CAP_ACTUATOR;
         return c;
@@ -69,8 +68,8 @@ public:
     }
     void AudioEnd() override { if (audio_ok_) audio_.EndPlayback(); }
     void AudioReset() override { if (audio_ok_) audio_.StopPlayback(); }
-    void ShowText(const char* utf8) override { kc_ui::SetVoiceText(utf8); }
 
+    bool SupportsListen() const override { return (Capabilities() & AGENT_CAP_MIC) != 0; }
     void OnListen(bool start, uint32_t max_ms) override {
         if (!audio_ok_) return;
         ESP_LOGI(TAG, "OnListen(%s, max_ms=%u)", start ? "start" : "stop",
@@ -91,17 +90,6 @@ private:
         c.sample_rate = AUDIO_SAMPLE_RATE;
         c.play_buf_bytes = AUDIO_PLAY_BUF_BYTES;
         return c;
-    }
-
-    void RegisterCaptureEndpoint() {
-        static agent_link_io_desc_t desc = {};
-        desc.id           = "camera0";
-        desc.dir          = AGENT_IO_OUT;
-        desc.kind         = "camera.capture";
-        desc.value        = AGENT_VAL_BOOL;
-        desc.desc         = "Capture a still image from the camera and upload it";
-        desc.display_name = "Camera Snapshot";
-        agent_link_register_io(&desc, &KorvoCloudBoard::OnCaptureCmd, this);
     }
 
     void InitServo() {
@@ -267,35 +255,6 @@ private:
         }
     }
 
-    // Runs on an SDK thread, so it only raises a flag; the preview loop owns the frame buffers and
-    // does the capture + encode + send.
-    static void OnCaptureCmd(const char* /*id*/, const uint8_t* /*args*/, size_t /*len*/, void* ctx) {
-        auto* self = static_cast<KorvoCloudBoard*>(ctx);
-        if (self) {
-            self->capture_req_.store(true, std::memory_order_release);
-            ESP_LOGI(TAG, "snapshot requested");
-        }
-    }
-
-    // Encode the current RGB565 frame to JPEG and hand it to the SDK's image channel. Must run on
-    // the original frame bytes, before any LCD byte-swap. send returns fast (async worker).
-    void SendSnapshot(camera_fb_t* fb) {
-        uint8_t* jpg     = nullptr;
-        size_t   jpg_len = 0;
-        if (!frame2jpg(fb, 80 /*quality*/, &jpg, &jpg_len)) {
-            ESP_LOGE(TAG, "snapshot: frame2jpg failed");
-            return;
-        }
-        agent_stream_opts_t o = {};
-        o.encoding = AGENT_ENC_JPEG;
-        o.width    = static_cast<uint16_t>(fb->width);
-        o.height   = static_cast<uint16_t>(fb->height);
-        const esp_err_t r = agent_link_stream_send(AGENT_STREAM_IMAGE, &o, jpg, jpg_len);
-        ESP_LOGI(TAG, "snapshot: %ux%u -> %uB jpeg, send=%s",
-                 (unsigned)fb->width, (unsigned)fb->height, (unsigned)jpg_len, esp_err_to_name(r));
-        free(jpg);
-    }
-
     static void PreviewTaskEntry(void* arg) { static_cast<KorvoCloudBoard*>(arg)->PreviewLoop(); }
 
     void PreviewLoop() {
@@ -305,8 +264,7 @@ private:
             // Stop capture while neither the camera page nor a snapshot needs frames; otherwise the
             // driver keeps dropping them (EV-VSYNC-OVF). Pause/Resume do nothing if already in
             // that state.
-            const bool wanted = kc_ui::CurrentMode() == kc_ui::Mode::kCamera ||
-                                capture_req_.load(std::memory_order_acquire);
+            const bool wanted = kc_ui::CurrentMode() == kc_ui::Mode::kCamera;
             if (!wanted) {
                 hardware_.camera.Pause();
                 vTaskDelay(pdMS_TO_TICKS(50));
@@ -319,9 +277,6 @@ private:
                 vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
             }
-
-            // Encode + send from the ORIGINAL RGB565, before the byte-swap below would corrupt it.
-            if (capture_req_.exchange(false, std::memory_order_acq_rel)) SendSnapshot(fb);
 
 #if CAMERA_RGB565_BYTE_SWAP
             Gc2145Camera::SwapBytes(fb);  // little-endian sensor pixels -> big-endian panel
@@ -340,7 +295,6 @@ private:
     bool            audio_ok_ = false;
     TaskHandle_t    preview_task_ = nullptr;
     QueueHandle_t   servo_queue_ = nullptr;
-    std::atomic<bool> capture_req_{false};  // set by the platform command; consumed by the preview loop
 };
 
 DECLARE_APPLICATION(KorvoCloudBoard);

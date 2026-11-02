@@ -71,7 +71,7 @@ esp_err_t Es8311Codec::InitI2c() {
 esp_err_t Es8311Codec::InitDuplexI2s() {
     // Full duplex: create TX + RX together on one port so they share MCLK/BCLK/WS.
     i2s_chan_config_t chan = {};
-    chan.id                  = cfg_.i2s_port;
+    chan.id                  = static_cast<decltype(chan.id)>(cfg_.i2s_port);
     chan.role                = I2S_ROLE_MASTER;   // ESP drives the clocks; the ES8311 is the I2S slave
     chan.dma_desc_num        = kI2sDmaDescNum;
     chan.dma_frame_num       = kI2sDmaFrameNum;

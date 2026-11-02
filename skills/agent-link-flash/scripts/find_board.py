@@ -90,10 +90,13 @@ def describe(entries):
         lines.append("  Several firmware builds fit this hardware. Ask the user what the device should do:")
     for e in entries:
         lines.append(f"  - {e['board_type']} [{e['status']}] {e['use']}")
+        if e["status"] in ("supported", "legacy"):
+            lines.append("      Availability: source profile exists; read the acceptance caveats below before recommending it.")
         lines.append(f"      firmware/boards/{e['dir']}, target {e['target']}, link {e['transport']},"
                      f" boot log model = {e['fw_model']}")
         if e.get("profile"):
             lines.append(f"      build from firmware/: python tools/build_firmware.py {e['profile']} --jobs 2")
+            lines.append(f"      environment from root/: python tools/check_env.py --profile {e['profile']}")
         if e.get("ble_name"):
             lines.append(f"      shows up as: {e['ble_name']}")
         if e.get("notes"):
@@ -154,6 +157,8 @@ def main(argv=None):
               "on the board.\nKnown models: " + ", ".join(models))
         return 1
     best = ranked[0][1]["score"]
+    if len(ranked) > 1:
+        print("Several hardware candidates: confirm the exact model/revision before selecting firmware.\n")
     if best < 25:
         print("Weak match only: confirm with the user (model, shop, photo) before flashing anything.\n")
     for i, (_, g) in enumerate(ranked):

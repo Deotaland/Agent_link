@@ -34,7 +34,10 @@ void Put32(uint8_t* p, uint32_t v) {
 
 bool Recordings::HandleList(const uint8_t* payload, size_t len,
                             uint8_t* resp, size_t resp_cap, size_t* resp_len, uint16_t* error) {
-    *resp_len = 0;
+    if (!resp_len || !error) return false;
+    *resp_len = 0; *error = 0;
+    if (!resp || resp_cap < kCountBytes + kTailBytes) { *error = 1005; return false; }
+    if (len && !payload) { *error = 1004; return false; }
 
     // Payload is 0 / 3 / 4 bytes; anything else is malformed. 0 and 3 are the older App's shapes.
     uint16_t offset = 0;
@@ -51,6 +54,7 @@ bool Recordings::HandleList(const uint8_t* payload, size_t len,
         return false;
     }
 
+    if (scope > 1) { *error = 1004; return false; }
     const char* dir = (scope == 1) ? cfg_.messages_dir : cfg_.dir;
     if (!dir) { *error = 1003; return false; }
 
@@ -68,11 +72,12 @@ bool Recordings::HandleList(const uint8_t* payload, size_t len,
     const size_t budget = (resp_cap > kCountBytes + kTailBytes) ? resp_cap - kCountBytes - kTailBytes : 0;
     size_t   used        = 0;
     uint16_t entry_count = 0;   // entries actually serialised into this page
-    uint16_t consumed    = 0;   // window positions passed, INCLUDING any skipped -- next_offset
+    uint32_t consumed    = 0;   // window positions passed, INCLUDING any skipped -- next_offset
                                 //   must advance past those or the App re-requests them forever
     uint32_t total       = 0;
-    uint16_t index       = 0;
+    uint32_t index       = 0;
     bool     has_more    = false;
+    bool     page_full   = false;
     uint8_t* out         = resp + kCountBytes;
 
     struct dirent* e;
@@ -81,9 +86,11 @@ bool Recordings::HandleList(const uint8_t* payload, size_t len,
         if (!EndsWithWav(e->d_name)) continue;
         ++total;
 
-        const uint16_t this_index = index++;
+        const uint32_t this_index = index++;
         if (this_index < offset) continue;                     // before the requested window
-        if (max_entries > 0 && entry_count >= max_entries) { has_more = true; continue; }
+        if (page_full || (max_entries > 0 && entry_count >= max_entries)) {
+            has_more = true; page_full = true; continue;
+        }
 
         // scope=1 entries are reported with their messages/ prefix, so the name can go straight
         // back as the rel_path of a download or delete without the App re-assembling it.
@@ -111,7 +118,12 @@ bool Recordings::HandleList(const uint8_t* payload, size_t len,
         if (stat(abs_, &st) != 0) { ++consumed; continue; }     // vanished between readdir and stat
 
         const size_t need = 1 + name_len + 4 + 4 + 4;
-        if (used + need > budget) { has_more = true; continue; }   // keep counting for total_count
+        if (used + need > budget) {
+            if (entry_count == 0) { closedir(d); *error = 1005; return false; }
+            // Freeze the contiguous page. Later shorter names must not jump over
+            // this entry, or offset + consumed would repeat/lose recordings.
+            has_more = true; page_full = true; continue;
+        }
 
         out[used++] = static_cast<uint8_t>(name_len);
         memcpy(out + used, rel_, name_len);                      used += name_len;
@@ -131,9 +143,7 @@ bool Recordings::HandleList(const uint8_t* payload, size_t len,
     uint8_t* tail = out + used;
     tail[0] = has_more ? 1 : 0;
     Put16(tail + 1, static_cast<uint16_t>(total > 0xFFFF ? 0xFFFF : total));
-    // next_offset must not stall: when the buffer could not hold even one entry we return the
-    // offset unchanged and entry_count 0, which the documented App contract reads as "give up,
-    // renegotiate a bigger MTU" rather than loop.
+    // An entry that cannot fit an empty page returns an error above, never a stalled cursor.
     Put16(tail + 3, has_more ? static_cast<uint16_t>(offset + consumed) : 0);
 
     *resp_len = kCountBytes + used + kTailBytes;

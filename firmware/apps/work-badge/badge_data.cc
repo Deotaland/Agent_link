@@ -2,10 +2,13 @@
 
 #include <atomic>
 #include <cstring>
+#include <mutex>
 
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 namespace badge {
 namespace {
@@ -27,8 +30,34 @@ const char* const kDefaults[static_cast<int>(Field::kCount)] = {
 struct Storage {
     char     value[static_cast<int>(Field::kCount)][kMaxFieldLen + 1] = {};
     std::atomic<uint32_t> revision{1};
+    std::mutex lock;
+    TaskHandle_t writer = nullptr;
 };
 Storage s;
+
+void Persist(void*) {
+    uint32_t pending = 0;
+    while (true) {
+        uint32_t changed = 0;
+        xTaskNotifyWait(0, UINT32_MAX, &changed,
+                       pending ? pdMS_TO_TICKS(1000) : portMAX_DELAY);
+        pending |= changed;
+        for (size_t i = 0; i < kFieldCount; ++i) {
+            if (!(pending & (1u << i))) continue;
+            char value[kMaxFieldLen + 1];
+            { std::lock_guard<std::mutex> guard(s.lock); memcpy(value, s.value[i], sizeof value); }
+            nvs_handle_t h;
+            esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &h);
+            if (result == ESP_OK) {
+                result = nvs_set_str(h, kFieldKeys[i], value);
+                if (result == ESP_OK) result = nvs_commit(h);
+                nvs_close(h);
+            }
+            if (result == ESP_OK) pending &= ~(1u << i);
+            else ESP_LOGW(TAG, "cannot save '%s'; retrying (%d)", kFieldKeys[i], result);
+        }
+    }
+}
 
 // Longest prefix of `len` bytes that does not split a UTF-8 sequence. Cutting mid-character
 // would leave a stray continuation byte that the font renderer draws as garbage.
@@ -47,23 +76,26 @@ Data& Data::Instance() {
 }
 
 void Data::Load() {
+    // Applications are constructed before the SDK starts its transport/NVS.
+    const esp_err_t initialized = nvs_flash_init();
     for (int i = 0; i < static_cast<int>(Field::kCount); ++i)
         std::strncpy(s.value[i], kDefaults[i], kMaxFieldLen);
 
     nvs_handle_t h;
-    if (nvs_open(kNvsNamespace, NVS_READONLY, &h) != ESP_OK) {
+    if (initialized != ESP_OK || nvs_open(kNvsNamespace, NVS_READONLY, &h) != ESP_OK) {
         ESP_LOGI(TAG, "no saved badge yet - showing defaults");
-        return;
+    } else {
+        int restored = 0;
+        for (int i = 0; i < static_cast<int>(Field::kCount); ++i) {
+            size_t len = sizeof(s.value[i]);
+            if (nvs_get_str(h, kFieldKeys[i], s.value[i], &len) == ESP_OK) ++restored;
+            else std::strncpy(s.value[i], kDefaults[i], kMaxFieldLen);
+        }
+        nvs_close(h);
+        ESP_LOGI(TAG, "loaded %d badge fields", restored);
     }
-    int restored = 0;
-    for (int i = 0; i < static_cast<int>(Field::kCount); ++i) {
-        size_t len = sizeof(s.value[i]);
-        if (nvs_get_str(h, kFieldKeys[i], s.value[i], &len) == ESP_OK) ++restored;
-        else std::strncpy(s.value[i], kDefaults[i], kMaxFieldLen);
-    }
-    nvs_close(h);
-    ESP_LOGI(TAG, "loaded %d/%d field(s): name='%s' title='%s'", restored,
-             static_cast<int>(Field::kCount), s.value[0], s.value[1]);
+    if (!s.writer && xTaskCreate(Persist, "badge_store", 3072, nullptr, 3, &s.writer) != pdPASS)
+        ESP_LOGE(TAG, "storage worker unavailable; badge changes will not be saved");
 }
 
 void Data::Set(Field f, const char* utf8, size_t len) {
@@ -74,24 +106,18 @@ void Data::Set(Field f, const char* utf8, size_t len) {
 
     char buf[kMaxFieldLen + 1] = {};
     if (len) std::memcpy(buf, utf8, len);
-    if (std::strcmp(buf, s.value[i]) == 0) return;   // no change: skip the flash write and the redraw
-
-    std::memcpy(s.value[i], buf, sizeof(buf));
-    s.revision.fetch_add(1, std::memory_order_release);
-
-    nvs_handle_t h;
-    if (nvs_open(kNvsNamespace, NVS_READWRITE, &h) == ESP_OK) {
-        if (nvs_set_str(h, kFieldKeys[i], s.value[i]) == ESP_OK) nvs_commit(h);
-        nvs_close(h);
-    } else {
-        ESP_LOGW(TAG, "NVS unavailable - '%s' will not survive a reboot", kFieldKeys[i]);
+    {
+        std::lock_guard<std::mutex> guard(s.lock);
+        if (std::strcmp(buf, s.value[i]) == 0) return;
+        std::memcpy(s.value[i], buf, sizeof(buf));
+        s.revision.fetch_add(1, std::memory_order_release);
     }
-    ESP_LOGI(TAG, "%s = '%s'", kFieldKeys[i], s.value[i]);
+    if (s.writer) xTaskNotify(s.writer, 1u << i, eSetBits);
 }
 
-const char* Data::Get(Field f) const {
-    const int i = static_cast<int>(f);
-    return (i >= 0 && i < static_cast<int>(Field::kCount)) ? s.value[i] : "";
+void Data::Copy(Snapshot& out) const {
+    std::lock_guard<std::mutex> guard(s.lock);
+    memcpy(out.values, s.value, sizeof out.values);
 }
 
 uint32_t Data::Revision() const { return s.revision.load(std::memory_order_acquire); }

@@ -16,7 +16,10 @@
         "ESP32-S3-ePaper-3.97",
         "ESP32-S3-ePaper-3.97-EN",
         "WavePaper",
-        "waveshare-epaper-397"
+        "waveshare-epaper-397",
+        "微雪",
+        "微雪3.97",
+        "微雪3.97墨水屏"
       ],
       "hardware": "ESP32-S3-WROOM-1-N16R8, 16 MB flash, 8 MB PSRAM, 800x480 monochrome e-paper, ES8311, NS4150B, TG28 PMIC, three-way key",
       "identify": "Waveshare 3.97-inch e-paper board with three-way side key, BOOT/PWR buttons and USB-C",
@@ -26,7 +29,7 @@
       "ble_name": null,
       "fw_model": "WS-EPAPER-397",
       "status": "supported",
-      "notes": "Hotspot WavePaper397-XXXX. Center: call; hold center: menu; Up/Down: volume or menu selection; BOOT: back/end. Device acceptance pending. Platform product ID 20, product key esp32-s3-epaper-397, platform name waveShare-ESP32-S3-ePaper-3.97. Use ESP-IDF 5.5.x; the shared ES8311 driver is not compatible with IDF 6.1."
+      "notes": "Hotspot WavePaper397-XXXX. Center: call; hold center: menu; Up/Down: volume or menu selection; BOOT: back/end. Device acceptance pending. Platform product ID 5, product key esp32-s3-epaper-397, platform name waveShare-ESP32-S3-ePaper-3.97. Prefer ESP-IDF 5.5.4. The shared ES8311 interface has IDF 6.1 adaptation; a complete 6.1 build and device acceptance remain pending."
     }
   ]
 }

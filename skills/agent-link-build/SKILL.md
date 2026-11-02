@@ -12,6 +12,10 @@ when the hardware has several supported choices.
 
 ## Environment and build
 
+Run `python tools/check_env.py --profile PROFILE` from the repository root.
+For missing/inactive tools follow the setup skill or `guides/environment.zh-CN.md`;
+use official China mirrors/offline installation when needed. An environment
+check verifies tools; `build_firmware.py --check` verifies catalog metadata.
 Activate an existing ESP-IDF installation. Supported versions are 5.5.x and
 6.1.x; S31 requires an S31-capable 6.1 SDK. If tools are missing, locate an
 existing installation before proposing a download. Do not replace another SDK.

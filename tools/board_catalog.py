@@ -47,12 +47,19 @@ def repo_problems(entries):
     problems += [f"BOARD_TYPE_{t} (main/Kconfig.projbuild) has no catalog entry" for t in known if t not in types]
     problems += [f"BOARD_TYPE_{t} is not in main/Kconfig.projbuild" for t in types if t not in known]
     dirs = profile_board_dirs()
+    products = json.loads((ROOT / "firmware/profiles/products.json").read_text(encoding="utf-8"))
     for e in entries:
         t = e["board_type"]
         if e["status"] != "not-adapted" and dirs.get(t) != e["dir"]:
             problems.append(f"BOARD_TYPE_{t}: profiles/profiles.json selects {dirs.get(t)!r}, catalog says {e['dir']!r}")
         profiles = json.loads(PROFILES.read_text(encoding="utf-8"))
         profile = next((p for p in profiles.values() if p["board_type"] == t), None)
+        product_key = products["profiles"].get(e.get("profile"))
+        if product_key:
+            product_id = products["products"][product_key]["id"]
+            claims = re.findall(r"\bproduct(?: ID)?\s+(\d+)\b", e.get("notes") or "", re.I)
+            if any(int(value) != product_id for value in claims):
+                problems.append(f"{t}: notes product ID differs from profiles/products.json ({product_id})")
         folders = [BOARDS / e["dir"]]
         if profile:
             folders.append(ROOT / "firmware/apps" / profile["app"])

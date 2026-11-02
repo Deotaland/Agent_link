@@ -80,6 +80,7 @@ public:
     void PlayAudio(const uint8_t* pcm, size_t bytes) override { audio_.Play(pcm, bytes); }
     void AudioEnd() override { audio_.End(); }
     void AudioReset() override { audio_.Reset(); }
+    bool SupportsListen() const override { return (Capabilities() & AGENT_CAP_MIC) != 0; }
     void OnListen(bool start, uint32_t max_ms) override { audio_.Listen(start, max_ms); }
     void ShowText(const char* text) override { watch_wifi::SetAnswer(text); }
     void Vibrate(uint32_t ms) override { if (haptics_ && ms) xQueueOverwrite(haptics_, &ms); }

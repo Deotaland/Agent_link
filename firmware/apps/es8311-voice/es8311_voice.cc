@@ -27,7 +27,7 @@ public:
     const char* Name() const override { return "ROROLEE_ES8311"; }
 
     uint32_t Capabilities() const override {
-        return AGENT_CAP_MIC | AGENT_CAP_SPEAKER | AGENT_CAP_BUTTON | AGENT_CAP_RECORDING;
+        return AGENT_CAP_MIC | AGENT_CAP_SPEAKER | AGENT_CAP_BUTTON;
     }
 
     // Agent downlink TTS (PCM16 / 16k / mono): push into the play buffer and return immediately without

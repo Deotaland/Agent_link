@@ -29,8 +29,10 @@ Create `config.json` using an existing catalog entry as the schema. Set the
 outer `type` to the directory name and `target` to the IDF chip name. Each item in
 `boards` describes one firmware variant: unique `board_type`, model, product,
 vendor, aliases, identification details, USB port, use, transport, BLE name,
-`fw_model`, status and notes. All catalog fields and aliases use English;
-do not add translated copies.
+`fw_model`, status and notes. Keep identities and descriptive fields in English;
+`aliases` may include Chinese product names for user lookup. Do not translate
+machine identifiers or add parallel catalog copies. Record hardware acceptance
+in notes; `supported` means a source profile exists, not a completed device test.
 
 Use distinct board types for BLE and WiFi variants. `fw_model` must match the
 application's `Model()` exactly. Preserve existing model strings when migrating
@@ -62,14 +64,17 @@ Add capabilities only as their handlers work:
 | Function | Application/API |
 | --- | --- |
 | Speaker output | `PlayAudio`, `AudioEnd`, `AudioReset`; queue PCM16 mono at 16 kHz |
-| Microphone request | `OnListen`; capture on a worker |
+| Microphone request | `OnListen` and `SupportsListen()`; capture on a worker |
 | Button voice input | `agent_link_stream_open/write/close` with `AGENT_STREAM_VOICE` |
 | Text, motor, LED | `ShowText`, `Vibrate`, `SetLed` |
 | Link status | `OnLinkStatus`; copy `title`, `hint` and activation `code` |
 | Sensor/actuator | Register endpoints with `agent_link_register_io` |
 | Battery | `GetBatteryLevel`, `IsCharging` |
 
-Copy callback data before returning and queue slow work. The NimBLE host stack
+Copy callback data before returning and queue slow work. For asynchronous
+control queries, implement `OnCommandRequest`, copy its request token/payload
+and reply from the worker with `agent_link_command_reply`; preserve errors.
+The legacy `OnCommand` interface remains available for short synchronous work. The NimBLE host stack
 is 6 KB. Stream APIs can block; use them on a capture worker. Before starting a
 capture, check `agent_link_state() == AGENT_STATE_READY` and handle stream errors.
 Constructors run before SDK initialization; defer operations that require a link.

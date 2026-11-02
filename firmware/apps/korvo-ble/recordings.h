@@ -13,8 +13,7 @@
 // The request is 0, 3 or 4 bytes: [offset(2 LE)] [max_entries(1), 0 = let the device decide]
 // [scope(1), 0 = recordings, 1 = messages].
 //
-// A page is budgeted against the response buffer the SDK provides (AGENT_LINK_CMD_RESP_MAX),
-// not against the MTU, so pages are small; the App just follows next_offset until has_more is 0.
+// A page is bounded by both AGENT_LINK_CMD_RESP_MAX and the negotiated MTU; the App just follows next_offset until has_more is 0.
 
 #include <cstddef>
 #include <cstdint>
@@ -41,10 +40,8 @@ public:
 private:
     Config cfg_ = {};
 
-    // Scratch for one entry, held here rather than on the stack. HandleList runs on the transport's
-    // own task (see agent_output_cb_t::on_command), whose stack is small and already deep by the
-    // time a command reaches us — 650 bytes of locals plus the VFS/FATFS/SDMMC call chain is what
-    // overflowed it. Safe as members: the SDK serialises commands onto that one task.
+    // Scratch owned by the single application listing worker. No filesystem work
+    // runs on the BLE host task; queued request tokens preserve sequence/error replies.
     char rel_[sizeof("messages/") + 256] = {};
     char abs_[384] = {};
 };

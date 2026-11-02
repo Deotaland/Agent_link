@@ -26,7 +26,10 @@ The manifest exposes five string output endpoints, written through `IoActuate`:
 | `badge.company` | Company |
 
 Values are limited to 47 UTF-8 bytes and truncated at character boundaries.
-Changed values are saved immediately; repeated values do not write NVS.
+Changed values notify a dedicated storage worker; repeated values do not write
+NVS. Saving is asynchronous, so allow it to finish before removing power. Failed
+writes are retried. NVS is initialized before saved badge fields are loaded; UI
+reads take a coherent snapshot.
 `screen0` shows a temporary message. Built-in Montserrat fonts have no CJK glyphs.
 
 For a custom font, generate an LVGL font containing the required characters,

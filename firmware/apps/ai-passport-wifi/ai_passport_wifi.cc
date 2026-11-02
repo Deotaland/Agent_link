@@ -73,6 +73,7 @@ public:
     void AudioEnd() override { audio_.End(); }
     void AudioReset() override { audio_.Reset(); }
     void ShowText(const char* text) override { passport_wifi::SetAnswer(text); }
+    bool SupportsListen() const override { return (Capabilities() & AGENT_CAP_MIC) != 0; }
     void OnListen(bool start, uint32_t) override {
         if (!start) audio_.Enable(false);
     }

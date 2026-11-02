@@ -9,10 +9,12 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "img_converters.h"
 
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 
 #define TAG "Korvo"
 
@@ -37,8 +39,9 @@ public:
     // Camera + screen, plus the codec's speaker and mic. RECORDING says the board can capture to
     // its own storage and is what makes the SD recorder discoverable to the platform.
     uint32_t Capabilities() const override {
-        uint32_t c = AGENT_CAP_CAMERA | AGENT_CAP_SCREEN;
-        if (audio_ok_) c |= AGENT_CAP_SPEAKER | AGENT_CAP_MIC | AGENT_CAP_RECORDING;
+        uint32_t c = hardware_.camera.Ready() ? AGENT_CAP_CAMERA : 0;
+        if (audio_ok_) c |= AGENT_CAP_SPEAKER | AGENT_CAP_MIC;
+        if (audio_ok_ && audio_.SdReady()) c |= AGENT_CAP_RECORDING;
         return c;
     }
 
@@ -52,6 +55,7 @@ public:
 
     // Agent -> device: "start/stop listening" (commands 0x3C/0x3D). Drives the same ASR uplink the
     // ASR app's button does, so the App and the user reach for one mechanism, not two.
+    bool SupportsListen() const override { return (Capabilities() & AGENT_CAP_MIC) != 0; }
     void OnListen(bool start, uint32_t max_ms) override {
         if (!audio_ok_) return;
         ESP_LOGI(TAG, "OnListen(%s, max_ms=%u) from the App", start ? "start" : "stop",
@@ -66,30 +70,38 @@ public:
 
     void OnLinkState(bool connected) override { korvo_ui::SetLinkState(connected); }
 
-    // The SDK consults this before falling back to its own answer, which for the RoRoLee
-    // production command IDs is a deliberate 1001. Claiming 0x04 is what lets the App list what is
-    // on this card. Everything else stays unclaimed so the SDK keeps answering honestly.
-    bool OnCommand(uint16_t cmd, const uint8_t* payload, size_t len,
-                   uint8_t* resp, size_t resp_cap, size_t* resp_len) override {
-        if (cmd != 0x04) return false;
-        ESP_LOGI(TAG, "cmd 0x%02X ListRecordings (%uB payload)", cmd, static_cast<unsigned>(len));
-        uint16_t error = 0;
-        if (recordings_.HandleList(payload, len, resp, resp_cap, resp_len, &error)) return true;
-        // HandleList failed. Returning false would make the SDK answer 1001 UnknownCommand, which
-        // is the wrong story — the command IS implemented, this attempt failed. There is no way to
-        // hand a specific error code back through on_command, so report success with an empty
-        // listing: the App sees zero recordings, which is what a missing card actually means.
-        ESP_LOGW(TAG, "ListRecordings failed (error=%u) — answering with an empty page", error);
-        if (resp_cap < 7) { *resp_len = 0; return true; }
-        resp[0] = 0; resp[1] = 0;        // entry_count = 0
-        resp[2] = 0;                     // has_more = 0
-        resp[3] = 0; resp[4] = 0;        // total_count = 0
-        resp[5] = 0; resp[6] = 0;        // next_offset = 0
-        *resp_len = 7;
+    bool OnCommandRequest(const agent_command_request_t& request,
+                          const uint8_t* payload, size_t len) override {
+        if (request.command_id != 0x04) return false;
+        if (len != 0 && len != 3 && len != 4) {
+            (void)agent_link_command_reply(&request, 1004, nullptr, 0);
+            return true;
+        }
+        ListRequest job{}; job.request = request; job.length = len;
+        if (len) memcpy(job.payload, payload, len);
+        if (!list_queue_ || xQueueSend(list_queue_, &job, 0) != pdTRUE)
+            (void)agent_link_command_reply(&request, 1003, nullptr, 0);
         return true;
     }
 
 private:
+    struct ListRequest {
+        agent_command_request_t request;
+        uint8_t payload[4] = {};
+        size_t length = 0;
+    };
+    static void ListEntry(void* context) { static_cast<KorvoBoard*>(context)->ListLoop(); }
+    void ListLoop() {
+        ListRequest job{};
+        while (true) {
+            if (xQueueReceive(list_queue_, &job, portMAX_DELAY) != pdTRUE) continue;
+            uint8_t response[AGENT_LINK_CMD_RESP_MAX];
+            size_t length = 0; uint16_t error = 0;
+            if (!recordings_.HandleList(job.payload, job.length, response,
+                                       job.request.response_capacity, &length, &error)) length = 0;
+            (void)agent_link_command_reply(&job.request, error, response, length);
+        }
+    }
     KorvoAudio::Config MakeAudioConfig() {
         KorvoAudio::Config c = {};
         c.codec = hardware_.codec.Ready() ? &hardware_.codec : nullptr;
@@ -112,6 +124,10 @@ private:
         rc.sample_rate  = AUDIO_SAMPLE_RATE;
         rc.format       = REC_FORMAT_ADPCM ? WavRecorder::Format::kAdpcm : WavRecorder::Format::kPcm16;
         recordings_.Init(rc);
+        list_queue_ = xQueueCreate(4, sizeof(ListRequest));
+        if (list_queue_ && xTaskCreate(ListEntry, "korvo_list", 6144, this, 3, nullptr) != pdPASS) {
+            vQueueDelete(list_queue_); list_queue_ = nullptr;
+        }
     }
 
     void RegisterCaptureEndpoint() {
@@ -191,6 +207,7 @@ private:
     KorvoHardware hardware_;
     KorvoAudio   audio_;
     Recordings   recordings_;
+    QueueHandle_t list_queue_ = nullptr;
     bool         audio_ok_ = false;
     TaskHandle_t preview_task_ = nullptr;
     std::atomic<bool> capture_req_{false};  // set by the App command; consumed by the preview loop

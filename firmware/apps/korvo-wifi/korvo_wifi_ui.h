@@ -63,6 +63,5 @@ void SetLinkState(bool connected);
 // Report the result of the I2C transmit; safe to call from the servo task.
 void SetServoResult(const KorvoCloudServo8::Command& command, esp_err_t result,
                     const KorvoCloudServo8::Status* status, esp_err_t read_result);
-void SetVoiceText(const char* utf8);
 
 }  // namespace kc_ui

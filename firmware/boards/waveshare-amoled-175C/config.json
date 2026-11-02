@@ -17,7 +17,10 @@
         "Waveshare AMOLED 1.75C",
         "waveshare-amoled-175C",
         "33691",
-        "33692"
+        "33692",
+        "微雪",
+        "微雪1.75C",
+        "微雪AMOLED1.75C"
       ],
       "hardware": "ESP32-S3R8, 8 MB octal PSRAM, 32 MB flash; 466x466 CO5300 QSPI AMOLED; CST9217 touch; ES8311 speaker codec and NS4150B amplifier; ES7210 dual microphones; shared audio MCLK GPIO16; AXP2101 power management; QMI8658 IMU",
       "identify": "Waveshare 1.75C badge-style metal enclosure, BOOT and PWR buttons, native USB-C, 32 MB flash. Not the non-C 1.75 or -B board.",

@@ -28,9 +28,9 @@ public:
 
     const char* Name() const override { return "ROROLEE_ES8311_ASR"; }
 
-    // A mic + button that streams audio up the record-stream channel the App transcribes (AGENT_CAP_RECORDING).
+    // A mic + button that streams audio up the record-stream channel the App transcribes.
     uint32_t Capabilities() const override {
-        return AGENT_CAP_MIC | AGENT_CAP_BUTTON | AGENT_CAP_RECORDING;
+        return AGENT_CAP_MIC | AGENT_CAP_BUTTON;
     }
 
 private:

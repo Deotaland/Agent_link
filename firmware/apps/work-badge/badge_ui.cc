@@ -219,22 +219,23 @@ const lv_font_t* FontForName(const char* name) {
 }
 
 void RefreshBadge() {
-    Data& d = Data::Instance();
-    lv_label_set_text(s_company, d.Get(Field::kCompany));
+    Snapshot snapshot{};
+    Data::Instance().Copy(snapshot);
+    lv_label_set_text(s_company, snapshot.values[static_cast<size_t>(Field::kCompany)]);
 
-    const char* name = d.Get(Field::kName);
+    const char* name = snapshot.values[static_cast<size_t>(Field::kName)];
     lv_obj_set_style_text_font(s_name, FontForName(name), 0);
     lv_label_set_text(s_name, name);
 
     // Title and department share a line: "Firmware Engineer - R&D", either half optional.
-    const char* title = d.Get(Field::kTitle);
-    const char* dept  = d.Get(Field::kDepartment);
+    const char* title = snapshot.values[static_cast<size_t>(Field::kTitle)];
+    const char* dept  = snapshot.values[static_cast<size_t>(Field::kDepartment)];
     char line[2 * kMaxFieldLen + 16];   // two full fields + the separator, with headroom
     if (*title && *dept)      std::snprintf(line, sizeof(line), "%s  |  %s", title, dept);
     else                      std::snprintf(line, sizeof(line), "%s", *title ? title : dept);
     lv_label_set_text(s_title, line);
 
-    lv_label_set_text(s_emp_id, d.Get(Field::kEmployeeId));
+    lv_label_set_text(s_emp_id, snapshot.values[static_cast<size_t>(Field::kEmployeeId)]);
 }
 
 void RefreshStatus() {

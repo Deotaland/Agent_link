@@ -27,11 +27,10 @@ config AGENT_LINK_OTA_REQUIRE_MODEL_MATCH
     bool "Reject firmware built for a different device model"
     default y
     help
-        The App may append a model string to 0x37. When it does and this is enabled, it
-        must equal this device's model (agent_link_config_t.model) or the device answers
-        2037 OtaModelMismatch — this is what stops a build for other hardware from being
-        flashed onto this one. An App that sends no model is always allowed through
-        (older App versions)
+        Require a nonempty model string in 0x37 matching agent_link_config_t.model.
+        Missing or different models return 2037 OtaModelMismatch. Older Apps that
+        omit the model must be updated before OTA; USB flashing remains available.
+        This checks request metadata, not the authenticity of the image publisher.
 
 config AGENT_LINK_OTA_RX_BUFFER_KB
     int "OTA receive buffer (KB)"

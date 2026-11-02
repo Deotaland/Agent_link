@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Markdown links and English documentation/JSON metadata, excluding ignored files."""
+"""Check local Markdown links and localized documentation/catalog boundaries."""
 
 import json
 import re
@@ -53,10 +53,10 @@ def anchors(text):
 def check_document(root, name, files):
     text = (root / name).read_text(encoding="utf-8")
     problems = []
-    if name != "README.zh-CN.md":
+    if not name.endswith(".zh-CN.md"):
         for number, line in enumerate(text.splitlines(), 1):
             if CJK.search(line):
-                problems.append(f"{name}:{number}: use English; translations belong in README.zh-CN.md")
+                problems.append(f"{name}:{number}: use English or a .zh-CN.md translation")
     for number, line in prose_lines(text):
         for match in LINK.finditer(line):
             link = match[1].strip("<>")
@@ -86,8 +86,15 @@ def check_metadata(root, name):
         data = json.loads((root / name).read_text(encoding="utf-8"))
     except (UnicodeError, ValueError) as error:
         return [f"{name}: invalid UTF-8 JSON: {error}"]
+    # Machine identities stay English; user-facing lookup aliases may be localized.
+    if re.fullmatch(r"firmware/boards/[^/]+/config.json", name):
+        for board in data.get("boards", []):
+            board.pop("aliases", None)
+    elif name == "skills/agent-link-flash/references/boards.json":
+        for board in data.get("boards", []):
+            board.pop("aliases", None)
     if CJK.search(json.dumps(data, ensure_ascii=False)):
-        return [f"{name}: JSON text and aliases must use English"]
+        return [f"{name}: use English outside board lookup aliases"]
     return []
 
 
@@ -102,7 +109,7 @@ def main():
     if problems:
         return 1
     print(f"Documentation OK: {len(docs)} Markdown files and {len(metadata)} JSON files; "
-          "English policy and local links checked.")
+          "local links and localization boundaries checked.")
     return 0
 
 

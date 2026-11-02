@@ -36,10 +36,11 @@ typedef void (*al_prov_creds_cb_t)(const char* ssid, const char* password);
  * @brief Start the captive portal (DNS redirect + HTTP config server).
  * @param ap_ssid   The SoftAP SSID the user sees (shown on the page for reassurance).
  * @param on_creds  Called when the user submits SSID/password.
+ * @param platform_url Public console origin compiled into this firmware, copied on start.
  * @return ESP_OK on success, error code otherwise.
  * @note The caller (transport) must already have the SoftAP up in AP or APSTA mode.
  */
-esp_err_t al_wifi_prov_start(const char* ap_ssid, al_prov_creds_cb_t on_creds);
+esp_err_t al_wifi_prov_start(const char* ap_ssid, al_prov_creds_cb_t on_creds, const char* platform_url);
 
 /**
  * @brief Update the status the portal page polls after the user submits.

@@ -10,7 +10,16 @@
             "vendor": "Waveshare",
             "buy": ["https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-7b.htm"],
             "docs": ["https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-7B"],
-            "aliases": ["Waveshare", "ESP32-P4", "P4 7B", "7B", "Touch-LCD-7B", "esp32p4-waveshare"],
+            "aliases": [
+              "Waveshare",
+              "ESP32-P4",
+              "P4 7B",
+              "7B",
+              "Touch-LCD-7B",
+              "esp32p4-waveshare",
+              "微雪P4",
+              "微雪P4七寸屏"
+            ],
             "hardware": "ESP32-P4 with an ESP32-C6 for Wi-Fi 6 / BLE 5; 7-inch 1024x600 IPS (MIPI-DSI), GT911 touch",
             "identify": "7-inch touch screen, landscape",
             "flash_port": "See the Waveshare docs.",

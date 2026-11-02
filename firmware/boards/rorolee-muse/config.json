@@ -10,7 +10,14 @@
             "vendor": "Deotaland",
             "buy": ["https://www.rorolee.com"],
             "docs": [],
-            "aliases": ["RoRoLee", "rorolee-muse", "Deotaland", "rorolee.com"],
+            "aliases": [
+              "RoRoLee",
+              "rorolee-muse",
+              "Deotaland",
+              "rorolee.com",
+              "若若丽",
+              "RoRoLee徽章"
+            ],
             "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; ES8311 + ES7210 audio; BQ27220 fuel gauge",
             "identify": "Small rectangular AMOLED screen (120x240); three buttons: BOOT, VOL+, VOL-",
             "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",

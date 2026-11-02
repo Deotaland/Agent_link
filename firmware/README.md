@@ -5,6 +5,12 @@ An ESP-IDF project with hardware drivers, applications and the
 
 ## Build and flash
 
+First computer setup, SDK activation and China/offline downloads are covered in
+the [environment guide](../guides/environment.md) ([Chinese](../guides/environment.zh-CN.md)).
+From the repository root run `python tools/check_env.py --profile PROFILE`
+before building. This read-only check is separate from profile metadata checks.
+Prebuilt browser installation needs no SDK; BLE requires the unpublished app.
+
 Activate ESP-IDF 5.5.x or 6.1.x. Maintainers use 5.5.4 for existing S3/C3 profiles;
 ESP32-S31 requires 6.1 with S31 support. From `firmware/`:
 
@@ -54,17 +60,20 @@ it clears incompatible files in the existing build directory.
 
 ## Connect
 
+For activation, Agent binding, the first successful interaction and recovery,
+follow [first use](../guides/getting-started.md) and the [device table](../guides/devices.md).
+
 - **BLE:** use the Deotaland phone app. The app provides the platform connection.
 - **WiFi:** join the device hotspot, set WiFi at `http://192.168.4.1`, claim the
   six-digit activation code in the console and bind an Agent.
 - **Muse:** pair and provision through the Muse app. See [Muse](components/muse_gadget/README.md).
 
 The console and firmware center are at [bot.deotaland.cn](https://bot.deotaland.cn).
-WiFi product identity comes from the application's `Platform()` settings. The
-shared URL is in [platform_config.h](boards/common/platform_config.h).
-After changing it, rebuild and verify the product ID on the target platform.
-AI Passport WiFi uses product ID 1 on this platform. Other WiFi profiles retain
-their previous product IDs; check their registrations before using them here.
+WiFi product identity is selected by `profiles/products.json`; CMake generates
+`platform_product.h` for the application's static `Platform()` settings. The shared
+URL is in [platform_config.h](boards/common/platform_config.h). The mapping is
+specific to that platform. After changing the origin, verify and update the product
+catalog before rebuilding; see [profiles](profiles/README.md).
 
 ## Source layout
 
@@ -82,6 +91,14 @@ To add hardware, follow the [board guide](boards/README.md). For a standalone
 ESP-IDF integration, see the [SDK guide](components/agent_link/README.md).
 
 ## Troubleshooting
+
+Host regression sources in `tests/` verify production protocol, audio, storage
+and device-control behavior without flashing a board. They are maintenance
+source, not firmware payloads. Keep useful tests in Git; generated executables,
+objects and caches belong in ignored `build/` or `.cache/` directories. The root
+`tools/tests/` checks environment/onboarding tools and the provisioning page.
+Deleting these folders does not make the normal firmware smaller, but removes
+the ability to reproduce those checks and breaks documented test commands.
 
 | Symptom | Check |
 | --- | --- |

@@ -26,6 +26,11 @@ bool on_command(uint16_t cmd, const uint8_t* payload, size_t len,
     return Application::GetInstance().OnCommand(cmd, payload, len, resp, resp_cap, resp_len);
 }
 
+bool on_command_request(const agent_command_request_t* request,
+                         const uint8_t* payload, size_t len, void*) {
+    return Application::GetInstance().OnCommandRequest(*request, payload, len);
+}
+
 void on_status(const agent_link_status_t* st, void*) {
     if (!st) return;
     ESP_LOGI(TAG, "[link] %s (phase=%d)", st->title, static_cast<int>(st->phase));
@@ -47,15 +52,16 @@ extern "C" void app_main(void) {
 
     //Callback function registration
     agent_output_cb_t out = {};
-    out.on_audio_out = on_audio_out;
+    out.on_audio_out = (board.Capabilities() & AGENT_CAP_SPEAKER) ? on_audio_out : nullptr;
     out.on_audio_end = on_audio_end;
     out.on_audio_reset = on_audio_reset;
     out.on_voice_reply = on_voice_reply;
-    out.on_show_text = on_show_text;
+    out.on_show_text = (board.Capabilities() & AGENT_CAP_SCREEN) ? on_show_text : nullptr;
     out.on_haptic    = (board.Capabilities() & AGENT_CAP_HAPTIC) ? on_haptic : nullptr;
     out.on_led       = (board.Capabilities() & AGENT_CAP_LED) ? on_led : nullptr;
-    out.on_listen    = on_listen;   // App-initiated listen (0x3C/0x3D); no-op on boards without a mic
+    out.on_listen    = board.SupportsListen() ? on_listen : nullptr;
     out.on_command   = on_command;  // board-claimed control commands; consulted before the SDK's 1001
+    out.on_command_request = on_command_request;
 
     agent_link_config_t cfg = {};
     cfg.device_name = board.Name();

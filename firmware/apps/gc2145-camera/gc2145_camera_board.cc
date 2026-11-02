@@ -56,7 +56,7 @@ public:
     const char *Name() const override { return "GC2145_CAMERA"; }
 
     // Hardware present: a camera, a screen, and the onboard WS2812 RGB LED
-    uint32_t Capabilities() const override { return AGENT_CAP_CAMERA | AGENT_CAP_SCREEN | AGENT_CAP_LED; }
+    uint32_t Capabilities() const override { return (cam_ok_ ? AGENT_CAP_CAMERA : 0) | AGENT_CAP_LED; }
 
     // Agent -> Device: the SDK's synthetic "led0" endpoint routes here (0x00RRGGBB) -> drive the WS2812.
     void SetLed(uint32_t rgb) override { (void)led_.SetRgb(rgb); }

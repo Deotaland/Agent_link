@@ -31,6 +31,7 @@
 #include <vector>
 #include <mutex>
 #include <atomic>
+#include <new>
 
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -111,6 +112,29 @@ namespace {
     bool     s_connected = false;
 #endif
     uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    std::atomic<bool> s_authorized{false};
+    bool s_event_subscribed = false;
+
+    // Enrollment is open only while no bonds exist. Afterwards reconnect only
+    // a stored identity; clearing pairing on the device opens enrollment again.
+    bool KnownOrFirstPeer(uint16_t connection) {
+        ble_gap_conn_desc description{};
+        if (ble_gap_conn_find(connection, &description) != 0) return false;
+        constexpr int capacity = MYNEWT_VAL(BLE_STORE_MAX_BONDS) > 0 ? MYNEWT_VAL(BLE_STORE_MAX_BONDS) : 1;
+        ble_addr_t peers[capacity];
+        int count = 0;
+        if (ble_store_util_bonded_peers(peers, &count, capacity) != 0) return false;
+        if (!count) return true;
+        for (int i = 0; i < count; ++i)
+            if ((peers[i].type & 1) == (description.peer_id_addr.type & 1) &&
+                memcmp(peers[i].val, description.peer_id_addr.val, 6) == 0) return true;
+        return false;
+    }
+    bool SecurePeer(uint16_t connection) {
+        ble_gap_conn_desc description{};
+        return ble_gap_conn_find(connection, &description) == 0 &&
+               description.sec_state.encrypted && description.sec_state.bonded;
+    }
 
     // Set once nimble_port_init() has succeeded, and never cleared: ble_stop() does not deinit.
     // CONFIG_BT_NIMBLE_STATIC_TO_DYNAMIC allocates the host's state there, its sync flag included,
@@ -161,13 +185,15 @@ namespace {
     void StartAdvertising();
 
     // GATT access callback: command writes + standard-service reads.
-    int GattAccess(uint16_t /*conn*/, uint16_t /*attr*/, struct ble_gatt_access_ctxt* ctxt, void* /*arg*/) {
+    int GattAccess(uint16_t conn, uint16_t /*attr*/, struct ble_gatt_access_ctxt* ctxt, void* /*arg*/) {
         const ble_uuid_t* uuid = ctxt->chr->uuid;
         if (uuid->type != BLE_UUID_TYPE_16) return BLE_ATT_ERR_UNLIKELY;
         const uint16_t chr = BLE_UUID16(uuid)->value;
 
         switch (ctxt->op) {
         case BLE_GATT_ACCESS_OP_WRITE_CHR: {
+            if (!s_authorized.load(std::memory_order_acquire) || !SecurePeer(conn))
+                return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
             // Command channels 0xFFC1 (control) and 0xFFB1 (file/OTA) both take writes; they carry the
             // same frame format, so both go to the one core dispatcher, which routes by command_id.
             if ((chr == kChrCmdRequest || chr == kChrFileCmd) && ctxt->om) {
@@ -200,7 +226,7 @@ namespace {
     // Service C (device control): 0xFFC1 command (WRITE+NOTIFY) + 0xFFC4 event (NOTIFY). Placeholders removed.
     const struct ble_gatt_chr_def s_chrs[] = {
         { .uuid = &s_uuid_cmd.u, .access_cb = GattAccess,
-          .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY, .val_handle = &s_h_cmd },
+          .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_NOTIFY, .val_handle = &s_h_cmd },
         { .uuid = &s_uuid_evt.u, .access_cb = GattAccess,
           .flags = BLE_GATT_CHR_F_NOTIFY, .val_handle = &s_h_evt },
         { 0 },
@@ -214,7 +240,7 @@ namespace {
     // Service B (file transfer / OTA): 0xFFB1 FILE_CMD (WRITE + NOTIFY).
     const struct ble_gatt_chr_def s_chrs_file[] = {
         { .uuid = &s_uuid_file_cmd.u, .access_cb = GattAccess,
-          .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY, .val_handle = &s_h_file },
+          .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_NOTIFY, .val_handle = &s_h_file },
         { 0 },
     };
     // Standard service 0x180F Battery: 0x2A19 level (READ+NOTIFY).
@@ -251,7 +277,7 @@ namespace {
 
     esp_err_t Notify(uint16_t handle, const uint8_t* data, size_t len, int* nimble_rc = nullptr) {
         if (nimble_rc) *nimble_rc = 0;
-        if (!s_connected || handle == 0) return ESP_ERR_INVALID_STATE;
+        if (!s_connected || !s_authorized.load(std::memory_order_acquire) || handle == 0) return ESP_ERR_INVALID_STATE;
         struct os_mbuf* om = ble_hs_mbuf_from_flat(data, len);
         if (!om) return ESP_ERR_NO_MEM;
         int rc = ble_gatts_notify_custom(s_conn_handle, handle, om);  // on failure NimBLE has already freed om
@@ -766,6 +792,8 @@ namespace {
         const bool is_img = (reinterpret_cast<uintptr_t>(arg) == kImgPsm);
         switch (event->type) {
         case BLE_L2CAP_EVENT_COC_ACCEPT: {
+            if (!s_authorized.load(std::memory_order_acquire) || !SecurePeer(event->accept.conn_handle))
+                return BLE_HS_EAUTHEN;
             // Critical: allocate the SDU rx buffer + recv_ready first, or the credit handshake never completes. Same for both PSMs.
             struct os_mbuf* rx = os_msys_get_pkthdr(kL2capMps, 0);
             if (!rx) return BLE_HS_ENOMEM;
@@ -1339,6 +1367,19 @@ namespace {
             if (event->connect.status == 0) {
                 s_connected = true;
                 s_conn_handle = event->connect.conn_handle;
+                s_authorized.store(false, std::memory_order_release);
+                s_event_subscribed = false;
+                if (!KnownOrFirstPeer(s_conn_handle)) {
+                    ESP_LOGW(TAG, "unknown peer rejected; reset pairing on the device to enroll");
+                    ble_gap_terminate(s_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                    return 0;
+                }
+                const int security = ble_gap_security_initiate(s_conn_handle);
+                if (security != 0 && security != BLE_HS_EALREADY) {
+                    ESP_LOGW(TAG, "cannot start secure pairing (%d)", security);
+                    ble_gap_terminate(s_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                    return 0;
+                }
 #if CONFIG_IDF_TARGET_ESP32C3
                 s_voice_notify_enabled.store(false, std::memory_order_release);
                 s_conn_update_attempts = s_dle_attempts = 0;
@@ -1352,7 +1393,6 @@ namespace {
                 // fired from their completion events (see RequestFastConnParams).
                 RequestFastConnParams(s_conn_handle);
 #endif
-                if (s_on_conn) s_on_conn(true);
             }
             else {
                 ESP_LOGW(TAG, "connect failed (status=%d) — re-advertising", event->connect.status);
@@ -1360,6 +1400,8 @@ namespace {
             }
             return 0;
         case BLE_GAP_EVENT_DISCONNECT:
+            s_authorized.store(false, std::memory_order_release);
+            s_event_subscribed = false;
             s_connected = false;
             s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -1385,21 +1427,21 @@ namespace {
             StartAdvertising();
             return 0;
         case BLE_GAP_EVENT_ENC_CHANGE:
-            // Link encryption (re)established: either a fresh pairing just completed, or a bonded peer
-            // reconnected and the stored LTK was restored. status==0 => encrypted, no re-pairing needed.
-            ESP_LOGI(TAG, "encryption change: status=%d%s", event->enc_change.status,
-                event->enc_change.status == 0 ? " (encrypted; bond in use)" : " (failed)");
-            return 0;
-        case BLE_GAP_EVENT_REPEAT_PAIRING: {
-            // The peer initiates pairing even though we still hold a bond for it (it wiped its keys, or
-            // the user chose "forget this device"). Delete our stale bond and let the new pairing go
-            // through — otherwise the stack would drop the connection.
-            struct ble_gap_conn_desc desc;
-            if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0) {
-                ble_store_util_delete_peer(&desc.peer_id_addr);
+            if (event->enc_change.status != 0 || !SecurePeer(event->enc_change.conn_handle)) {
+                s_authorized.store(false, std::memory_order_release);
+                ble_gap_terminate(event->enc_change.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                return 0;
             }
-            return BLE_GAP_REPEAT_PAIRING_RETRY;
-        }
+            if (!s_authorized.exchange(true, std::memory_order_acq_rel)) {
+                if (s_on_conn) s_on_conn(true);
+                if (s_event_subscribed && s_on_ready) s_on_ready();
+            }
+            ESP_LOGI(TAG, "encrypted bonded peer ready");
+            return 0;
+        case BLE_GAP_EVENT_REPEAT_PAIRING:
+            // Never delete an owner's bond in response to a remote request.
+            ESP_LOGW(TAG, "repeat pairing refused; reset pairing on the device first");
+            return BLE_GAP_REPEAT_PAIRING_IGNORE;
         case BLE_GAP_EVENT_SUBSCRIBE:
             // Peer subscribed to the event channel 0xFFC4 (CCCD write enables notify) -> notifications
             // are delivered from now on -> tell the core it is "notify-ready" (the core sends the I/O
@@ -1411,9 +1453,10 @@ namespace {
                          (unsigned)event->subscribe.cur_notify, (unsigned)event->subscribe.reason);
             }
 #endif
-            if (event->subscribe.attr_handle == s_h_evt && event->subscribe.cur_notify && s_on_ready) {
-                ESP_LOGI(TAG, "peer subscribed 0xFFC4 (event channel) — notify-ready");
-                s_on_ready();
+            if (event->subscribe.attr_handle == s_h_evt) {
+                s_event_subscribed = event->subscribe.cur_notify;
+                if (s_event_subscribed && s_authorized.load(std::memory_order_acquire) && s_on_ready)
+                    s_on_ready();
             }
             return 0;
         case BLE_GAP_EVENT_CONN_UPDATE:
@@ -1464,6 +1507,8 @@ namespace {
 #endif
             return 0;
         case BLE_GAP_EVENT_MTU:
+            if (event->mtu.channel_id == BLE_L2CAP_CID_ATT && s_event_subscribed &&
+                s_authorized.load(std::memory_order_acquire) && s_on_ready) s_on_ready();
 #if CONFIG_IDF_TARGET_ESP32C3
             if (event->mtu.channel_id == BLE_L2CAP_CID_ATT) {
                 ESP_LOGI(TAG, "ATT MTU: handle=%u value=%u", (unsigned)event->mtu.conn_handle,
@@ -1599,6 +1644,8 @@ namespace {
 
     void ble_stop(void* /*impl*/) {
         (void)ble_gap_adv_stop();
+        s_authorized.store(false, std::memory_order_release);
+        s_event_subscribed = false;
         s_connected = false;
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -1632,6 +1679,36 @@ namespace {
         else if (IsFileChannelCmd(command_id))      handle = s_h_file;
         else                                        handle = s_h_cmd;
         return Notify(handle, frame, len);
+    }
+
+    struct DeferredReply {
+        ble_npl_event event{};
+        uint32_t generation;
+        size_t size;
+        uint8_t frame[AGENT_LINK_CMD_RESP_MAX + 10];
+    };
+    std::atomic<unsigned> s_pending_replies{0};
+    void SendDeferredReply(ble_npl_event* event) {
+        auto* reply = static_cast<DeferredReply*>(ble_npl_event_get_arg(event));
+        if (reply->generation == agent_link_command_generation() && s_authorized.load(std::memory_order_acquire)) {
+            if (ble_send_ctrl(nullptr, reply->frame, reply->size) != ESP_OK)
+                ESP_LOGW(TAG, "deferred command reply could not be sent");
+        }
+        ble_npl_event_deinit(&reply->event);
+        delete reply;
+        --s_pending_replies;
+    }
+    esp_err_t QueueCommandReply(uint32_t generation, const uint8_t* frame, size_t size) {
+        if (!s_authorized.load(std::memory_order_acquire)) return ESP_ERR_INVALID_STATE;
+        if (!frame || size > AGENT_LINK_CMD_RESP_MAX + 10) return ESP_ERR_INVALID_SIZE;
+        if (s_pending_replies.fetch_add(1) >= 8) { --s_pending_replies; return ESP_ERR_NO_MEM; }
+        auto* reply = new (std::nothrow) DeferredReply;
+        if (!reply) { --s_pending_replies; return ESP_ERR_NO_MEM; }
+        reply->generation = generation; reply->size = size;
+        memcpy(reply->frame, frame, size);
+        ble_npl_event_init(&reply->event, SendDeferredReply, reply);
+        ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &reply->event);
+        return ESP_OK;
     }
 
     // Data plane: VOICE over GATT Notify 0xFFA1, AUDIO and IMAGE over L2CAP CoC. FILE and VIDEO are
@@ -1669,7 +1746,7 @@ namespace {
         if (type == AGENT_STREAM_IMAGE) return ImageEnd(complete);                          // 0x55
         return ESP_ERR_NOT_SUPPORTED;
     }
-    bool ble_is_ready(void* /*impl*/) { return s_connected; }
+    bool ble_is_ready(void* /*impl*/) { return s_connected && s_authorized.load(std::memory_order_acquire); }
 
     esp_err_t ble_stream_error(void*, agent_stream_t type) {
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -1700,6 +1777,9 @@ extern "C" void agent_transport_ble_set_stream_recv(void (*cb)(agent_stream_t, c
     s_on_stream = cb;
 }
 extern "C" void agent_transport_ble_set_ready(void (*cb)(void)) { s_on_ready = cb; }
+extern "C" esp_err_t agent_transport_ble_command_reply(uint32_t generation, const uint8_t* frame, size_t len) {
+    return QueueCommandReply(generation, frame, len);
+}
 
 // Current negotiated ATT MTU (0 if not connected). Used by the core to adapt manifest fragment size.
 extern "C" uint16_t agent_transport_ble_att_mtu(void) {
@@ -1716,7 +1796,7 @@ extern "C" void agent_transport_ble_set_device_info(const char* mfr, const char*
 
 // Is the App's L2CAP data channel (PSM 0x0081) open? The core requires it before accepting an
 // OTA: the firmware bytes have nowhere else to arrive.
-extern "C" bool agent_transport_ble_l2cap_ready(void) { return s_connected && s_l2cap_connected; }
+extern "C" bool agent_transport_ble_l2cap_ready(void) { return s_connected && s_authorized.load(std::memory_order_acquire) && s_l2cap_connected; }
 
 // Own BLE address, MSB-first (the order the App sees in the advertisement). NimBLE keeps it
 // LSB-first internally, hence the reversal. false if the stack has no address yet.
@@ -1738,7 +1818,7 @@ extern "C" void agent_transport_ble_update_battery(uint8_t percent) {
 }
 
 // BLE side of agent_link_forget(). ble_store_clear() erases all bonds and CCCDs, from NVS too when
-// CONFIG_BT_NIMBLE_NVS_PERSIST is set. A peer connected right now is left connected.
+// CONFIG_BT_NIMBLE_NVS_PERSIST is set. Disconnect so old keys cannot keep access.
 extern "C" esp_err_t agent_transport_ble_forget(void) {
     // The store callbacks are installed when the host starts; same guard as get_mac.
     if (!HostSynced()) {
@@ -1750,6 +1830,8 @@ extern "C" esp_err_t agent_transport_ble_forget(void) {
         ESP_LOGE(TAG, "ble_store_clear failed: %d", rc);
         return ESP_FAIL;
     }
+    s_authorized.store(false, std::memory_order_release);
+    if (s_connected) (void)ble_gap_terminate(s_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
     ESP_LOGW(TAG, "all bonds erased — the App has to pair again");
     return ESP_OK;
 }

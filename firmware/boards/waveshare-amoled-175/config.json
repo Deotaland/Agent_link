@@ -16,7 +16,10 @@
         "ESP32-S3-Touch-AMOLED-1.75",
         "Waveshare AMOLED 1.75 non-C",
         "waveshare-amoled-175",
-        "31261"
+        "31261",
+        "微雪",
+        "微雪1.75非C版",
+        "微雪AMOLED1.75非C版"
       ],
       "hardware": "ESP32-S3R8, 8 MB octal PSRAM, 16 MB flash; 466x466 CO5300 QSPI AMOLED; CST9217 touch; ES8311 speaker DAC and ES7210 microphones; GPIO42 MCLK; GPIO39 display reset and GPIO40 touch reset; AXP2101 PMU; TCA9554 expander; QMI8658 IMU; PCF85063 RTC; microSD slot",
       "identify": "Non-C standard board SKU 31261, native USB-C, 16 MB flash and 8-pin expansion header. Not the 32 MB 1.75C badge.",

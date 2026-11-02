@@ -30,7 +30,7 @@ struct Es8311Config {
     gpio_num_t pin_pa_en;   // external PA enable, or GPIO_NUM_NC if the board has none
     bool       pa_active_low;  // PA enable polarity (false: PA on when pin is high)
     uint8_t    es8311_addr; // 7-bit I2C address (typically 0x18)
-    i2s_port_t i2s_port;    // I2S peripheral to use (default I2S_NUM_0 when zero-initialized)
+    int        i2s_port;    // I2S controller number; IDF 6 removed the i2s_port_t typedef
     int        sample_rate; // e.g. 16000
     int        mic_gain;    // ADC gain in dB (e.g. 30)
     int        out_volume;  // 0..100

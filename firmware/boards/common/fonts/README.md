@@ -72,14 +72,14 @@ review, not a build or device verification of those other profiles.
 | ojbadge-wifi | LVGL labels with Montserrat plus 14/20 px Noto Sans SC fallbacks | Installs the shared font asset; local friends UI |
 | rorolee-muse | LVGL; shared LoadCjkFont and Montserrat fallback already present | Existing compatible consumer; USB font installation is still documented separately |
 | m5stack-stopwatch-wifi | LVGL; SimSun 14 CJK subset for body text | Can use the same loader/resource with label font and cache settings |
-| korvo-wifi | LVGL; SimSun 14 CJK subset for session/voice labels | Can reuse for session labels; SetVoiceText currently ignores incoming reply text, which requires separate UI work |
+| korvo-wifi | LVGL; SimSun 14 CJK subset for session/voice labels | Can reuse for session labels; Agent text output is not advertised; enabling it requires UI work |
 | m5stack-stopwatch-ble | LVGL; Montserrat for reply text | Needs a font fallback and resource selection |
 | work-badge-ble | LVGL; Montserrat for badge fields and notes | Needs fallback at its 14/20/28 px sizes and an appropriate heap budget |
 | ai-passport-ble | Custom raster Canvas with Montserrat bitmaps on ESP32-C3 | Cannot directly use the LVGL loader; needs a raster adapter/subset and memory review |
 | ai-passport-wifi | Custom four-row raster Canvas with Noto Sans SC 14 px | Uses the derived flash-only raster font described below; no separate font partition |
-| paper-s31-wifi | Custom 8x16 bitmap text; wrapper replaces non-ASCII before drawing | Needs UTF-8 wrapping and a renderer adapter; installing a font alone cannot restore Chinese |
+| paper-s31-wifi | Custom raster renderer with shared Noto Sans SC 14 px glyphs | Flash-only CJK asset; no separate font partition |
 | wownny-muse, wownny-old-muse | LVGL animation; reply text controls animation duration | No reply-text label is currently rendered; adding a font alone does not add text UI |
-| rorolee-ble | ShowText currently fills the screen as a placeholder | Needs an actual text-rendering path first |
+| rorolee-ble | Display is local bring-up only; no screen capability advertised | Needs an Agent text-rendering path before enabling that capability |
 | korvo-ble, gc2145-camera-ble | No ShowText override; screen used by their existing hardware features | No current Agent-reply text consumer |
 | es8311-voice-ble, es8311-asr-ble | No display UI | No font needed |
 

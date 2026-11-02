@@ -17,11 +17,16 @@ public:
 private:
     static void Entry(void* ctx) { static_cast<PaperMusic*>(ctx)->Loop(); }
     void Loop();
+    struct Buffers {
+        int16_t input[1024];
+        int16_t output[2048];
+    };
     PaperWifiAudio& audio_;
     std::mutex mutex_;
     std::vector<std::string> tracks_;
     std::string requested_;
     TaskHandle_t task_ = nullptr;
+    Buffers* buffers_ = nullptr;
     std::atomic<uint32_t> generation_{0};
     std::atomic<bool> playing_{false};
     std::atomic<esp_err_t> error_{ESP_OK};

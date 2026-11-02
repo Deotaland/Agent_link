@@ -3,6 +3,7 @@
 #include "paper_protocol.h"
 #include <algorithm>
 #include <dirent.h>
+#include "esp_heap_caps.h"
 
 esp_err_t PaperMusic::Scan() {
     const auto result = paper_sd_mount();
@@ -37,7 +38,16 @@ esp_err_t PaperMusic::Play(const std::string& name) {
     const auto list = Tracks();
     if (std::find(list.begin(), list.end(), name) == list.end()) return ESP_ERR_NOT_FOUND;
     if (!Stop()) return ESP_ERR_TIMEOUT;
-    if (!task_ && xTaskCreate(Entry, "paper_music", 6144, this, 3, &task_) != pdPASS) return ESP_ERR_NO_MEM;
+    if (!task_) {
+        // Reuse these buffers for the lifetime of the worker; keep SD I/O off a PSRAM task stack.
+        buffers_ = static_cast<Buffers*>(heap_caps_malloc(sizeof(Buffers), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!buffers_) buffers_ = static_cast<Buffers*>(heap_caps_malloc(sizeof(Buffers), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        if (!buffers_) { error_.store(ESP_ERR_NO_MEM); return ESP_ERR_NO_MEM; }
+        if (xTaskCreate(Entry, "paper_music", 6144, this, 3, &task_) != pdPASS) {
+            heap_caps_free(buffers_); buffers_ = nullptr; task_ = nullptr;
+            error_.store(ESP_ERR_NO_MEM); return ESP_ERR_NO_MEM;
+        }
+    }
     { std::lock_guard<std::mutex> lock(mutex_); requested_ = name; }
     return ESP_OK;
 }
@@ -56,7 +66,8 @@ void PaperMusic::Loop() {
         paper::Wav wav;
         if (!paper::ReadWav(file, wav)) error_.store(ESP_ERR_NOT_SUPPORTED);
         else {
-            int16_t input[1024], output[2048];
+            auto& input = buffers_->input;
+            auto& output = buffers_->output;
             unsigned phase = 0;
             while (wav.bytes && generation == generation_.load()) {
                 const size_t count = std::min<size_t>(wav.bytes, sizeof input);

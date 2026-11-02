@@ -15,6 +15,11 @@ h1{margin:8px 0 8px;font-size:22px}
 @keyframes s{to{transform:rotate(360deg)}}
 .foot{margin:22px 0 0;color:var(--mut);font-size:12px}
 a{color:var(--acc)}
+.next{margin-top:22px;padding-top:16px;border-top:1px solid var(--line);text-align:left;font-size:14px}
+.next h2{font-size:16px;margin:0 0 10px}
+.next li{margin:8px 0}
+.next ol{padding-left:22px}
+.next p{color:var(--mut);font-size:13px}
 .langbar{display:flex;justify-content:flex-end;margin-bottom:2px}
 .langbtn{font-size:12px;color:var(--acc);border:1px solid var(--line);border-radius:999px;padding:3px 12px;cursor:pointer;user-select:none}
 /* ---- Language toggle: pure CSS, no JS. #lang unchecked = 中文, checked = English. ---- */
@@ -25,25 +30,47 @@ a{color:var(--acc)}
 </style>
 </head>
 <body>
-<input type="checkbox" id="lang">
+<input type="checkbox" id="lang" onchange="render()">
 <div class="card">
 <div class="langbar"><label for="lang" class="langbtn"><span class="zh">English</span><span class="en">中文</span></label></div>
 <h1 id="t"><span class="zh">正在连接…</span><span class="en">Connecting…</span></h1>
 <p class="sub" id="m"><span class="zh">设备正在接入 WiFi，请保持本页打开。</span><span class="en">The device is joining WiFi. Keep this page open.</span></p>
 <div class="spin" id="sp"></div>
+<a id="retry" href="/" hidden><span class="zh">重新选择 WiFi</span><span class="en">Choose WiFi again</span></a>
+<section class="next">
+<h2><span class="zh">配网后，继续完成设备设置</span><span class="en">After WiFi, finish device setup</span></h2>
+<ol>
+<li><span class="zh">设备联网后，让手机切回可上网的 WiFi 或移动网络。</span><span class="en">Once the device joins WiFi, restore your phone's normal internet connection.</span></li>
+<li><span class="zh">查看设备屏幕上的六位激活码。打开下方平台，登录后在设备激活/添加设备入口输入当前码。</span><span class="en">Read the six-digit code on the device. Open the console below, sign in, then activate/add the device with its current code.</span></li>
+<li><span class="zh">给设备绑定 Agent；语音功能需选择支持语音的 Agent，再按设备提示选会话、开始使用。</span><span class="en">Bind an Agent (voice-capable for calls), then select a conversation and start using the device.</span></li>
+</ol>
+<a id="console" href="{{PLATFORM_URL}}" target="_blank" rel="noopener noreferrer"><span class="zh">打开平台控制台（需恢复手机联网）</span><span class="en">Open console (restore phone internet first)</span></a>
+<p><span class="zh">已激活的设备可能直接上线，无需再次输入激活码。页面断开时先看设备提示；WiFi 连上不代表激活和 Agent 绑定已完成。没有可选 Agent 时，请先在平台准备可用 Agent。</span><span class="en">An activated device may go directly online without a new code. If this page disconnects, check the device. WiFi success still needs activation and Agent binding. If no Agent is available, prepare one in the console first.</span></p>
+</section>
+<noscript><p class="sub"><span class="zh">此浏览器不能显示实时结果，请看设备屏幕，联网后按上面的步骤继续。</span><span class="en">Live progress is unavailable in this browser. Check the device and follow the steps above after it joins WiFi.</span></p></noscript>
 <p class="foot">Deotaland Agent Platform</p>
 </div>
 <script>
 // Live progress (best-effort — the captive-portal browser may block fetch; the device connects regardless).
 function zh(){return !document.getElementById('lang').checked}
 var R={badpass:['密码错误或认证失败','Wrong password / auth failed'],notfound:['未找到该 WiFi','Network not found'],noip:['已连接热点，但未获取到 IP 地址','Joined the network, but no IP address received'],timeout:['连接超时，请重试或选择其他 WiFi','Connection timed out; retry or choose another network'],fail:['连接失败，请重试','Connection failed, please retry']};
-function hide(){var e=document.getElementById('sp');if(e)e.style.display='none'}
-function done(s){document.getElementById('t').textContent=zh()?'✅ 连接成功':'✅ Connected';document.getElementById('m').textContent=zh()?('设备已接入 “'+(s.ssid||'')+'”，IP '+(s.ip||'')+'，可关闭本页。'):('Joined "'+(s.ssid||'')+'", IP '+(s.ip||'')+'. You can close this page.');hide()}
-function fail(s){document.getElementById('t').textContent=zh()?'❌ 连接失败':'❌ Failed';var r=R[s.reason]||R.fail;document.getElementById('m').textContent=zh()?r[0]:r[1];hide();var a=document.createElement('a');a.href='/';a.textContent=zh()?'重新选择 WiFi':'Choose WiFi again';document.getElementById('m').appendChild(document.createElement('br'));document.getElementById('m').appendChild(a)}
+var last={state:'connecting'},finished=false;
+function render(){
+var s=last,title=['正在连接…','Connecting…'],message=['设备正在接入 WiFi，请保持本页打开。','The device is joining WiFi. Keep this page open.'];
+if(s.state==='connected'){title=['WiFi 已连接','WiFi connected'];message=['已接入 “'+(s.ssid||'')+'”，IP '+(s.ip||'')+'。请继续完成下方设备设置。','Joined "'+(s.ssid||'')+'", IP '+(s.ip||'')+'. Continue with device setup below.']}
+else if(s.state==='failed'){title=['连接失败','Connection failed'];message=R[s.reason]||R.fail}
+else if(s.state==='unknown'){title=['请查看设备状态','Check the device'];message=['暂时无法确认联网结果，手机可能已离开设备热点。请查看设备屏幕；若显示激活码或在线，请恢复手机联网并继续下方步骤。','WiFi result could not be confirmed; your phone may have left the setup hotspot. Check the device. If it shows a code or is online, restore phone internet and continue below.']}
+document.getElementById('t').textContent=title[zh()?0:1];
+document.getElementById('m').textContent=message[zh()?0:1];
+document.getElementById('sp').style.display=s.state==='connecting'?'block':'none';
+document.getElementById('retry').hidden=s.state!=='failed';
+}
+function finish(s){if(finished)return;finished=true;clearTimeout(deadline);last=s;render()}
+var deadline=setTimeout(function(){finish({state:'unknown'})},35000);
 function poll(){fetch('/status').then(function(r){return r.json()}).then(function(s){
-if(s.state==='connected')return done(s);
-if(s.state==='failed')return fail(s);
-setTimeout(poll,1200)}).catch(function(){setTimeout(poll,1500)})}
+if(finished)return;
+if(s.state==='connected'||s.state==='failed')return finish(s);
+setTimeout(poll,1200)}).catch(function(){if(!finished)setTimeout(poll,1500)})}
 poll();
 </script>
 </body>

@@ -102,6 +102,32 @@ credentials in ignored `sdkconfig.private`. Never commit tokens/passwords or
 share firmware containing them. Normal WiFi activation needs no account token;
 direct realtime tests are a separate private configuration.
 
+## BLE pairing and OTA compatibility
+
+Control writes and L2CAP media/OTA require an encrypted, bonded connection.
+A device without saved bonds enrolls its first paired App. Once bonds exist,
+unknown identities are disconnected; a remote repeat-pairing request cannot
+erase a saved bond. Use the device's pairing-reset control (`agent_link_forget`)
+before changing phones or recovering lost phone keys. That reset clears bonds
+and disconnects the old link. Ports without a physical reset action need an
+explicit local maintenance path before deployment. First enrollment uses BLE
+Just Works; it does not provide passkey/MITM verification. Enroll in a trusted
+physical setting. The Muse pairing flow is separate.
+
+With model checking enabled (the default), OTA requests must contain the exact
+nonempty model. Apps omitting it receive 2037 and must be updated, or use an
+authorized USB flash. The model is request metadata, not a signature binding the
+binary to a publisher. Image trust requires a separate signed-image/secure-boot
+policy. No such policy is enabled by this change.
+
+`on_command_request` is an optional additive callback for slow queries. Copy its
+token and payload, return true, and reply once from a worker using
+`agent_link_command_reply`. The token contains the response capacity and link
+generation. BLE replies are queued onto the host task and rechecked immediately
+before sending, serialized with reconnect events; an old connection's replies
+are discarded. A successful queue result is not delivery acknowledgement. Report queue and
+storage failures as errors. Legacy synchronous `on_command` remains supported.
+
 ## Exclusive nearby mode
 
 `agent_link_friends.h` provides queued start/stop, peer selection, mutual

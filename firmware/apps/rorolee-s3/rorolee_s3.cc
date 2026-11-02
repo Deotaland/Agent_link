@@ -36,16 +36,7 @@ public:
     const char* Model() const override { return "RRL-01"; }
 
     uint32_t Capabilities() const override {
-        return AGENT_CAP_MIC | AGENT_CAP_SPEAKER | AGENT_CAP_SCREEN |
-               AGENT_CAP_BUTTON | AGENT_CAP_HAPTIC | AGENT_CAP_BATTERY |
-               AGENT_CAP_RECORDING;
-    }
-
-    // Agent asks the device to show text: there is no font rendering at this reference stage,
-    // so a background-color change stands in for "text received".
-    void ShowText(const char* utf8) override {
-        ESP_LOGI(TAG, "ShowText \"%s\" (reference stage: blue fill for now; TODO font rendering)", utf8 ? utf8 : "");
-        if (panel_.Ready()) panel_.FillSolid(rgb565::kBlue);
+        return AGENT_CAP_MIC | AGENT_CAP_SPEAKER | AGENT_CAP_BUTTON | AGENT_CAP_BATTERY;
     }
 
     // Agent downlink TTS (PCM16/16k/mono): push into the play buffer and return immediately
@@ -61,9 +52,6 @@ public:
     // End of a TTS segment: PlayLoop keeps playing whatever is left in the buffer (not flushed).
     void AudioEnd() override { ESP_LOGI(TAG, "AudioEnd (end of TTS segment; buffer plays out then goes silent)"); }
 
-    void Vibrate(uint32_t ms) override {
-        ESP_LOGI(TAG, "Vibrate %u ms (TODO: LEDC motor)", (unsigned)ms);
-    }
     // Device -> Agent: battery / charging (app_main polls every 5s -> agent_link_report_battery -> event 0x14 + 0x2A19).
     int  GetBatteryLevel() override { return gauge_ok_ ? gauge_.Soc() : -1; }
     bool IsCharging()      override { return gauge_ok_ && gauge_.IsCharging(); }

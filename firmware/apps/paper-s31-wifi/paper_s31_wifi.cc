@@ -6,6 +6,7 @@
 #include "paper_wifi_audio.h"
 #include "paper_music.h"
 #include "paper_refresh.h"
+#include "paper_controls.h"
 #include "paper_display_diagnostic.h"
 #include "paper_protocol.h"
 #include "paper_chat_input.h"
@@ -37,7 +38,7 @@
 namespace {
 constexpr const char* TAG = "Paper.desktop";
 enum class Page { Home, Voice, Chat, Presets, Sessions, History, Message, Alarm, Calendar, Music, Settings, Wifi, Time };
-enum class Key { Up, Down, Ok, Back, Home, Vibrate, Result, Text };
+enum class Key { Up, Down, Ok, Back, Home, Voice, Stop, Refresh, Vibrate, Result, Text };
 enum class Work { Sessions, Create, Ask, History, Sync };
 struct Job {
     Work work;
@@ -100,24 +101,37 @@ public:
         return &platform;
     }
     uint32_t Capabilities() const override {
-        uint32_t caps = AGENT_CAP_BUTTON | AGENT_CAP_HAPTIC | AGENT_CAP_LED;
+        // Keep screen0 registered while the worker recovers from a transient boot probe failure.
+        uint32_t caps = AGENT_CAP_BUTTON | AGENT_CAP_HAPTIC | AGENT_CAP_LED | AGENT_CAP_SCREEN;
         if (battery_present_) caps |= AGENT_CAP_BATTERY;
-        if (screen_ready_) caps |= AGENT_CAP_SCREEN;
         if (audio_.Ready()) caps |= AGENT_CAP_MIC | AGENT_CAP_SPEAKER;
         return caps;
     }
     void OnLinkStatus(const agent_link_status_t& st) override {
-        std::lock_guard<std::mutex> lock(mutex_); status_ = st; status_changed_.store(true);
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto attention = [](agent_link_phase_t phase) {
+            return phase == AGENT_LINK_PHASE_SETUP || phase == AGENT_LINK_PHASE_PAIRING || phase == AGENT_LINK_PHASE_BLOCKED;
+        };
+        if ((st.phase != status_.phase || strcmp(st.code, status_.code)) &&
+            (attention(st.phase) || attention(status_.phase))) status_attention_.store(true);
+        status_ = st; status_changed_.store(true);
     }
     void ShowText(const char* text) override {
-        if (!voice_output_.load()) return;
         std::lock_guard<std::mutex> lock(mutex_);
-        voice_text_ = text ? text : "";
-        voice_changed_.store(true);
+        if (voice_output_.load()) {
+            voice_text_ = text ? text : "";
+            voice_changed_.store(true);
+            voice_final_.store(false);
+            voice_text_at_.store(esp_timer_get_time());
+        } else {
+            pending_screen_text_ = text ? text : "";
+            screen_text_pending_ = true;
+        }
     }
     void PlayAudio(const uint8_t* pcm, size_t bytes) override { if (voice_output_.load()) audio_.Play(pcm, bytes); }
-    void AudioEnd() override { if (voice_output_.load()) { audio_.End(); voice_changed_.store(true); } }
+    void AudioEnd() override { if (voice_output_.load()) { audio_.End(); voice_final_.store(true); } }
     void AudioReset() override { if (voice_output_.load()) audio_.Reset(); }
+    bool SupportsListen() const override { return (Capabilities() & AGENT_CAP_MIC) != 0; }
     void OnListen(bool start, uint32_t max_ms) override { if (voice_output_.load()) audio_.Listen(start, max_ms); }
     void Vibrate(uint32_t ms) override { Queue(Key::Vibrate, std::min<uint32_t>(ms, 2000)); }
     void SetLed(uint32_t rgb) override { paper_led(rgb != 0); }
@@ -144,7 +158,7 @@ private:
         Event event{key, value};
         (void)xQueueSend(events_, &event, 0);
     }
-    void Notice(const char* zh, const char* en) { notice_ = T(zh, en); Render(); }
+    void Notice(const char* zh, const char* en, bool important = true) { notice_ = T(zh, en); Render(important); }
     void Failure(esp_err_t error) {
         if (error == ESP_ERR_NOT_SUPPORTED) notice_ = T("接口权限或格式不支持", "API permission/format unsupported");
         else if (error == ESP_ERR_INVALID_STATE) notice_ = T("请先配网并绑定智能体", "Connect WiFi and bind an Agent");
@@ -201,6 +215,7 @@ private:
             voice_output_.store(false);
             call_ = active_ = false;
             audio_.Stop(); (void)agent_link_end_realtime();
+            voice_final_.store(true);
         }
     }
     void RunMotor(unsigned ms) {
@@ -209,6 +224,7 @@ private:
         paper_motor(ms != 0);
     }
     void Open(Page page) {
+        confirm_.Cancel(); refresh_paused_.store(false);
         page_ = page; cursor_ = 0; scroll_ = 0; notice_.clear(); ++epoch_;
         if (page == Page::Calendar) {
             time_t now = time(nullptr); struct tm tm{}; localtime_r(&now, &tm);
@@ -264,8 +280,9 @@ private:
         if (work == Work::Sessions) job->origin = sessions_parent_;
         if (work == Work::Create) job->origin = sessions_parent_;
         busy_.store(true);
-        if (xQueueSend(jobs_, &job, 0) != pdTRUE) { busy_.store(false); delete job; return false; }
-        Notice("正在连接平台…", "Contacting platform...");
+        refresh_paused_.store(true);
+        if (xQueueSend(jobs_, &job, 0) != pdTRUE) { busy_.store(false); refresh_paused_.store(false); delete job; return false; }
+        Notice("正在连接平台…", "Contacting platform...", false);
         return true;
     }
     static void NetworkEntry(void* ctx) { static_cast<PaperS31Wifi*>(ctx)->NetworkLoop(); }
@@ -329,9 +346,10 @@ private:
     }
     void Result(Job* job) {
         busy_.store(false);
+        refresh_paused_.store(false);
         if (!job) return;
         // An old Agent, a left page or an abandoned request must never drive a peripheral.
-        if (job->agent != agent_ || job->epoch != epoch_) { delete job; Render(); return; }
+        if (job->agent != agent_ || job->epoch != epoch_) { delete job; Render(false); return; }
         if (job->error != ESP_OK) { Failure(job->error); delete job; return; }
         notice_.clear();
         if (job->work == Work::Sessions) {
@@ -450,11 +468,14 @@ private:
         if (voice_session_.empty()) { Sessions(Page::Voice); return; }
         if (!voice_supported_ || !audio_.Ready()) { Failure(ESP_ERR_NOT_SUPPORTED); return; }
         if (!music_.Stop()) { Failure(ESP_ERR_TIMEOUT); return; }
+        { std::lock_guard<std::mutex> lock(mutex_); voice_text_.clear(); }
+        displayed_voice_text_.clear();
+        voice_changed_.store(false); voice_final_.store(false);
         voice_output_.store(true);
         const auto r = agent_link_request_realtime_session(agent_, voice_session_.c_str());
         if (r != ESP_OK) { voice_output_.store(false); Failure(r); return; }
         call_ = true; active_ = false; requested_at_ = esp_timer_get_time();
-        Notice("正在接通语音…", "Starting voice...");
+        Notice("正在接通语音…", "Starting voice...", false);
     }
     void Activate() {
         switch (page_) {
@@ -573,6 +594,9 @@ private:
         ESP_LOGI(TAG, "[display-diag] key ignored: holding the single test frame");
         return;
 #endif
+        if (key == Key::Voice || key == Key::Stop || key == Key::Refresh) { Shortcut(key); return; }
+        if (key != Key::Ok) confirm_.Cancel();
+        refresh_paused_.store(false);
         if (ringing_) { ringing_ = false; audio_.Stop(); RunMotor(0); notice_.clear(); Render(); return; }
         if (key == Key::Home) { EndCall(); Open(Page::Home); return; }
         if (key == Key::Back) {
@@ -586,8 +610,8 @@ private:
             return;
         }
         if (key == Key::Ok) {
-            if (screen_ready_ && displayed_.load() < important_revision_.load()) return;
-            Activate(); return;
+            // Do not drop a quick confirmation or execute an item that has not appeared yet.
+            confirm_.Request(view_revision_); RunMotor(30); return;
         }
         const int direction = key == Key::Up ? -1 : 1;
         if (page_ == Page::Calendar) {
@@ -610,7 +634,24 @@ private:
             edit_time_.tm_mday = std::min(edit_time_.tm_mday, paper::MonthDays(edit_time_.tm_year + 1900, edit_time_.tm_mon + 1));
         } else if (page_ == Page::Message) scroll_ = std::max(0, scroll_ + direction * 5);
         else if (Count()) cursor_ = (cursor_ + Count() + direction) % Count();
-        Render();
+        RunMotor(20); Render();
+    }
+    void Shortcut(Key key) {
+        confirm_.Cancel(); refresh_paused_.store(false);
+        RunMotor(60);
+        if (key == Key::Voice) {
+            if (!call_) Open(Page::Voice);
+            Voice();
+        } else if (key == Key::Stop) {
+            ++epoch_; tool_results_.clear(); screen_tool_text_.clear();
+            ringing_ = false; EndCall(); audio_.Stop();
+            if (!music_.Stop()) { Failure(ESP_ERR_TIMEOUT); return; }
+            Notice("声音已停止", "Audio stopped");
+        } else if (key == Key::Refresh) {
+            Render();
+            // Promote an already cached background change without forcing an identical frame.
+            important_revision_.store(revision_.load());
+        }
     }
     std::vector<std::string> Options() const {
         switch (page_) {
@@ -674,8 +715,8 @@ private:
         else snprintf(date, sizeof date, "%s  %s", T("等待校时", "Time not set"), battery);
         line(1, date);
         agent_link_status_t status;
-        std::string voice;
-        { std::lock_guard<std::mutex> lock(mutex_); status = status_; voice = voice_text_; }
+        const std::string& voice = displayed_voice_text_;
+        { std::lock_guard<std::mutex> lock(mutex_); status = status_; }
         line(2, status.phase == AGENT_LINK_PHASE_PAIRING ? std::string(T("激活码: ", "Claim code: ")) + status.code :
              status.phase == AGENT_LINK_PHASE_SETUP ? T("请在设置中配网", "Open Settings for WiFi setup") :
              status.phase == AGENT_LINK_PHASE_BLOCKED ? T("请检查平台绑定", "Check platform binding") :
@@ -740,11 +781,14 @@ private:
         }
         if (ringing_) line(11, T("闹钟！任意键停止", "ALARM! Any key dismisses"));
         else if (!notice_.empty()) line(11, notice_);
+        line(12, T("长按1语音 2停止 3更新", "Hold:1 Voice 2 Stop 3 Update"));
         line(13, T("1上 2下 3确认 BOOT返回", "1 Up 2 Down 3 OK BOOT Back"));
         { std::lock_guard<std::mutex> lock(mutex_);
           if (!output.Same(screen_)) {
+              const bool view_changed = std::memcmp(output.lines + 2, screen_.lines + 2, sizeof(output.lines) - 2 * sizeof(output.lines[0])) != 0;
               screen_ = output;
               const uint32_t revision = revision_.fetch_add(1) + 1;
+              if (view_changed) { view_revision_ = revision; confirm_.Cancel(); }
               if (important) important_revision_.store(revision);
           } }
     }
@@ -764,11 +808,19 @@ private:
         return;
 #endif
         paper::RefreshGate gate;
+        paper::ProbeRetry probe_retry(esp_timer_get_time());
         uint32_t handled_important = 0;
         while (true) {
             paper::Page snapshot; uint32_t revision, important;
             { std::lock_guard<std::mutex> lock(mutex_); snapshot = screen_; revision = revision_.load(); important = important_revision_.load(); }
-            if (screen_ready_) {
+            const int64_t now = esp_timer_get_time();
+            if (!screen_ready_.load() && probe_retry.Due(now)) {
+                probe_retry.Attempted(now);
+                screen_ready_.store(epd_probe());
+                if (screen_ready_.load()) ESP_LOGI(TAG, "Display boot probe recovered");
+                else if (probe_retry.Exhausted()) ESP_LOGW(TAG, "Display unavailable after three boot retries; check the panel and restart");
+            }
+            if (screen_ready_ && !refresh_paused_.load()) {
                 const auto action = gate.Observe(snapshot, important != handled_important, esp_timer_get_time());
                 if (action == paper::Refresh::kSame) { displayed_.store(revision); handled_important = important; }
                 else if (action == paper::Refresh::kDraw) {
@@ -781,14 +833,29 @@ private:
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
+    void ApplyScreenText() {
+        std::string text;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // A queued desktop message must not replace the controls of a newly started call.
+            if (!screen_text_pending_ || voice_output_.load()) return;
+            text.swap(pending_screen_text_);
+            screen_text_pending_ = false;
+        }
+        message_text_ = std::move(text);
+        page_ = Page::Message; scroll_ = 0; notice_.clear();
+        Render();
+    }
     void Tick() {
+        ApplyScreenText();
+        if (screen_ready_.load() && confirm_.Take(displayed_.load(), view_revision_)) Activate();
         const int64_t now = esp_timer_get_time();
         if (motor_until_ && now >= motor_until_) RunMotor(0);
         if (now - polled_ > 1000000) {
             polled_ = now;
             const int old_agent = agent_;
             if (!SyncAgent() && agent_) { EndCall(); agent_ = 0; ++epoch_; }
-            if (old_agent != agent_) Render();
+            if (old_agent != agent_) { confirm_.Cancel(); Render(); }
             int percent = -1; bool charging = false;
             (void)paper_battery_read(&percent, &charging); battery_.store(percent); charging_.store(charging);
             time_t stamp = time(nullptr); struct tm tm{}; localtime_r(&stamp, &tm);
@@ -800,8 +867,13 @@ private:
                 if (tm.tm_min != painted_minute_) { painted_minute_ = tm.tm_min; Render(false); }
                 if (now - rtc_saved_ > 3600000000LL) { (void)paper_rtc_write(&tm); rtc_saved_ = now; }
             }
-            if (status_changed_.exchange(false) || (page_ == Page::Voice && voice_changed_.exchange(false))) Render();
-            if (music_.Playing() != was_playing_) { was_playing_ = music_.Playing(); Render(); }
+            if (status_changed_.exchange(false)) {
+                const bool attention = status_attention_.exchange(false);
+                if (attention) refresh_paused_.store(false);
+                Render(attention);
+            }
+            UpdateVoiceText(now);
+            if (music_.Playing() != was_playing_) { was_playing_ = music_.Playing(); Render(false); }
             if (music_.Error() != last_music_error_) {
                 last_music_error_ = music_.Error();
                 if (last_music_error_ != ESP_OK) Failure(last_music_error_);
@@ -809,7 +881,7 @@ private:
         }
         if (call_) {
             if (agent_link_state() == AGENT_STATE_READY) {
-                if (!active_) { active_ = true; Render(); } audio_.SetContinuous(true);
+                if (!active_) { active_ = true; notice_.clear(); Render(); } audio_.SetContinuous(true);
             } else if (active_ || now - requested_at_ > 30000000 || agent_link_state() == AGENT_STATE_DISCONNECTED) {
                 EndCall(); Notice("通话已结束", "Call ended");
             }
@@ -820,6 +892,18 @@ private:
             int16_t tone[1600]; for (unsigned i = 0; i < 1600; ++i) tone[i] = ((i / 8) & 1) ? 5000 : -5000;
             audio_.Play(reinterpret_cast<const uint8_t*>(tone), sizeof tone); audio_.End();
         }
+    }
+    void UpdateVoiceText(int64_t now) {
+        if (page_ != Page::Voice) return;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!voice_changed_.load()) return;
+            if (!voice_final_.exchange(false) &&
+                (now - voice_text_at_.load() < 5000000 || !audio_.PlaybackIdle())) return;
+            displayed_voice_text_ = voice_text_;
+            voice_changed_.store(false);
+        }
+        Render();
     }
     static void ControlEntry(void* ctx) { static_cast<PaperS31Wifi*>(ctx)->ControlLoop(); }
     void ControlLoop() {
@@ -843,21 +927,13 @@ private:
     static void KeyEntry(void* ctx) {
         auto* self = static_cast<PaperS31Wifi*>(ctx);
         const gpio_num_t pins[] = {KEY1_GPIO, KEY2_GPIO, KEY3_GPIO, BOOT_GPIO};
-        int stable[4] = {1,1,1,1}, previous[4] = {1,1,1,1}, count[4]{};
-        int64_t pressed[4]{};
+        paper::Button buttons[4];
+        const Key taps[] = {Key::Up, Key::Down, Key::Ok, Key::Back};
+        const Key holds[] = {Key::Voice, Key::Stop, Key::Refresh, Key::Home};
         while (true) {
             for (unsigned i = 0; i < 4; ++i) {
-                const int level = gpio_get_level(pins[i]);
-                count[i] = level == previous[i] ? std::min(count[i] + 1, 3) : 1; previous[i] = level;
-                if (count[i] == 3 && stable[i] != level) {
-                    stable[i] = level;
-                    if (!level) pressed[i] = esp_timer_get_time();
-                    else if (pressed[i]) {
-                        const bool held = esp_timer_get_time() - pressed[i] >= 1000000;
-                        self->Queue(i == 0 ? Key::Up : i == 1 ? Key::Down : i == 2 ? Key::Ok : held ? Key::Home : Key::Back);
-                        pressed[i] = 0;
-                    }
-                }
+                const auto press = buttons[i].Poll(gpio_get_level(pins[i]) == 0, esp_timer_get_time());
+                if (press != paper::Press::None) self->Queue(press == paper::Press::Hold ? holds[i] : taps[i]);
             }
             vTaskDelay(pdMS_TO_TICKS(10));
         }
@@ -865,14 +941,20 @@ private:
 
     PaperWifiAudio audio_;
     PaperMusic music_;
-    bool screen_ready_ = false, battery_present_ = false, chinese_ = true, ble_saved_ = false;
+    std::atomic<bool> screen_ready_{false};
+    bool battery_present_ = false, chinese_ = true, ble_saved_ = false;
     QueueHandle_t events_ = nullptr, jobs_ = nullptr;
     std::mutex mutex_;
     agent_link_status_t status_{};
     paper::Page screen_;
-    std::string voice_text_, notice_, message_text_, tool_results_, screen_tool_text_;
+    paper::PendingConfirm confirm_;
+    uint32_t view_revision_ = 0;
+    std::string voice_text_, displayed_voice_text_, notice_, message_text_, tool_results_, screen_tool_text_, pending_screen_text_;
+    bool screen_text_pending_ = false; // Protected by mutex_, like pending_screen_text_.
     std::atomic<uint32_t> revision_{1}, displayed_{0}, important_revision_{1};
     std::atomic<bool> status_changed_{false}, voice_changed_{false}, busy_{false};
+    std::atomic<bool> status_attention_{false}, voice_final_{false}, refresh_paused_{false};
+    std::atomic<int64_t> voice_text_at_{0};
     std::atomic<bool> voice_output_{false};
     std::atomic<int> battery_{-1};
     std::atomic<bool> charging_{false};

@@ -72,6 +72,7 @@ public:
     void PlayAudio(const uint8_t* pcm, size_t bytes) override { audio_.Play(pcm, bytes); }
     void AudioEnd() override { audio_.End(); ui_.EndAnswer(); }
     void AudioReset() override { audio_.Reset(); }
+    bool SupportsListen() const override { return (Capabilities() & AGENT_CAP_MIC) != 0; }
     void OnListen(bool start, uint32_t max_ms) override { audio_.Listen(start, max_ms); }
     int GetBatteryLevel() override { return battery_.load(); }
     bool IsCharging() override { return charging_.load(); }

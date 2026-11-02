@@ -25,12 +25,27 @@ extern "C" {
  */
 #define AGENT_LINK_CMD_RESP_MAX 128
 
+/** Copied request token for a command completed by an application worker. */
+typedef struct {
+    uint16_t command_id;
+    uint8_t sequence;
+    uint32_t link_generation;
+    size_t response_capacity;
+} agent_command_request_t;
+
+/** Reply once to a queued command. Zero error means success; stale links are refused.
+ * On BLE, ESP_OK means queued for the host task, which checks the generation again
+ * before sending. Disconnect discards queued replies; it is not a delivery ACK.
+ * Request tokens and payload bytes must be copied before the callback returns.
+ */
+esp_err_t agent_link_command_reply(const agent_command_request_t* request, uint16_t error,
+                                   const uint8_t* data, size_t len);
+
 /**
  * @brief Agent → Device output callbacks
  *
  * These callbacks are invoked by the SDK when the Agent platform sends
- * commands or data to the device. All hardware operations should be
- * implemented within these callbacks.
+ * commands or data to the device. Queue slow hardware operations to workers.
  *
  * @note All callbacks are optional — set to NULL if not applicable.
  * @note Callbacks run on transport or media worker tasks. BLE callbacks may run on the small
@@ -133,6 +148,13 @@ typedef struct {
      *       A NULL callback preserves the SDK's default audio handling.
      */
     bool (*on_voice_reply)(uint32_t session_id, uint8_t status, void* ctx);
+
+    /** Return true to claim a command and reply later with agent_link_command_reply().
+     * Invoked before legacy on_command; returning false leaves normal dispatch intact.
+     * Queue work and return promptly. A full queue must send an error reply.
+     */
+    bool (*on_command_request)(const agent_command_request_t* request,
+                               const uint8_t* payload, size_t len, void* ctx);
 } agent_output_cb_t;
 
 /**
@@ -150,8 +172,8 @@ typedef void (*agent_state_cb_t)(agent_state_t state, void* ctx);
  */
 typedef enum {
     AGENT_TRANSPORT_BLE  = 0,  // BLE:GATT control + L2CAP voice; video not supported
-    AGENT_TRANSPORT_WIFI = 1,  // WiFi:control + voice + video
-    AGENT_TRANSPORT_BOTH = 2,  // Hybrid:BLE control/provisioning + WiFi media
+    AGENT_TRANSPORT_WIFI = 1,  // WiFi: control + voice; image/video streams unsupported
+    AGENT_TRANSPORT_BOTH = 2,  // Reserved hybrid mode; currently falls back to BLE
     /**
      * Muse (Meta): the device is a Muse gadget. Set up from the Muse app over BLE, then online
      * by itself over the WiFi that setup provisioned. Voice uplink becomes a voice note to the
@@ -197,7 +219,7 @@ typedef enum {
     AGENT_LINK_PHASE_PAIRING,     ///< Show @c code; the user enters it on the other side
     AGENT_LINK_PHASE_BLOCKED,     ///< Refused by the peer; @c hint says what to do
     AGENT_LINK_PHASE_CONNECTED,   ///< Peer reached, no data plane yet
-    AGENT_LINK_PHASE_READY,       ///< Fully usable: streams, events, OTA
+    AGENT_LINK_PHASE_READY,       ///< Ready for the selected backend's supported features
 } agent_link_phase_t;
 
 /**

@@ -46,6 +46,7 @@ httpd_handle_t     s_httpd      = nullptr;
 TaskHandle_t       s_dns_task   = nullptr;
 volatile bool      s_dns_run    = false;
 al_prov_creds_cb_t s_on_creds   = nullptr;
+std::string       s_platform_url;
 esp_ip4_addr_t     s_ap_ip      = { .addr = 0 };   // SoftAP gateway IP, network byte order
 char               s_ap_ip_str[16] = "192.168.4.1";
 
@@ -271,19 +272,29 @@ esp_err_t ProvisionPost(httpd_req_t* req) {
     if (s_on_creds) s_on_creds(ssid, pass);           // transport kicks off the station connect
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
-    return httpd_resp_send(req, connecting_html_start, HTTPD_RESP_USE_STRLEN);
+    std::string page(connecting_html_start);
+    std::string console_url;
+    HtmlAttrAppend(console_url, s_platform_url.c_str());
+    ReplaceAll(page, "{{PLATFORM_URL}}", console_url.c_str());
+    return httpd_resp_send(req, page.c_str(), page.size());
 }
 
 esp_err_t StatusGet(httpd_req_t* req) {
-    char json[192];
+    std::string json;
     {
         std::lock_guard<std::mutex> lk(s_status_mtx);
-        snprintf(json, sizeof json,
-                 "{\"state\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\",\"reason\":\"%s\"}",
-                 StatusName(s_status.st), s_status.ssid, s_status.ip, s_status.reason);
+        json = "{\"state\":\"";
+        JsonAppend(json, StatusName(s_status.st));
+        json += "\",\"ssid\":\"";
+        JsonAppend(json, s_status.ssid);
+        json += "\",\"ip\":\"";
+        JsonAppend(json, s_status.ip);
+        json += "\",\"reason\":\"";
+        JsonAppend(json, s_status.reason);
+        json += "\"}";
     }
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(req, json.c_str(), json.size());
 }
 
 // Anything not matched above (OS probe URLs like /generate_204, /hotspot-detect.html, /ncsi.txt,
@@ -360,9 +371,12 @@ void DnsTask(void*) {
 }  // namespace
 
 // ── Public API ───────────────────────────────────────────────────────────────────────────
-extern "C" esp_err_t al_wifi_prov_start(const char* ap_ssid, al_prov_creds_cb_t on_creds) {
+extern "C" esp_err_t al_wifi_prov_start(const char* ap_ssid, al_prov_creds_cb_t on_creds, const char* platform_url) {
     if (s_httpd) return ESP_OK;                          // already running
     s_on_creds = on_creds;
+    s_platform_url = platform_url &&
+        (strncmp(platform_url, "https://", 8) == 0 || strncmp(platform_url, "http://", 7) == 0)
+        ? platform_url : "#";
     {
         std::lock_guard<std::mutex> lk(s_status_mtx);
         s_status = ProvStatus{};

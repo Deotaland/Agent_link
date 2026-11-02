@@ -1,7 +1,9 @@
 # Korvo WiFi
 
 Profile: `korvo-wifi`. Shared hardware is in `boards/korvo/`; this application
-provides camera preview, platform conversations, realtime voice and servo control.
+provides local camera preview, platform conversations, realtime voice and servo
+control. Agent image upload and reply-text display are not implemented or
+advertised; no `camera0` upload endpoint is registered.
 Set up WiFi through `KorvoCloud-XXXX`, claim the activation code in the console
 and bind an Agent there. See [realtime voice](../../components/agent_link/REALTIME.md)
 for authentication, audio and validation status.

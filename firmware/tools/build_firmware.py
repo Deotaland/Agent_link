@@ -280,7 +280,7 @@ def selected_profile(profiles, config, fallback=None):
     for name in [legacy, fallback, read_state().get("profile")]:
         if name in profiles:
             return name
-    return "ai-passport-ble" if values.get("CONFIG_IDF_TARGET") == '"esp32c3"' else "rorolee-ble"
+    return None
 
 
 def choose_profile(profiles, current, read=input):
@@ -288,10 +288,11 @@ def choose_profile(profiles, current, read=input):
     print("Choose firmware:")
     for number, name in enumerate(names, 1):
         marker = " *" if name == current else ""
-        print(f"  {number:2}. {name:24} {profiles[name]['target']}{marker}")
+        profile = profiles[name]
+        print(f"  {number:2}. {name:28} {profile['board']} / {profile['target']} / {profile['backend']}{marker}")
     while True:
-        answer = read(f"Number (Enter keeps {current}): ").strip()
-        if not answer:
+        answer = read(f"Number (Enter keeps {current}): " if current else "Number (select your hardware explicitly): ").strip()
+        if not answer and current:
             return current
         if answer.isdecimal() and 1 <= int(answer) <= len(names):
             return names[int(answer) - 1]
@@ -372,7 +373,9 @@ def build(args, profile):
     idf_path = Path(context.get("path", ""))
     idf = idf_path / "tools/idf.py"
     if not idf.is_file() or not shutil.which("cmake"):
-        raise ValueError("Activate an ESP-IDF 5.5.x or 6.1.x environment before building")
+        raise ValueError("Activate an ESP-IDF 5.5.x or 6.1.x environment before building. "
+                         f"From the repository root run: python tools/check_env.py --profile {args.profile}. "
+                         "Installation and China/offline downloads: guides/environment.zh-CN.md")
     if not supported_idf(context["version"]):
         raise ValueError("This firmware supports ESP-IDF 5.5.x and 6.1.x")
     if not (idf_path / "components/soc" / profile["target"]).is_dir():
@@ -438,7 +441,11 @@ def main():
         elif args.check:
             print(f"Checked {len(profiles)} firmware profiles against the board catalog.")
         elif args.resolve:
-            print(selected_profile(profiles, args.sdkconfig, args.fallback))
+            selected = selected_profile(profiles, args.sdkconfig, args.fallback)
+            if not selected:
+                raise ValueError("No firmware profile selected. Run python tools/build_firmware.py "
+                                 "in a terminal, or provide an explicit profile from --list.")
+            print(selected)
         elif args.profile is None:
             if not sys.stdin.isatty():
                 parser.error("choose firmware in menuconfig, or run this tool in a terminal to select from the list")

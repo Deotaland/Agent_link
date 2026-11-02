@@ -16,7 +16,9 @@ does not flash. Hardware and live-platform acceptance remain pending.
 The firmware boots into a bilingual application menu. See the
 [desktop guide](../../apps/paper-s31-wifi/README.md) for keys, daily alarm,
 calendar, SD WAV playback, LLM messages/history, local JSON tools and settings.
-KEY1 moves up, KEY2 moves down, KEY3 confirms and BOOT returns.
+Short press KEY1/2/3 for up/down/confirm, and BOOT for back. One-second holds
+provide voice start/end (KEY1), stop all audio (KEY2), update the screen (KEY3)
+and home (BOOT). Voice/stop shortcuts do not wait for a screen refresh.
 
 `paper-s31-wifi` uses the SDK WiFi backend, platform product 8 (`paper-s31`)
 from `profiles/products.json` on `bot.deotaland.cn`, and chip type `esp32-s31`.
@@ -43,24 +45,29 @@ response is rejected. The platform must accept PCM16.
 The selected 3.6-inch panel displays the UI rotated 180 degrees from its default
 direction (`EPD_ROTATION=180`), retaining the 400x600 logical resolution.
 
-The current profile temporarily enables a single-frame diagnostic mode for
-persistent old/new-image superimposition. It displays S31 DISPLAY TEST once,
-then holds even after an error; menu keys and app timers are disabled. See the
-[diagnostic instructions](../../apps/paper-s31-wifi/README.md#current-display-diagnosis)
-for logs and how to restore the normal desktop. The following refresh policy
-applies in normal desktop mode.
+The normal desktop is the default. For an explicit display investigation,
+CONFIG_PAPER_S31_DISPLAY_DIAGNOSTIC enables a single static test frame and
+suppresses menu keys and application timers. See the
+[diagnostic instructions](../../apps/paper-s31-wifi/README.md#optional-display-diagnosis).
+Do not distribute a diagnostic build as the normal desktop.
 
 Rendering supports Chinese and English using the shared raster CJK font. The panel uses full
 refreshes with visible flashing, typically about 15 seconds. Network and audio
 run on separate workers.
 
-Updates wait for three seconds of stable content and compare rendered text
-before refreshing. Routine updates wait at least 180 seconds after the last
-refresh completes. Activation, stable errors, online state, menus and completed
-replies can update sooner, with a ten-second minimum. Reply text is submitted
-after audio completion or five seconds without a text change. Failed refreshes
-wait at least 60 seconds before retrying. Battery and charging changes accompany
-other updates instead of forcing a refresh.
+The 3.6-inch display is rotated 180 degrees. Updates wait for three seconds of
+stable content and compare rendered text before refreshing. Necessary updates
+retain a ten-second minimum after refresh completes. Clock, battery and ordinary
+link changes are cached until another necessary/manual update. HTTP loading
+states are held until completion unless the user navigates or requests an
+update. Voice replies wait for audio end, or five seconds of stable text with
+no queued audio. Setup/activation/blocked states still request a refresh. Failed
+refreshes wait at least 60 seconds before retrying.
+
+A failed startup probe is retried up to three times, at least five seconds
+apart, on the screen worker. If one succeeds, the latest queued page is drawn;
+otherwise check the panel and restart. Standard `screen0` commands remain
+registered while recovering and queue text for the message page outside calls.
 
 The screen worker coalesces navigation changes while network, keys and audio
 continue on their own workers. Background time/battery updates do not bypass
@@ -81,6 +88,12 @@ Confirm ribbon orientation and power against the board schematic.
 | Motor / LED | 42 / 3, active high |
 | Battery / RTC / IMU | 0x55 / 0x51 / 0x18 or 0x19 |
 | USB serial | USB-C, GPIO33/34 |
+
+`TOP_LED_EN_GPIO` (GPIO3, U30 FPC pin 8) is an LED output. KEY1/2/3 are GPIO13/14/15
+on FPC pins 9/10/11. SW4 is the separate hardware power key, sensed by GPIO6;
+the vendor test identifies a SAM8108 power circuit and about a three-second
+hold to turn off. BOOT is SW2/GPIO61 and has a separate function. The firmware
+only configures GPIO6 as an input; power control is not assigned to a menu key.
 
 See `board_pins.h` for the full map. GPIO36 is also a flash-voltage strap; preserve
 its boot level. Camera power remains off. Opening SD music or rescanning the

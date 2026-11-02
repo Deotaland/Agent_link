@@ -128,8 +128,9 @@ device testing.
 
 ## Acceptance
 
-The current shared ES8311 driver uses the I2S port type from IDF 5.5. IDF 6.1
-compilation is not supported for this port until that shared interface is adapted.
+The shared ES8311 configuration uses a controller number and adapts to the
+SDK channel field type, including IDF 6.1. A complete 6.1 build and device
+acceptance of this profile remain separate validation tasks.
 
 Host checks: `python firmware/tests/test_epaper_controls.py` and
 `python firmware/tests/test_platform_api.py --idf-path PATH_TO_IDF_5_5`.

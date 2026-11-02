@@ -40,8 +40,11 @@ def _check_entry(b, where):
             problems.append(f"{where}: {k} must be a list")
     if "zh" in b:
         problems.append(f"{where}: remove translated fields; catalog metadata is English only")
-    if re.search(r"[\u3400-\u9fff\uf900-\ufaff]", json.dumps(b, ensure_ascii=False)):
-        problems.append(f"{where}: catalog text and aliases must use English")
+    if isinstance(b["aliases"], list) and any(not isinstance(alias, str) or not alias.strip() for alias in b["aliases"]):
+        problems.append(f"{where}: aliases must be non-empty strings")
+    if re.search(r"[\u3400-\u9fff\uf900-\ufaff]", json.dumps(
+            {key: value for key, value in b.items() if key != "aliases"}, ensure_ascii=False)):
+        problems.append(f"{where}: catalog identities/text must use English; aliases may be localized")
     return problems
 
 

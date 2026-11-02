@@ -14,7 +14,12 @@
         "paper-s31",
         "paper V2",
         "ESP32-S31",
-        "S31"
+        "S31",
+        "墨纸坊",
+        "墨纸坊paper",
+        "墨纸坊paper V2",
+        "墨纸坊二代",
+        "彩色墨水屏S31"
       ],
       "hardware": "ESP32-S31NRV16, ES8389, Waveshare 3.6-inch e-Paper (E), BQ27220, PCF85063, SC7A20",
       "identify": "paper V2 board; 3.6-inch 400x600 six-color display on U1 (50 pins), H1 BS0 grounded",

@@ -7,6 +7,7 @@
 #if !AGENT_LINK_BUILD_BLE
 
 extern "C" agent_transport_t* agent_transport_ble(void) { return nullptr; }
+extern "C" esp_err_t agent_transport_ble_command_reply(uint32_t, const uint8_t*, size_t) { return ESP_ERR_NOT_SUPPORTED; }
 extern "C" void agent_transport_ble_set_name(const char*) {}
 extern "C" void agent_transport_ble_set_recv(void (*)(const uint8_t*, size_t)) {}
 extern "C" void agent_transport_ble_set_conn(void (*)(bool)) {}

@@ -1617,8 +1617,4 @@ void SetServoResult(const KorvoCloudServo8::Command& command, esp_err_t result,
     s_servo_result_rev.fetch_add(1, std::memory_order_release);
 }
 
-void SetVoiceText(const char* utf8) {
-    (void)utf8;
-}
-
 }  // namespace kc_ui

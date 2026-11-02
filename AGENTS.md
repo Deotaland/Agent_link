@@ -10,8 +10,10 @@ in [skills/](skills/README.md) for device tasks.
   edits. Do not create another checkout, commit, push or merge without permission.
 - Default to compiling and packaging only. Flashing or opening a serial port
   requires an explicit request for that run; do not reuse earlier flashing consent.
-- For a flashing request, identify the hardware before writing. Build and inspect
-  ports first; use existing consent for the requested flash. Explain the image,
+- For a flashing request, identify the hardware and match a published package
+  or build the selected source profile, then identify the port. Browser flashing
+  of published firmware does not require compilation. Use existing consent for
+  the requested flash. Explain the image,
   port and settings impact before writing. A full erase needs explicit consent.
 - Keep credentials out of source, public defaults, logs and shared images. Private
   build settings belong in ignored `firmware/sdkconfig.private`; `sdkconfig` is
@@ -24,6 +26,40 @@ in [skills/](skills/README.md) for device tasks.
   finished; leave the user's monitors and editors alone.
 
 ## Flash a device from its name
+
+Start with [first use](guides/getting-started.md) for new users. Before choosing
+BLE confirm the unpublished Deotaland app is available; otherwise check for a
+supported WiFi alternative. Muse and local-only applications have separate flows.
+For an existing device, first look for matching published firmware in the
+[developer console's firmware center](https://bot.deotaland.cn/#/firmware).
+It supports direct browser flashing, not just downloads. This route requires
+no checkout, Git, Python, ESP-IDF or compilation. Do not clone this repository
+or install development tools just because the user lacks them. If GitHub is
+unavailable but the firmware center is accessible, continue with browser guidance.
+
+Limit this route to supported products with matching packages actually published
+in the center. It only writes precompiled firmware; it does not edit/build source
+or port new boards. Recommend current desktop Chrome/Edge on Windows/macOS with
+Web Serial enabled and port permission; Chromium branding alone is insufficient.
+Safari/Firefox, mobile/tablet and embedded app browsers are outside this guide.
+Web Serial availability on Linux/ChromeOS is not project device-test evidence.
+Check OS serial recognition and the correct USB driver before blaming firmware.
+
+Guide desktop Chrome/Edge, console sign-in, USB data cable, hardware/chip filters,
+release notes and exact revision/backend matching, then the firmware row's Flash
+action and the correct serial-port selection. Use a full flash package for USB,
+explain settings impact, and guide post-flash setup. Without browser control,
+give these steps for the user to perform. Do not claim a write or online status
+without observed evidence. A catalog profile does not guarantee a published image.
+
+Continue with the source/local-terminal steps below only when the user needs
+custom firmware, no matching release is available, or explicitly chooses that route.
+For missing/inactive tools use [agent-link-setup](skills/agent-link-setup/SKILL.md)
+and the [China/offline environment guide](guides/environment.zh-CN.md). From the
+repository root run `python tools/check_env.py --profile PROFILE`. Locate and
+activate compatible existing installations before installing anything. Use only
+the selected target; preserve global Git/pip/proxy settings and other SDKs.
+Browser use of matching prebuilt firmware does not need ESP-IDF.
 
 1. Run from the repository root:
 
@@ -70,10 +106,9 @@ in [skills/](skills/README.md) for device tasks.
    `transport` against the selected catalog entry. Keep the matching ELF for crash
    decoding. Report flashing, boot verification and online setup separately.
 
-Without a terminal, guide the user through the [firmware center](https://bot.deotaland.cn/#/firmware)
-in desktop Chrome or Edge. Select the identified product's full package, connect
-its serial port and leave full-chip erase off. If no package is available, build
-from source with a terminal-capable assistant.
+Browser flashing does not require the terminal steps above. Leave full-chip
+erase off unless explicitly requested. If no package is available, explain the
+source-build route and use a terminal-capable assistant when the user chooses it.
 
 ## Setup after flashing
 
@@ -97,6 +132,9 @@ see the [Muse notes](firmware/components/muse_gadget/README.md).
 
 Generated from `firmware/boards/*/config.json` and `firmware/profiles/profiles.json`.
 Run `python tools/board_catalog.py` after changing either.
+`supported` means a source profile exists, not completed device acceptance.
+Read each entry's notes for hardware variants and pending tests; first actions
+are listed in the [device guide](guides/devices.md).
 
 <!-- boards:begin -->
 | Model | Board | Profile | Chip | Link | Status |

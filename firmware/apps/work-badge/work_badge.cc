@@ -61,7 +61,7 @@ FieldEndpoint g_fields[] = {
        .display_name = "Company" }, badge::Field::kCompany},
 };
 
-// Runs on the transport task: store + persist, and let the render task pick the change up.
+// Copy the field and notify storage; the transport task never commits NVS.
 void OnFieldWrite(const char* /*id*/, const uint8_t* args, size_t len, void* ctx) {
     auto* ep = static_cast<FieldEndpoint*>(ctx);
     badge::Data::Instance().Set(ep->field, reinterpret_cast<const char*>(args), len);

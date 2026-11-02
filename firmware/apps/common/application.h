@@ -18,8 +18,8 @@ public:
     // This board's capabilities
     virtual uint32_t Capabilities() const = 0;
 
-    // Hardware model, reported to the App and checked on every OTA image it pushes, so a build
-    // for other hardware cannot be flashed here. Boards sharing a PCB must return the same
+    // Hardware model reported to the App and required in OTA request metadata.
+    // This compatibility check is not image-publisher authentication. Shared PCBs use the same
     // string - rorolee-s3 and work-badge are the same board, both "RRL-01". Default: Name().
     virtual const char* Model() const { return Name(); }
 
@@ -39,6 +39,7 @@ public:
     // with a mic to open an AGENT_STREAM_AUDIO stream and pump the mic into it; max_ms is a
     // suggested cap, 0 meaning "until stopped". Only reached when AGENT_CAP_MIC is advertised.
     virtual void OnListen(bool start, uint32_t max_ms) { (void)start; (void)max_ms; }
+    virtual bool SupportsListen() const { return false; }
 
     // A control command the SDK does not handle itself. Return true to claim it (filling resp /
     // resp_len with any response data), false to let the SDK answer. Claiming is how a board
@@ -48,6 +49,13 @@ public:
     virtual bool OnCommand(uint16_t cmd, const uint8_t* payload, size_t len,
                            uint8_t* resp, size_t resp_cap, size_t* resp_len) {
         (void)cmd; (void)payload; (void)len; (void)resp; (void)resp_cap; (void)resp_len;
+        return false;
+    }
+
+    // Claim a queued command; copy the token/payload and reply from a worker.
+    virtual bool OnCommandRequest(const agent_command_request_t& request,
+                                  const uint8_t* payload, size_t len) {
+        (void)request; (void)payload; (void)len;
         return false;
     }
 
