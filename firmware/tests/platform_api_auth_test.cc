@@ -59,6 +59,12 @@ esp_err_t esp_http_client_perform(TestHttp* client) {
     const Expected& next = expected[consumed++];
     CHECK(client->config.method == next.method);
     CHECK(client->url == "https://platform.example.test" + next.path);
+    // The actual ESP-IDF sender cannot split its request line across buffers.
+    const std::string method = next.method == HTTP_METHOD_GET ? "GET" :
+                               next.method == HTTP_METHOD_POST ? "POST" : "DELETE";
+    const std::string first_write = method + " " + next.path +
+                                   " HTTP/1.1\r\nHost: platform.example.test\r\n";
+    CHECK(first_write.size() < static_cast<size_t>(client->config.buffer_size_tx));
     CHECK(client->headers["X-Device-Auth-Key"] == device_key);
     CHECK(client->headers.count("Authorization") == 0 && client->headers.count("X-Token") == 0);
     if (!next.body.empty()) CHECK(client->body == next.body);
@@ -192,6 +198,89 @@ int main() {
     CHECK(count == 3 && total == 23);
     CHECK(std::strcmp(sessions[0].id, "s18") == 0 && std::strcmp(sessions[2].id, "s20") == 0);
     std::puts("PASS: cursor pagination spans the first 20 results without skipping boundary conversations");
+
+    // The live platform returns 323-byte opaque cursors for limit=3.
+    // Also exercise escaped cursors whose request URL exceeds the old 800-byte buffer.
+    for (const size_t length : {323u, 1024u}) {
+        const std::string cursor(length, length == 323 ? 'a' : '+');
+        std::string encoded;
+        for (char ch : cursor) encoded += ch == '+' ? "%2B" : "a";
+        const std::string first = R"({"code":0,"success":true,"data":{"items":[{"conversation_id":"recent"},{"conversation_id":"older"}],"has_more":true,"next_cursor":")" + cursor + R"("}})";
+        Expect(HTTP_METHOD_GET, kListPath.c_str(), first.c_str());
+        Expect(HTTP_METHOD_GET, (kListPath + "&cursor=" + encoded).c_str(),
+               R"({"data":{"items":[{"conversation_id":"oldest"}],"has_more":false}})");
+        CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_OK);
+        CHECK(count == 3 && total == 3);
+        CHECK(std::strcmp(sessions[0].id, "recent") == 0 && std::strcmp(sessions[2].id, "oldest") == 0);
+    }
+    std::puts("PASS: long opaque and URL-escaped cursors preserve all conversations");
+
+    // The official C3 build failed on this live page shape: 1, 1, 2, 2 rows,
+    // with a 323-byte cursor between pages. Keep all identifiers synthetic.
+    const std::string live_cursors[] = {
+        std::string(323, 'a'), std::string(323, 'b'), std::string(323, 'c')};
+    const std::string live_pages[] = {
+        R"({"code":0,"success":true,"data":{"items":[{"conversation_id":"page-session-1"}],"has_more":true,"next_cursor":")" + live_cursors[0] + R"("}})",
+        R"({"code":0,"success":true,"data":{"items":[{"conversation_id":"page-session-2"}],"has_more":true,"next_cursor":")" + live_cursors[1] + R"("}})",
+        R"({"code":0,"success":true,"data":{"items":[{"conversation_id":"page-session-3"},{"conversation_id":"page-session-4"}],"has_more":true,"next_cursor":")" + live_cursors[2] + R"("}})",
+        R"({"code":0,"success":true,"data":{"items":[{"conversation_id":"page-session-5"},{"conversation_id":"page-session-6"}],"has_more":false,"next_cursor":null}})"};
+    const auto expect_live_pages = [&](unsigned pages) {
+        for (unsigned i = 0; i < pages; ++i) {
+            const std::string path = i ? kListPath + "&cursor=" + live_cursors[i - 1] : kListPath;
+            Expect(HTTP_METHOD_GET, path.c_str(), live_pages[i].c_str());
+        }
+    };
+    expect_live_pages(3);
+    CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_OK);
+    CHECK(count == 3 && total > 3);
+    CHECK(std::strcmp(sessions[0].id, "page-session-1") == 0);
+    CHECK(std::strcmp(sessions[1].id, "page-session-2") == 0);
+    CHECK(std::strcmp(sessions[2].id, "page-session-3") == 0);
+    expect_live_pages(4);
+    CHECK(agent_link_platform_conversations(7, 3, sessions, 3, &count, &total) == ESP_OK);
+    CHECK(count == 3 && total == 6);
+    CHECK(std::strcmp(sessions[0].id, "page-session-4") == 0);
+    CHECK(std::strcmp(sessions[1].id, "page-session-5") == 0);
+    CHECK(std::strcmp(sessions[2].id, "page-session-6") == 0);
+    std::puts("PASS: live C3 sparse pages and 323-byte cursors fill both menu pages without skipping conversations");
+
+    // Agent filtering can leave an empty page while the upstream cursor advances.
+    const std::string filtered_cursor(323, 'f');
+    const std::string empty_page = R"({"data":{"items":[],"has_more":true,"next_cursor":")" + filtered_cursor + R"("}})";
+    Expect(HTTP_METHOD_GET, kListPath.c_str(), empty_page.c_str());
+    Expect(HTTP_METHOD_GET, (kListPath + "&cursor=" + filtered_cursor).c_str(),
+           R"({"data":{"items":[],"has_more":true,"next_cursor":"last-page"}})");
+    Expect(HTTP_METHOD_GET, (kListPath + "&cursor=last-page").c_str(),
+           R"({"data":{"items":[{"conversation_id":"owned-after-filter"}],"has_more":false}})");
+    CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_OK);
+    CHECK(count == 1 && total == 1 && std::strcmp(sessions[0].id, "owned-after-filter") == 0);
+    Expect(HTTP_METHOD_GET, kListPath.c_str(), empty_page.c_str());
+    Expect(HTTP_METHOD_GET, (kListPath + "&cursor=" + filtered_cursor).c_str(),
+           R"({"data":{"items":[],"has_more":false,"next_cursor":null}})");
+    CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_OK);
+    CHECK(count == 0 && total == 0);
+    const char* stuck_empty_page = R"({"data":{"items":[],"has_more":true,"next_cursor":"stuck"}})";
+    Expect(HTTP_METHOD_GET, kListPath.c_str(), stuck_empty_page);
+    Expect(HTTP_METHOD_GET, (kListPath + "&cursor=stuck").c_str(), stuck_empty_page);
+    CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_ERR_INVALID_RESPONSE);
+    CHECK(count == 0 && total == 0);
+    std::puts("PASS: empty filtered pages advance, wholly empty lists succeed, stuck cursors fail");
+
+    const std::string excessive_cursor(1025, 'z');
+    const std::string excessive_page = R"({"data":{"items":[{"conversation_id":"recent"}],"has_more":true,"next_cursor":")" + excessive_cursor + R"("}})";
+    Expect(HTTP_METHOD_GET, kListPath.c_str(), excessive_page.c_str());
+    captured_logs.clear();
+    CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_ERR_INVALID_RESPONSE);
+    CHECK(count == 0 && total == 0);
+    CHECK(captured_logs.find("invalid pagination") != std::string::npos);
+    CHECK(captured_logs.find(excessive_cursor) == std::string::npos);
+
+    const char* repeated_page = R"({"data":{"items":[{"conversation_id":"recent"}],"has_more":true,"next_cursor":"same"}})";
+    Expect(HTTP_METHOD_GET, kListPath.c_str(), repeated_page);
+    Expect(HTTP_METHOD_GET, (kListPath + "&cursor=same").c_str(), repeated_page);
+    CHECK(agent_link_platform_conversations(7, 0, sessions, 3, &count, &total) == ESP_ERR_INVALID_RESPONSE);
+    CHECK(count == 0 && total == 0);
+    std::puts("PASS: oversized and repeated cursors fail safely without logging cursor contents");
 
     configuration = cJSON_Parse(R"({"agent":{"id":8,"name":"Rebound agent","capabilities":{"realtime_voice":{}}}})");
     cloud_platform_set_bound_agent(configuration); cJSON_Delete(configuration);
