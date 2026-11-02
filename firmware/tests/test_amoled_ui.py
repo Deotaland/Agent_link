@@ -1,13 +1,18 @@
 """Render the production AMOLED UI with native LVGL; no hardware or serial I/O."""
 from pathlib import Path
+import argparse
 import hashlib
 import os
 import shutil
 import subprocess
 import json
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--rotation', type=int, choices=(0, 90), default=0)
+args = parser.parse_args()
+
 root = Path(__file__).resolve().parents[1]
-app = root / 'apps/waveshare-amoled-175C-wifi'
+app = root / 'apps/common/amoled-wifi'
 lvgl = root / 'managed_components/lvgl__lvgl'
 build = root / 'build/amoled-voice-tests/ui'
 build.mkdir(parents=True, exist_ok=True)
@@ -50,6 +55,9 @@ prefix = r'''
 #include "amoled_fonts.h"
 #include "amoled_voice_layout.h"
 #include "amoled_voice_controls.h"
+#include "amoled_orientation.h"
+
+constexpr int DISPLAY_ROTATION_CW=0;
 using esp_err_t = int;
 constexpr int ESP_OK=0, DISPLAY_WIDTH=466, DISPLAY_HEIGHT=466, UI_DRAW_BUF_ROWS=40, AUDIO_DEFAULT_VOLUME=60;
 constexpr int DISPLAY_BRIGHTNESS=200, DISPLAY_BRIGHTNESS_DIM=20;
@@ -69,8 +77,13 @@ unsigned pdMS_TO_TICKS(unsigned value) { return value; }
 void vTaskDelay(unsigned value) { clock_us += value * 1000; }
 struct Co5300Panel {
     uint16_t pixels[466*466]={};
+    bool fail_next=false;
+    int recover_error=0, recover_calls=0, draw_calls=0;
+    int Recover(bool* recovered) { ++recover_calls; *recovered=recover_error==0; return recover_error; }
     int SetBrightness(int) { return 0; }
     int DrawBitmap(int x, int y, int w, int h, const void* data) {
+        ++draw_calls;
+        if(fail_next) { fail_next=false; return -1; }
         auto* p=static_cast<const uint16_t*>(data);
         for (int j=0;j<h;++j) for (int i=0;i<w;++i) {
             assert(x+i>=0 && x+i<466 && y+j>=0 && y+j<466);
@@ -80,7 +93,7 @@ struct Co5300Panel {
     }
 };
 namespace cst9217 { struct Point { int x=0, y=0; bool pressed=false; }; }
-struct Cst9217Touch { int Poll(cst9217::Point* p) { *p={}; return 0; } };
+struct Cst9217Touch { cst9217::Point sample; int Poll(cst9217::Point* p) { *p=sample; return 0; } };
 std::vector<char> font_image;
 lv_font_t* LoadCjkFont(const char*, int32_t size, uint32_t cache) {
     return lv_tiny_ttf_create_data_ex(font_image.data()+32, font_image.size()-32, size, LV_FONT_KERNING_NONE, cache);
@@ -88,7 +101,7 @@ lv_font_t* LoadCjkFont(const char*, int32_t size, uint32_t cache) {
 '''
 header = (app/'amoled_voice_ui.h').read_text(encoding='utf-8')
 header = header[header.index('namespace amoled_voice {'):]
-fonts = (root/'boards/waveshare-amoled-175C/amoled_fonts.cc').read_text(encoding='utf-8')
+fonts = (root/'apps/common/amoled-wifi/amoled_fonts.cc').read_text(encoding='utf-8')
 fonts = '\n'.join(l for l in fonts.splitlines() if not l.startswith('#include'))
 source = (app/'amoled_voice_ui.cc').read_text(encoding='utf-8')
 source = source[source.index('namespace amoled_voice {'):]
@@ -102,13 +115,88 @@ source = source.replace('    while (true) {', '    for (int preview_frame=0; pre
 for declaration in ['uint32_t seen =', 'size_t offset =', 'bool dim =', 'int64_t activity_at =', 'Activity state =', 'uint32_t ring_color =']:
     begin = source.index('void Render(')
     source = source[:begin] + source[begin:].replace('    ' + declaration, '    static ' + declaration, 1)
-start = source.index('void Render(')
-source = source[:start] + source[start:].replace('unsigned ring_opacity = 0;', 'static unsigned ring_opacity = 0;', 1)
 
 post = r'''
 using namespace amoled_voice;
 Input last_input{};
-bool InputHandlerTest(const Input& input, void*) { last_input=input; return true; }
+int row_inputs=0;
+bool InputHandlerTest(const Input& input, void*) {
+    last_input=input; if(input.action==TouchAction::kRow) ++row_inputs; return true;
+}
+void TouchSample(Cst9217Touch& touch, bool down, int x, int y) {
+    if constexpr (DISPLAY_ROTATION_CW==90) {
+        const int old_x=x; x=465-y; y=old_x;
+    }
+    touch.sample.x=x; touch.sample.y=y; touch.sample.pressed=down;
+    clock_us+=40000; Render(nullptr);
+}
+void CheckVolumeDrag(lv_display_t* display) {
+    Cst9217Touch touch; touch_=&touch;
+    pointer_=lv_indev_create(); lv_indev_set_type(pointer_,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer_,display); lv_indev_set_read_cb(pointer_,ReadTouch);
+    const auto feed=[&](bool down,int x,int y) { TouchSample(touch,down,x,y); };
+    lv_area_t track; lv_obj_get_coords(slider_,&track);
+    const int y=(track.y1+track.y2)/2;
+    feed(true,track.x1+100,y);
+    feed(true,track.x1+140,y);
+    const int dragged=lv_slider_get_value(slider_); assert(dragged>=68 && dragged<=72);
+    // CST9217 release frames carry no position. They decode to zero coordinates.
+    touch.sample={}; clock_us+=40000; Render(nullptr);
+    assert(lv_slider_get_value(slider_)==dragged);
+    assert(last_input.action==TouchAction::kVolume && last_input.row==dragged && last_input.commit);
+    feed(true,track.x1+140,y);
+    SetAnswer("通话中的新回复。拖动音量时收到文本也不能打断滑块。");
+    feed(true,track.x1+100,y+6);
+    feed(true,track.x1+60,y-6);
+    feed(true,track.x1+20,y+4);
+    assert(lv_slider_get_value(slider_)>=8 && lv_slider_get_value(slider_)<=12);
+    assert(!pending_ && shown_kind_==View::kHome); // A long volume drag is not a page swipe.
+    touch.sample={}; clock_us+=40000; Render(nullptr);
+    assert(last_input.action==TouchAction::kVolume && last_input.row>=8 && last_input.row<=12 && last_input.commit);
+    lv_indev_delete(pointer_); pointer_=nullptr; touch_=nullptr;
+    puts("Volume pointer input: in-call drag and zero-position release retain the dragged value.");
+}
+void CheckCallRefreshBudget(Co5300Panel& panel) {
+    Screen call=screen_; call.calling=true; call.ended=false; call.activity=Activity::kListening;
+    SetScreen(call);
+    for(int i=0;i<3;++i) { clock_us+=100000; Render(nullptr); lv_refr_now(nullptr); }
+    const int draws=panel.draw_calls;
+    for(int i=0;i<10;++i) { clock_us+=100000; Render(nullptr); lv_refr_now(nullptr); }
+    // An unchanged call must not keep redrawing the full display between input polls.
+    assert(panel.draw_calls==draws);
+    puts("In-call refresh: no background redraws while state and reply are unchanged.");
+}
+void CheckMenuTaps(lv_display_t* display) {
+    Cst9217Touch touch; touch_=&touch;
+    pointer_=lv_indev_create(); lv_indev_set_type(pointer_,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer_,display); lv_indev_set_read_cb(pointer_,ReadTouch);
+    lv_area_t row; lv_obj_get_coords(rows_[0],&row);
+    const int x=(row.x1+row.x2)/2, y=(row.y1+row.y2)/2;
+    const auto feed=[&](bool down,int px,int py) { TouchSample(touch,down,px,py); };
+    feed(true,x,y); feed(true,x+2,y+2); feed(false,x+2,y+2);
+    assert(row_inputs==1 && last_input.action==TouchAction::kRow && last_input.row==0);
+    pending_=false;
+    // Slow movement stays inside one row and never exceeds LVGL's per-sample
+    // movement threshold; accumulated displacement must still cancel the tap.
+    feed(true,x,y);
+    for(int dx=1;dx<=16;++dx) feed(true,x+dx,y);
+    feed(false,x+16,y); assert(row_inputs==1);
+    // Leaving and returning within one contact must not re-arm the option.
+    feed(true,x,y); feed(true,row.x1-2,y); feed(true,x,y); feed(false,x,y);
+    assert(row_inputs==1);
+    // A vertical drag that ends over another option cannot select either row.
+    feed(true,x,y); feed(true,x,y+kRowHeight); feed(false,x,y+kRowHeight);
+    assert(row_inputs==1);
+    lv_obj_scroll_to_y(list_,0,LV_ANIM_OFF);
+    // Re-entry from outside the circular input area is still the same contact.
+    feed(true,x,y); feed(true,0,0); feed(true,x,y); feed(false,x,y);
+    assert(row_inputs==1);
+    feed(true,x,y); feed(false,x,y); assert(row_inputs==2);
+    pending_=false;
+    feed(true,x,y); ++shown_view_; feed(false,x,y); assert(row_inputs==2); --shown_view_;
+    lv_indev_delete(pointer_); pointer_=nullptr; touch_=nullptr;
+    puts("Menu taps: jitter accepted; slow drag, leave/re-enter, cross-row scroll, circle exit and stale-view clicks rejected.");
+}
 void Frame(const char* name) {
     clock_us+=100000; Render(nullptr); lv_refr_now(nullptr);
     FILE* out=fopen(name,"wb"); assert(out); fprintf(out,"P6\n466 466\n255\n");
@@ -126,10 +214,22 @@ int main(int argc, char** argv) {
     lv_init(); lv_tick_set_cb(Tick);
     static Co5300Panel panel; panel_=&panel; handler_=InputHandlerTest;
     static uint8_t buffer[466*40*2];
+    static uint8_t rotated[sizeof buffer];
+    if constexpr (DISPLAY_ROTATION_CW == 90) rotated_pixels_=rotated;
     auto* display=lv_display_create(466,466);
     lv_display_set_color_format(display,LV_COLOR_FORMAT_RGB565);
     lv_display_set_flush_cb(display,Flush);
     lv_display_set_buffers(display,buffer,nullptr,sizeof buffer,LV_DISPLAY_RENDER_MODE_PARTIAL);
+    // Exercise the real flush callback with an asymmetric partial rectangle.
+    lv_area_t area{20,30,23,31};
+    uint16_t pattern[]{1,2,3,4,5,6,7,8};
+    Flush(display,&area,reinterpret_cast<uint8_t*>(pattern));
+    for(int y=0;y<2;++y) for(int x=0;x<4;++x) {
+        const int px=DISPLAY_ROTATION_CW==90 ? 465-(30+y) : 20+x;
+        const int py=DISPLAY_ROTATION_CW==90 ? 20+x : 30+y;
+        assert(panel.pixels[py*466+px]==y*4+x+1);
+    }
+    memset(panel.pixels,0,sizeof panel.pixels);
     Screen screen; screen.view=1; screen.navigation=1; screen.calling=true; screen.activity=Activity::kListening;
     snprintf(screen.title,sizeof screen.title,"Agent Link"); snprintf(screen.detail,sizeof screen.detail,"日常对话");
     snprintf(screen.footer,sizeof screen.footer,"BOOT 挂断 · 左滑应用");
@@ -154,6 +254,8 @@ int main(int argc, char** argv) {
     Frame("reply.ppm"); assert(lv_obj_get_scroll_y(answer_view_)==old_y);
     screen.calling=false; screen.ended=true; screen.activity=Activity::kIdle; SetScreen(screen);
     Frame("ended.ppm"); assert(!strcmp(lv_label_get_text(heading_),"通话已结束"));
+    CheckCallRefreshBudget(panel);
+    CheckVolumeDrag(display);
     lv_slider_set_value(slider_,66,LV_ANIM_OFF); lv_obj_send_event(slider_,LV_EVENT_VALUE_CHANGED,nullptr);
     assert(last_input.action==TouchAction::kVolume && last_input.row==66 && !last_input.commit);
     lv_obj_send_event(slider_,LV_EVENT_RELEASED,nullptr); assert(last_input.commit);
@@ -161,6 +263,21 @@ int main(int argc, char** argv) {
     snprintf(screen.title,sizeof screen.title,"应用"); snprintf(screen.detail,sizeof screen.detail,"轻点打开 · 底部上滑返回");
     snprintf(screen.rows[0],112,"会话"); snprintf(screen.rows[1],112,"设置"); snprintf(screen.rows[2],112,"交友");
     SetScreen(screen); Frame("apps.ppm");
+    panel.fail_next=true;
+    Flush(display,&area,reinterpret_cast<uint8_t*>(pattern)); assert(panel_fault_);
+    const int draws=panel.draw_calls;
+    Flush(display,&area,reinterpret_cast<uint8_t*>(pattern)); assert(panel.draw_calls==draws);
+    panel.recover_error=-1; clock_us=panel_retry_at_+1; Render(nullptr);
+    assert(panel_fault_ && panel.recover_calls==1 && heartbeat_.load()>0);
+    // Touch and menu actions remain functional while DMA recovery is pending.
+    CheckMenuTaps(display);
+    assert(panel_fault_);
+    lv_slider_set_value(slider_,71,LV_ANIM_OFF);
+    lv_obj_send_event(slider_,LV_EVENT_VALUE_CHANGED,nullptr);
+    lv_obj_send_event(slider_,LV_EVENT_RELEASED,nullptr);
+    assert(last_input.action==TouchAction::kVolume && last_input.row==71 && last_input.commit);
+    panel.recover_error=0; clock_us=panel_retry_at_+1; Render(nullptr);
+    assert(!panel_fault_ && panel.draw_calls>draws && panel_recoveries_.load()==1);
     screen.kind=View::kList; screen.view=3; screen.navigation=3; screen.row_count=4;
     snprintf(screen.title,sizeof screen.title,"设置"); snprintf(screen.detail,sizeof screen.detail,"网络、音量与设备");
     snprintf(screen.rows[0],112,"WiFi 状态"); snprintf(screen.rows[1],112,"音量调节");
@@ -185,10 +302,11 @@ int main(int argc, char** argv) {
         SetScreen(screen); SetAnswer(message.c_str()); clock_us+=100000; Render(nullptr); lv_refr_now(nullptr);
         if(trial%25==0) { fprintf(stderr,"stress %d\n",trial); fflush(stderr); }
     }
-    puts("Native LVGL: render/bounds, scrolling reply retention, ended state, slider preview/commit, menu scrolling and friend confirmation passed.");
+    puts("Native LVGL: render/bounds, reply retention, ended state, slider, menu/friend input, display-fault input continuity and full redraw recovery passed.");
 }
 '''
 generated = build/'preview.cc'
+prefix = prefix.replace('DISPLAY_ROTATION_CW=0;', f'DISPLAY_ROTATION_CW={args.rotation};')
 generated.write_text(prefix+header+fonts+source+post,encoding='utf-8')
 with log.open('a',encoding='utf-8') as output:
     subprocess.run([cl,*flags,'/std:c++17','/EHsc',str(generated),str(build/'lvgl.lib'),'/Fo'+str(build/'preview.obj'),'/Fe'+str(build/'preview.exe')],env=env,cwd=build,stdout=output,stderr=subprocess.STDOUT,check=True)

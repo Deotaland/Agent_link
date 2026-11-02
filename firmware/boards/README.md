@@ -124,6 +124,10 @@ For `my-board-ble` on ESP32-S3, add these together:
 
 List hardware `.c`/`.cc` files in `hardware_sources` and common drivers in
 `drivers`; application sources are collected from the selected app directory.
+Related boards can optionally select `app_shared: "family-name"` to compile the
+implementation in `apps/common/family-name/` with the selected board headers.
+Keep one `DECLARE_APPLICATION` entrypoint in each selected app directory and
+keep board pins and initialization under `boards/`.
 Add `profiles/lvgl.defaults` and `ui: "lvgl"` only if needed. The S3 fragments
 assume PSRAM: adapt defaults to the actual memory instead of copying them to a
 board without PSRAM. For WiFi on S3, use `profiles/s3-network.defaults` in place

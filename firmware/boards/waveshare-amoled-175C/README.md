@@ -8,6 +8,11 @@ this as the non-C PCB. Platform product ID is 12 (enterprise 0), with product ke
 `esp32-s3-touch-amoled-175c` and chip `esp32-s3`, as supplied by the developer.
 Use these profiles only on the ESP32-S3-Touch-AMOLED-1.75C (SKU 33691/33692).
 
+The application entrypoint stays in `apps/waveshare-amoled-175C-wifi`. UI,
+controller, playback/capture workers and resident fonts are shared through
+`apps/common/amoled-wifi`; C-board audio and pins remain in this board directory.
+The non-C 16 MB board has its own profile and must use its own image.
+
 ## Hardware
 
 The pin settings follow the official [C-board pin definitions](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C/blob/4bfdc80eedbf95031e384610796bed15e0240312/examples/arduino/libraries/board_config/pin_config.h)

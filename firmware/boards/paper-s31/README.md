@@ -40,6 +40,9 @@ response is rejected. The platform must accept PCM16.
 
 ## Display behavior
 
+The selected 3.6-inch panel displays the UI rotated 180 degrees from its default
+direction (`EPD_ROTATION=180`), retaining the 400x600 logical resolution.
+
 The current profile temporarily enables a single-frame diagnostic mode for
 persistent old/new-image superimposition. It displays S31 DISPLAY TEST once,
 then holds even after an error; menu keys and app timers are disabled. See the

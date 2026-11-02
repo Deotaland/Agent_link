@@ -5,14 +5,19 @@ import shutil
 import subprocess
 
 root = Path(__file__).resolve().parents[1]
-app = root / "apps/waveshare-amoled-175C-wifi"
-source = (app / "waveshare_amoled_wifi.cc").read_text(encoding="utf-8")
+app = root / "apps/common/amoled-wifi"
+source = (app / "amoled_wifi_application.h").read_text(encoding="utf-8")
 ui = (app / "amoled_voice_ui.cc").read_text(encoding="utf-8")
 fixture = (root / "tests/amoled_voice_fixture.cc").read_text(encoding="utf-8")
 fixture = fixture.replace("// INSERT_RESOLVE", ui[ui.index("Activity Resolve("):ui.index("void Render(")])
 fixture = fixture.replace("// INSERT_END_CALL", source[source.index("    void EndCall()"):source.index("    bool Error(")])
 fixture = fixture.replace("// INSERT_TICK_CALL", source[source.index("    void TickCall()"):source.index("    void OpenFriends()")])
 fixture = fixture.replace("// INSERT_BUTTON", source[source.index("    void PhysicalButton()"):source.index("    void ChangeVolume(")])
+fixture = fixture.replace("// INSERT_MENU_TYPES", source[source.index("enum class Page"):source.index("}  // namespace")])
+fixture = fixture.replace("// INSERT_MENU_HELPERS", source[source.index("    void Clear(Page"):source.index("    void Launcher()")])
+fixture = fixture.replace("// INSERT_SESSIONS", source[source.index("    void Sessions("):source.index("    void Select(")])
+home_select = source[source.index("    void Select("):source.index("        if (row < 0")]
+fixture = fixture.replace("// INSERT_HOME_SELECT", home_select + "        (void)row;\n    }\n")
 audio = (app / "amoled_voice_audio.cc").read_text(encoding="utf-8")
 fixture = fixture.replace("// INSERT_PCM_PUBLISH", audio[audio.index("void AmoledVoiceAudio::BeginDiagnostics()"):audio.index("void AmoledVoiceAudio::ReportDiagnostics()")].replace("AmoledVoiceAudio::", ""))
 fixture = fixture.replace("// INSERT_MIC_LOOP", audio[audio.index("void AmoledVoiceAudio::MicLoop()"):].replace("AmoledVoiceAudio::", ""))

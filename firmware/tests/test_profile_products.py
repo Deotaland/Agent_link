@@ -22,7 +22,8 @@ class ProductProfileTests(unittest.TestCase):
         expected = {'korvo-wifi': 6, 'korvo-ble': 7, 'm5stack-stopwatch-wifi': 4,
                     'm5stack-stopwatch-ble': 4, 'waveshare-epaper-397-wifi': 5,
                     'ai-passport-wifi': 1, 'ai-passport-ble': 1, 'rorolee-ble': 2,
-                    'work-badge-ble': 2, 'paper-s31-wifi': 8}
+                    'work-badge-ble': 2, 'paper-s31-wifi': 8,
+                    'waveshare-amoled-175-wifi': 10, 'waveshare-amoled-175c-wifi': 12}
         for name, product_id in expected.items():
             with self.subTest(profile=name):
                 self.assertEqual(build.product_for(self.profiles[name], self.catalog)['id'], product_id)

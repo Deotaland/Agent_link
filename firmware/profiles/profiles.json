@@ -152,6 +152,7 @@
     "hardware": "m5stack-stopwatch",
     "drivers": [
       "co5300_hal.c",
+      "co5300_qspi_io.c",
       "co5300_panel.cc",
       "es8311_audio.cc",
       "m5ioe1.cc",
@@ -176,6 +177,7 @@
     "hardware": "m5stack-stopwatch",
     "drivers": [
       "co5300_hal.c",
+      "co5300_qspi_io.c",
       "co5300_panel.cc",
       "cst820_touch.cc",
       "es8311_audio.cc",
@@ -378,13 +380,13 @@
     "drivers": [
       "cjk_font.cc",
       "co5300_hal.c",
+      "co5300_qspi_io.c",
       "co5300_panel.cc",
       "cst9217_touch.cc"
     ],
     "ui": "lvgl",
     "hardware_sources": [
       "amoled_hardware.cc",
-      "amoled_fonts.cc",
       "amoled_audio.cc"
     ],
     "flash_assets": [
@@ -392,7 +394,8 @@
         "partition": "anim_pack",
         "file": "boards/common/fonts/cjk_font.bin"
       }
-    ]
+    ],
+    "app_shared": "amoled-wifi"
   },
   "ojbadge-wifi": {
     "board": "ojbadge",
@@ -421,5 +424,38 @@
         "file": "boards/common/fonts/cjk_font.bin"
       }
     ]
+  },
+  "waveshare-amoled-175-wifi": {
+    "board": "waveshare-amoled-175",
+    "board_type": "WAVESHARE_AMOLED_175_WIFI",
+    "target": "esp32s3",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/lvgl.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/waveshare-amoled-175-wifi.defaults"
+    ],
+    "app": "waveshare-amoled-175-wifi",
+    "hardware": "waveshare-amoled-175",
+    "drivers": [
+      "cjk_font.cc",
+      "co5300_hal.c",
+      "co5300_qspi_io.c",
+      "co5300_panel.cc",
+      "cst9217_touch.cc",
+      "es_codec.cc"
+    ],
+    "ui": "lvgl",
+    "hardware_sources": [
+      "amoled_hardware.cc",
+      "amoled_audio.cc"
+    ],
+    "flash_assets": [
+      {
+        "partition": "anim_pack",
+        "file": "boards/common/fonts/cjk_font.bin"
+      }
+    ],
+    "app_shared": "amoled-wifi"
   }
 }

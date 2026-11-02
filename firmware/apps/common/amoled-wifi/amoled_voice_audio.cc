@@ -27,8 +27,8 @@ esp_err_t AmoledVoiceAudio::Init(AmoledHardware* hardware) {
     }
     agent_link_playback_set_buffer_ms(AUDIO_PLAY_BUF_BYTES / 32);
     ready_ = true;
-    ESP_LOGI(TAG, "PCM diagnostics enabled: microphone stack=%luB, interval=5s, hardware=1.75C STD stereo 16kHz -> PCM16 mono %dHz, Opus transport unchanged",
-             static_cast<unsigned long>(kMicStackBytes), AUDIO_SAMPLE_RATE);
+    ESP_LOGI(TAG, "PCM diagnostics enabled: microphone stack=%luB, interval=5s, hardware=%s -> PCM16 mono %dHz, Opus transport unchanged",
+             static_cast<unsigned long>(kMicStackBytes), AMOLED_AUDIO_DESCRIPTION, AUDIO_SAMPLE_RATE);
     agent_link_playback_set_buffer_level_callback([](void* ctx) -> size_t {
         return static_cast<AmoledVoiceAudio*>(ctx)->queued_.load();
     }, this);

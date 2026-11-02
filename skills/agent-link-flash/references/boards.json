@@ -479,6 +479,37 @@
       ]
     },
     {
+      "board_type": "WAVESHARE_AMOLED_175_WIFI",
+      "dir": "waveshare-amoled-175",
+      "target": "esp32s3",
+      "model": "ESP32-S3-Touch-AMOLED-1.75",
+      "product": "Waveshare ESP32-S3-Touch-AMOLED-1.75 (non-C)",
+      "vendor": "Waveshare",
+      "buy": [],
+      "docs": [
+        "https://docs.waveshare.net/ESP32-S3-Touch-AMOLED-1.75/"
+      ],
+      "aliases": [
+        "ESP32-S3-Touch-AMOLED-1.75",
+        "Waveshare AMOLED 1.75 non-C",
+        "waveshare-amoled-175",
+        "31261"
+      ],
+      "hardware": "ESP32-S3R8, 8 MB octal PSRAM, 16 MB flash; 466x466 CO5300 QSPI AMOLED; CST9217 touch; ES8311 speaker DAC and ES7210 microphones; GPIO42 MCLK; GPIO39 display reset and GPIO40 touch reset; AXP2101 PMU; TCA9554 expander; QMI8658 IMU; PCF85063 RTC; microSD slot",
+      "identify": "Non-C standard board SKU 31261, native USB-C, 16 MB flash and 8-pin expansion header. Not the 32 MB 1.75C badge.",
+      "flash_port": "USB-C native ESP32-S3 USB on GPIO19/20; hold BOOT/GPIO0 while resetting for recovery.",
+      "use": "WiFi activation, platform-bound Agent voice and conversations, circular Chinese/English touch UI and ESP-NOW nearby friends",
+      "transport": "WIFI",
+      "ble_name": null,
+      "fw_model": "ESP32-S3-Touch-AMOLED-1.75-16M",
+      "status": "supported",
+      "notes": "Use waveshare-amoled-175-wifi and platform product esp32-s3-touch-amoled-175 (id 10, enterprise 0), supplied by the developer. Hotspot Amoled175-16M-XXXX. The new firmware model has a -16M suffix to distinguish this board from the C variant legacy OTA model. Standard I2S TX plus four-slot TDM RX at 16 kHz, MIC1 slot0 mono; MIC2 diagnostic levels are not sampled. PWR remains under PMU control; BOOT starts/ends calls. Shared application behavior with 1.75C; distinct reset/MCLK pins and flash size. SD/GNSS/RTC/IMU applications and hardware AEC are not enabled. Hardware acceptance pending.",
+      "profile": "waveshare-amoled-175-wifi",
+      "sdkconfig": [
+        "CONFIG_AGENT_LINK_PROFILE_WAVESHARE_AMOLED_175_WIFI=y"
+      ]
+    },
+    {
       "board_type": "WAVESHARE_AMOLED_175C_WIFI",
       "dir": "waveshare-amoled-175C",
       "target": "esp32s3",

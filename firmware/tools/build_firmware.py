@@ -139,6 +139,12 @@ def load_profiles():
         app = ROOT / "apps" / profile["app"]
         if not any(app.glob("*.cc")) or profile["ui"] not in {"lvgl", "raster", "none"}:
             raise ValueError(f"{name}: missing application or invalid UI")
+        shared_app = profile.get("app_shared")
+        if shared_app is not None:
+            if not isinstance(shared_app, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", shared_app):
+                raise ValueError(f"{name}: invalid shared application")
+            if not any((ROOT / "apps/common" / shared_app).glob("*.cc")):
+                raise ValueError(f"{name}: missing shared application")
         for field, folder in (("drivers", ROOT / "boards/common"),
                               ("hardware_sources", ROOT / "boards" / profile["hardware"])):
             for source in profile[field]:

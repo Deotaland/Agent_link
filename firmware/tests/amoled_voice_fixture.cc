@@ -1,4 +1,5 @@
 #include <atomic>
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -17,6 +18,7 @@ namespace amoled_voice {
 struct Screen { Activity activity = Activity::kIdle; bool calling = false, busy = false, local_mode = false; };
 void Toast(const char*, unsigned = 2500) {}
 void Wake() {}
+void SetAnswer(const char*) {}
 // INSERT_RESOLVE
 }
 using esp_err_t = int;
@@ -37,6 +39,8 @@ struct Audio {
     bool Fault() const { return fault; }
     void Stop() { enabled = false; }
     void SetContinuous(bool on) { enabled = on; }
+    bool Ready() const { return true; }
+    void ClearFault() { fault = false; }
 };
 struct Controller {
     Audio audio_;
@@ -51,8 +55,9 @@ struct Controller {
     // INSERT_END_CALL
     // INSERT_TICK_CALL
 };
-enum class Page { kHome, kLauncher, kSettings };
+// INSERT_MENU_TYPES
 #define ESP_LOGI(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
 constexpr const char* TAG = "test";
 struct ButtonController : Controller {
     bool friends_open_ = false;
@@ -63,6 +68,80 @@ struct ButtonController : Controller {
     void Select() { ++starts; call_ = true; }
     // INSERT_BUTTON
 };
+
+struct agent_link_platform_conversation_t { char id[80], name[96], created_at[32]; };
+size_t available_sessions = 0, requested_limit = 0;
+int list_error = ESP_OK, create_error = ESP_OK;
+int agent_link_platform_conversations(int, size_t offset, agent_link_platform_conversation_t* entries,
+                                      size_t capacity, size_t* count, size_t* total) {
+    requested_limit = capacity; *total = available_sessions;
+    *count = offset < *total ? std::min(capacity, *total - offset) : 0;
+    for (size_t i = 0; i < *count; ++i) {
+        snprintf(entries[i].id, sizeof entries[i].id, "session-%u", static_cast<unsigned>(offset + i));
+        snprintf(entries[i].name, sizeof entries[i].name, "Session %u", static_cast<unsigned>(offset + i));
+    }
+    return list_error;
+}
+int agent_link_platform_create_conversation(int, char* id, size_t size) {
+    snprintf(id, size, "created-session"); return create_error;
+}
+struct SessionController {
+    Audio audio_;
+    Page page_ = Page::kHome;
+    bool call_ = false, active_ = false, ended_ = false, friends_open_ = false;
+    int agent_ = 10, attempts_ = 0, saves = 0;
+    int64_t last_attempt_ = 0;
+    uint32_t view_ = 1, navigation_ = 1;
+    char session_[80]{}, session_name_[96]{}, error_message_[96]{};
+    Item items_[amoled_voice::kListRows]{};
+    size_t count_ = 0, session_offset_ = 0, session_total_ = 0, session_count_ = 0;
+    agent_link_platform_conversation_t sessions_[amoled_voice::kListRows]{}, fetched_[amoled_voice::kListRows]{};
+    bool SyncBoundAgent(bool) { return agent_ != 0; }
+    bool Error(int error) { return error != ESP_OK; }
+    void EndCall() { call_ = false; }
+    void Busy(const char*) {}
+    void SaveSelection() { ++saves; }
+    void Conversations() { Clear(Page::kConversations); }
+    void CloseFriends(Page page) { friends_open_ = false; Clear(page); }
+    // INSERT_MENU_HELPERS
+    // INSERT_SESSIONS
+    // INSERT_HOME_SELECT
+    // INSERT_BUTTON
+};
+
+void CheckSessionCreationEntry() {
+    SessionController controller;
+    available_sessions = 0;
+    controller.PhysicalButton();
+    assert(controller.page_ == Page::kSessions && !controller.call_);
+    assert(controller.count_ == 1 && controller.items_[0].action == Action::kNew);
+    assert(controller.session_count_ == 0 && controller.session_total_ == 0);
+    controller.NewSession();
+    assert(controller.page_ == Page::kHome && !strcmp(controller.session_, "created-session"));
+    assert(controller.saves == 1 && !controller.call_);
+    controller.PhysicalButton(); assert(controller.call_);
+    available_sessions = 23;
+    controller.Sessions();
+    assert(requested_limit == 11 && controller.count_ == 12 && controller.session_count_ == 11);
+    assert(controller.items_[0].action == Action::kNew && controller.items_[11].value == 10);
+    assert(!strcmp(controller.sessions_[controller.items_[11].value].id, "session-10"));
+    const uint32_t navigation = controller.navigation_;
+    controller.Sessions(8, true);
+    assert(controller.navigation_ == navigation && controller.count_ == 12);
+    assert(controller.session_offset_ == 8 && controller.session_count_ == 11);
+    assert(controller.items_[0].action == Action::kNew && !strcmp(controller.sessions_[0].id, "session-8"));
+    controller.Sessions(16, true);
+    assert(controller.count_ == 8 && controller.session_count_ == 7);
+    assert(controller.session_offset_ + controller.session_count_ == controller.session_total_);
+    available_sessions = 2;
+    controller.Sessions(16, true);  // List shrank while paging.
+    assert(controller.session_offset_ == 0 && controller.session_count_ == 2 && controller.count_ == 3);
+    create_error = ESP_FAIL; controller.NewSession(); create_error = ESP_OK;
+    assert(controller.page_ == Page::kConversations && !strcmp(controller.session_, "created-session"));
+    list_error = ESP_FAIL; controller.Sessions(); list_error = ESP_OK;
+    assert(controller.page_ == Page::kConversations);
+    puts("Sessions: BOOT empty selection, inline creation, saved selection, row capacity, overlapping windows, final page and API failures passed.");
+}
 
 // Run the production microphone loop with a deterministic PCM source. Only the
 // platform boundary is mocked, so capture/muting/publishing/error paths stay real.
@@ -132,6 +211,7 @@ struct CaptureHarness {
 };
 
 int main() {
+    CheckSessionCreationEntry();
     using namespace amoled_voice;
     // Invalid and release reports cannot retain a stale pressed pointer.
     uint8_t frame[10] = {0x06, 14, 13, 0x92, 70, 1, 0xAB};

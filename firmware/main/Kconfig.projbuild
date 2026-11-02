@@ -113,6 +113,19 @@ config BOARD_TYPE_OJBADGE_WIFI
         OJBadge 240x240 circular touch UI and local ESP-NOW friendship.
         No platform startup, provisioning, cloud authentication or audio.
 
+config BOARD_TYPE_WAVESHARE_AMOLED_175_WIFI
+    bool
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-amoled-175-wifi"
+    select LV_FONT_MONTSERRAT_20
+    select LV_FONT_MONTSERRAT_24
+    select LV_FONT_MONTSERRAT_48
+    select MBEDTLS_DYNAMIC_BUFFER
+    select MBEDTLS_DYNAMIC_FREE_CONFIG_DATA
+    select SPIRAM_TRY_ALLOCATE_WIFI_LWIP
+    help
+        Non-C Waveshare ESP32-S3-Touch-AMOLED-1.75: 16 MB flash, GPIO42 MCLK,
+        GPIO39/40 resets, WiFi activation and realtime Agent voice.
+
 config BOARD_TYPE_WAVESHARE_AMOLED_175C_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-amoled-175c-wifi"
@@ -171,6 +184,7 @@ config AGENT_LINK_TRANSPORT_WIFI
     default y if BOARD_TYPE_ESP32S3_KORVO_CLOUD
     default y if BOARD_TYPE_M5STACK_STOPWATCH_WIFI
     default y if BOARD_TYPE_WAVESHARE_AMOLED_175C_WIFI
+    default y if BOARD_TYPE_WAVESHARE_AMOLED_175_WIFI
 
 config AGENT_LINK_TRANSPORT_MUSE
     bool

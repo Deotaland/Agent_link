@@ -2,6 +2,7 @@
 #include "config.h"
 #include "amoled_fonts.h"
 #include "amoled_voice_controls.h"
+#include "amoled_orientation.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -16,6 +17,15 @@
 namespace amoled_voice {
 namespace {
 constexpr size_t kBufferBytes = DISPLAY_WIDTH * UI_DRAW_BUF_ROWS * 2;
+static_assert(DISPLAY_ROTATION_CW == 0 || DISPLAY_ROTATION_CW == 90);
+static_assert(DISPLAY_WIDTH == DISPLAY_HEIGHT, "Circular AMOLED UI requires a square panel");
+uint8_t* rotated_pixels_ = nullptr;
+bool panel_fault_ = false;
+int64_t panel_retry_at_ = 0;
+std::atomic<uint32_t> panel_errors_{0}, panel_recoveries_{0};
+std::atomic<uint32_t> touch_polls_{0}, touch_errors_{0}, max_touch_gap_ms_{0};
+std::atomic<uint32_t> volume_events_{0}, volume_commits_{0};
+int64_t last_touch_poll_at_ = 0;
 constexpr uint32_t kWhite = 0xF5F5F7, kMuted = 0x98989F, kBlue = 0x0A84FF;
 AmoledFonts fonts_;
 Co5300Panel* panel_ = nullptr;
@@ -68,6 +78,9 @@ lv_indev_t* pointer_ = nullptr;
 cst9217::Point point_;
 bool swallow_ = false, pending_ = false, shown_busy_ = false, has_before_ = false, has_after_ = false;
 bool list_gesture_ = false;
+bool click_cancelled_ = true;
+bool contact_down_ = false;
+lv_obj_t* pressed_obj_ = nullptr;
 int contact_x_ = 0, contact_y_ = 0, list_direction_ = 0;
 uint32_t shown_view_ = 0, pressed_view_ = 0;
 View shown_kind_ = View::kHome;
@@ -77,16 +90,39 @@ void Round(lv_event_t* event) {
     auto* area = static_cast<lv_area_t*>(lv_event_get_param(event));
     area->x1 &= ~1; area->y1 &= ~1; area->x2 |= 1; area->y2 |= 1;
 }
+void PanelFailed(esp_err_t err, const char* operation) {
+    panel_errors_.fetch_add(1);
+    if (!panel_fault_) ESP_LOGE("Amoled175.ui", "%s failed: %s; scheduling panel recovery", operation, esp_err_to_name(err));
+    panel_fault_ = true;
+    panel_retry_at_ = esp_timer_get_time() + 1000000;
+}
+void Brightness(uint8_t level) {
+    const esp_err_t err = panel_->SetBrightness(level);
+    if (err != ESP_OK) PanelFailed(err, "brightness");
+}
 void Flush(lv_display_t* display, const lv_area_t* area, uint8_t* pixels) {
+    // Complete LVGL's flush even when the transport is faulted. Touch, BOOT and
+    // audio must keep running while the IO retains an outstanding DMA buffer.
+    if (panel_fault_) { lv_display_flush_ready(display); return; }
     const int64_t start = esp_timer_get_time();
     const int w = lv_area_get_width(area), h = lv_area_get_height(area);
     lv_draw_sw_rgb565_swap(pixels, w * h);
+    DisplayRect target{area->x1, area->y1, w, h};
+    if constexpr (DISPLAY_ROTATION_CW == 90) {
+        if (!RotateRgb565Clockwise90(pixels, rotated_pixels_, w, h, kBufferBytes)) {
+            ESP_LOGE("Amoled175.ui", "display rotation buffer invalid");
+            lv_display_flush_ready(display);
+            return;
+        }
+        target = Clockwise90Rect(target, DISPLAY_WIDTH);
+        pixels = rotated_pixels_;
+    }
     const UiStage previous = stage_.load(); const int64_t previous_at = stage_at_.load();
-    flush_xy_.store((static_cast<uint32_t>(area->x1) << 16) | area->y1);
-    flush_wh_.store((static_cast<uint32_t>(w) << 16) | h);
+    flush_xy_.store((static_cast<uint32_t>(target.x) << 16) | target.y);
+    flush_wh_.store((static_cast<uint32_t>(target.w) << 16) | target.h);
     flush_started_.fetch_add(1); Mark(UiStage::kPanel);
-    if (panel_->DrawBitmap(area->x1, area->y1, w, h, pixels) != ESP_OK)
-        ESP_LOGE("Amoled175.ui", "display transfer failed");
+    const esp_err_t err = panel_->DrawBitmap(target.x, target.y, target.w, target.h, pixels);
+    if (err != ESP_OK) PanelFailed(err, "display transfer");
     flushes_.fetch_add(1);
     const uint32_t us = static_cast<uint32_t>(esp_timer_get_time() - start);
     if (us > max_flush_us_.load()) max_flush_us_.store(us);
@@ -132,8 +168,16 @@ bool Dispatch(TouchAction action, int row = 0) {
 }
 void Click(lv_event_t* event) {
     const auto code = lv_event_get_code(event);
-    if (code == LV_EVENT_PRESSED) { pressed_view_ = shown_view_; return; }
-    if (pressed_view_ != shown_view_) return;
+    if (code == LV_EVENT_PRESS_LOST) { click_cancelled_ = true; return; }
+    auto* obj = lv_event_get_current_target_obj(event);
+    if (code == LV_EVENT_PRESSED) {
+        pressed_view_ = shown_view_; pressed_obj_ = obj;
+        const lv_point_t start{contact_x_, contact_y_};
+        if (!lv_obj_hit_test(obj, &start)) click_cancelled_ = true;
+        return;
+    }
+    if (click_cancelled_ || pressed_obj_ != obj || pressed_view_ != shown_view_) return;
+    click_cancelled_ = true;
     const int id = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event)));
     if (id >= 0) Dispatch(TouchAction::kRow, id);
     else if (id == -1) Dispatch(TouchAction::kBack);
@@ -148,6 +192,7 @@ void BindClick(lv_obj_t* obj, int id) {
     lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     auto* data = reinterpret_cast<void*>(static_cast<intptr_t>(id));
     lv_obj_add_event_cb(obj, Click, LV_EVENT_PRESSED, data);
+    lv_obj_add_event_cb(obj, Click, LV_EVENT_PRESS_LOST, data);
     lv_obj_add_event_cb(obj, Click, LV_EVENT_CLICKED, data);
     lv_obj_set_style_bg_color(obj, lv_color_hex(0x38383C), LV_STATE_PRESSED);
 }
@@ -162,6 +207,8 @@ void VolumeEvent(lv_event_t* event) {
     VolumeText(value); SetVolume(value);
     Input input{}; input.action = TouchAction::kVolume; input.row = value;
     input.commit = code != LV_EVENT_VALUE_CHANGED;
+    volume_events_.fetch_add(1);
+    if (input.commit) volume_commits_.fetch_add(1);
     input.view = shown_view_; input.at = esp_timer_get_time();
     if (handler_) handler_(input, context_);
 }
@@ -173,6 +220,7 @@ void ListScroll(lv_event_t*) {
     else if (list_direction_ > 0 && has_before_ && lv_obj_get_scroll_y(list_) < 50)
         Dispatch(TouchAction::kLoadBefore);
 }
+void CancelClick(lv_event_t*) { click_cancelled_ = true; }
 void ScrollStyle(lv_obj_t* obj) {
     lv_obj_add_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(obj, LV_DIR_VER);
@@ -191,6 +239,7 @@ void Build() {
     lv_obj_set_pos(ring_, kRingInset, kRingInset); lv_obj_set_size(ring_, kRingDiameter, kRingDiameter);
     lv_obj_set_style_radius(ring_, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_border_width(ring_, kRingWidth, 0);
     lv_obj_set_style_border_color(ring_, lv_color_hex(ActivityColor(Activity::kOffline)), 0);
+    lv_obj_set_style_border_opa(ring_, LV_OPA_COVER, 0);
     lv_obj_remove_flag(ring_, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(ring_, LV_OBJ_FLAG_SCROLLABLE);
     // Every viewport is inscribed in the circle. No circular subtree mask or
@@ -209,6 +258,7 @@ void Build() {
     answer_label_ = Label(answer_view_, fonts_.Body(), kWhite);
     lv_obj_set_width(answer_label_, kAnswer.w - 32); lv_obj_set_style_text_line_space(answer_label_, 5, 0);
     list_ = lv_obj_create(root); lv_obj_remove_style_all(list_); Position(list_, kList); ScrollStyle(list_);
+    lv_obj_add_event_cb(list_, CancelClick, LV_EVENT_SCROLL_BEGIN, nullptr);
     lv_obj_add_event_cb(list_, ListScroll, LV_EVENT_SCROLL_END, nullptr);
     list_code_ = Label(list_, &lv_font_montserrat_48, kBlue, true);
     list_info_ = Label(list_, fonts_.Body(), kWhite);
@@ -255,8 +305,25 @@ void Build() {
     lv_obj_set_style_pad_all(toast_label_, 8, 0); Visible(toast_label_, false);
 }
 void ReadTouch(lv_indev_t*, lv_indev_data_t* data) {
-    data->point.x = point_.x; data->point.y = point_.y;
+    // LVGL preloads the last delivered position. CST9217 release/error frames
+    // have no coordinates; forwarding their zeroes makes slider RELEASED
+    // handling jump to the minimum and commit the wrong volume.
+    if (point_.pressed) { data->point.x = point_.x; data->point.y = point_.y; }
     data->state = point_.pressed && !swallow_ ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+void TrackTap(const cst9217::Point& next) {
+    const bool first = next.pressed && !contact_down_;
+    contact_down_ = next.pressed;
+    if (!next.pressed) return;  // Keep cancellation latched through the release/click events.
+    if (first) {
+        contact_x_ = next.x; contact_y_ = next.y; list_direction_ = 0;
+        click_cancelled_ = false; pressed_obj_ = nullptr;
+    } else if (std::abs(static_cast<int>(next.x) - contact_x_) > 12 ||
+               std::abs(static_cast<int>(next.y) - contact_y_) > 12) {
+        click_cancelled_ = true;
+    }
+    const lv_point_t position{next.x, next.y};
+    if (pressed_obj_ && !lv_obj_hit_test(pressed_obj_, &position)) click_cancelled_ = true;
 }
 Activity Resolve(const Screen& screen, const agent_link_status_t& status) {
     if (screen.local_mode) return screen.activity;
@@ -274,21 +341,49 @@ void Render(void*) {
     bool dim = false, was_toast = false, keep_awake = false;
     int64_t activity_at = esp_timer_get_time();
     Activity state = Activity::kOffline;
-    uint32_t ring_color = 0; unsigned ring_opacity = 0;
+    uint32_t ring_color = 0;
     // Large snapshots stay out of the render task stack.
     static int64_t memory_at = 0;
     static Screen screen;
     static char shown_answer[sizeof answer_] = {}, text[sizeof answer_];
     while (true) {
         const int64_t now = esp_timer_get_time(); heartbeat_.store(now);
+        if (panel_fault_ && now >= panel_retry_at_) {
+            Mark(UiStage::kPanel);
+            bool recovered = false;
+            const esp_err_t err = panel_->Recover(&recovered);
+            panel_retry_at_ = esp_timer_get_time() + 1000000;
+            if (err == ESP_OK) {
+                panel_fault_ = false;
+                panel_recoveries_.fetch_add(1);
+                lv_obj_invalidate(lv_screen_active());
+            }
+        }
         if (pointer_) {
             Mark(UiStage::kTouch);
+            const int64_t poll_at = esp_timer_get_time();
+            if (last_touch_poll_at_) {
+                const uint32_t gap = static_cast<uint32_t>((poll_at - last_touch_poll_at_) / 1000);
+                if (gap > max_touch_gap_ms_.load()) max_touch_gap_ms_.store(gap);
+            }
+            last_touch_poll_at_ = poll_at;
+            touch_polls_.fetch_add(1);
             cst9217::Point next;
-            if (touch_->Poll(&next) != ESP_OK || !Inside(next.x, next.y)) next.pressed = false;
+            const bool touch_ok = touch_->Poll(&next) == ESP_OK;
+            if (!touch_ok) { next.pressed = false; click_cancelled_ = true; touch_errors_.fetch_add(1); }
+            if constexpr (DISPLAY_ROTATION_CW == 90) {
+                if (next.pressed) {
+                    const auto logical = Clockwise90Touch(next.x, next.y, DISPLAY_WIDTH);
+                    next.x = logical.x; next.y = logical.y;
+                }
+            }
+            if (touch_ok) TrackTap(next);
+            if (next.pressed && !Inside(next.x, next.y)) {
+                next.pressed = false; click_cancelled_ = true;
+            }
             if (next.pressed) {
                 activity_at = now;
-                if (!point_.pressed) { contact_x_ = next.x; contact_y_ = next.y; list_direction_ = 0; }
-                if (dim) { dim = false; swallow_ = true; Mark(UiStage::kBrightness); (void)panel_->SetBrightness(DISPLAY_BRIGHTNESS); }
+                if (dim) { dim = false; swallow_ = true; Mark(UiStage::kBrightness); Brightness(DISPLAY_BRIGHTNESS); }
                 if (shown_kind_ != View::kHome && contact_y_ >= kList.y && contact_y_ < kList.y + kList.h &&
                     std::abs(next.y - contact_y_) > 12 && std::abs(next.y - contact_y_) > std::abs(next.x - contact_x_)) {
                     list_gesture_ = true; list_direction_ = next.y - contact_y_;
@@ -306,7 +401,7 @@ void Render(void*) {
         }
         if (seen_wake != wake_.load()) {
             seen_wake = wake_.load(); activity_at = now;
-            if (dim) { dim = false; Mark(UiStage::kBrightness); (void)panel_->SetBrightness(DISPLAY_BRIGHTNESS); }
+            if (dim) { dim = false; Mark(UiStage::kBrightness); Brightness(DISPLAY_BRIGHTNESS); }
         }
         const uint32_t revision = revision_.load(std::memory_order_acquire);
         if (revision != seen || was_toast) {
@@ -410,13 +505,12 @@ void Render(void*) {
             applied_.store(revision);
         }
         if (keep_awake) activity_at = now;
-        const bool pulse = state == Activity::kConnecting || state == Activity::kListening || state == Activity::kThinking || state == Activity::kSpeaking;
-        const unsigned phase = (now / 100000) % 20;
-        const unsigned opacity = pulse ? 170 + 8 * (phase < 10 ? phase : 20 - phase) : 255;
+        // Changing opacity invalidates the ring's whole 452x452 rectangle.
+        // Repainting it continuously during calls delays this task's next touch
+        // poll by hundreds of milliseconds. State colors need only one redraw.
         const uint32_t color = ActivityColor(state);
         if (color != ring_color) { ring_color = color; lv_obj_set_style_border_color(ring_, lv_color_hex(color), 0); }
-        if (opacity != ring_opacity) { ring_opacity = opacity; lv_obj_set_style_border_opa(ring_, opacity, 0); }
-        if (!dim && now - activity_at > 60000000) { dim = true; Mark(UiStage::kBrightness); (void)panel_->SetBrightness(DISPLAY_BRIGHTNESS_DIM); }
+        if (!dim && now - activity_at > 60000000) { dim = true; Mark(UiStage::kBrightness); Brightness(DISPLAY_BRIGHTNESS_DIM); }
         Mark(UiStage::kTimers); lv_timer_handler();
         if (now >= memory_at) {
             Mark(UiStage::kMemory);
@@ -436,23 +530,31 @@ esp_err_t StartUi(Co5300Panel* panel, Cst9217Touch* touch, InputHandler handler,
     panel_ = panel; touch_ = touch; handler_ = handler; context_ = context;
     auto* pixels = static_cast<uint8_t*>(heap_caps_aligned_alloc(4, kBufferBytes, MALLOC_CAP_SPIRAM));
     if (!pixels) return ESP_ERR_NO_MEM;
+    if constexpr (DISPLAY_ROTATION_CW == 90) {
+        rotated_pixels_ = static_cast<uint8_t*>(heap_caps_aligned_alloc(4, kBufferBytes, MALLOC_CAP_SPIRAM));
+        if (!rotated_pixels_) { heap_caps_free(pixels); return ESP_ERR_NO_MEM; }
+    }
+    const auto free_buffers = [pixels]() {
+        heap_caps_free(rotated_pixels_); rotated_pixels_ = nullptr;
+        heap_caps_free(pixels);
+    };
     lv_init(); lv_tick_set_cb(Tick);
     auto* display = lv_display_create(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-    if (!display) { heap_caps_free(pixels); return ESP_ERR_NO_MEM; }
+    if (!display) { free_buffers(); return ESP_ERR_NO_MEM; }
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
     lv_display_set_flush_cb(display, Flush);
     lv_display_add_event_cb(display, Round, LV_EVENT_INVALIDATE_AREA, nullptr);
     lv_display_set_buffers(display, pixels, nullptr, kBufferBytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     if (touch && touch->Ready()) {
         pointer_ = lv_indev_create();
-        if (!pointer_) { lv_display_delete(display); heap_caps_free(pixels); return ESP_ERR_NO_MEM; }
+        if (!pointer_) { lv_display_delete(display); free_buffers(); return ESP_ERR_NO_MEM; }
         lv_indev_set_type(pointer_, LV_INDEV_TYPE_POINTER);
         lv_indev_set_display(pointer_, display); lv_indev_set_read_cb(pointer_, ReadTouch);
     }
-    Mark(UiStage::kBrightness); (void)panel_->SetBrightness(DISPLAY_BRIGHTNESS);
+    Mark(UiStage::kBrightness); Brightness(DISPLAY_BRIGHTNESS);
     if (xTaskCreatePinnedToCore(Render, "amoled_ui", 8192, nullptr, 4, nullptr, portNUM_PROCESSORS - 1) != pdPASS) {
         if (pointer_) { lv_indev_delete(pointer_); pointer_ = nullptr; }
-        lv_display_delete(display); heap_caps_free(pixels); return ESP_ERR_NO_MEM;
+        lv_display_delete(display); free_buffers(); return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
 }
@@ -535,6 +637,11 @@ void ReportUiDiagnostics() {
         static_cast<unsigned long>(text_received_.load()), static_cast<unsigned long>(text_changed_.load()),
         static_cast<unsigned long>(text_applied_.load()), static_cast<unsigned long>(text_bytes_.load()),
         static_cast<unsigned long>(status_received_.load()), static_cast<unsigned long>(status_changed_.load()));
+    ESP_LOGI("Amoled175.ui", "panel errors=%lu recoveries=%lu", (unsigned long)panel_errors_.load(), (unsigned long)panel_recoveries_.load());
+    ESP_LOGI("Amoled175.ui", "input polls=%lu errors=%lu max_gap=%lums volume_events=%lu commits=%lu",
+        (unsigned long)touch_polls_.exchange(0), (unsigned long)touch_errors_.exchange(0),
+        (unsigned long)max_touch_gap_ms_.exchange(0), (unsigned long)volume_events_.exchange(0),
+        (unsigned long)volume_commits_.exchange(0));
     if (heartbeat && now - heartbeat > 2000000)
         ESP_LOGW("Amoled175.ui", "render task stalled at %s; retain this log and matching ELF", StageName(stage_.load()));
 }

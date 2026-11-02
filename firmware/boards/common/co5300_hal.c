@@ -148,6 +148,7 @@ esp_err_t co5300_hal_init(int rst_gpio, int pwr_en_gpio, co5300_hal_handles_t *o
 #include "esp_log.h"
 
 static const char *QTAG = "co5300_qspi";
+#include "co5300_qspi_io.h"
 
 // User-page setup, as the component's default but stopping at sleep-out: the caller clears RAM
 // before DISPON so the power-up noise never shows, and sets the brightness afterwards.
@@ -191,11 +192,9 @@ esp_err_t co5300_hal_init_qspi(const co5300_qspi_config_t *cfg, co5300_hal_handl
         return err;
     }
 
-    esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(cfg->pin_cs, NULL, NULL);
-    io_cfg.pclk_hz = cfg->pclk_hz;
-    io_cfg.trans_queue_depth = 1;   // one transfer in flight; the caller tracks when its buffer is free
     esp_lcd_panel_io_handle_t io = NULL;
-    err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)cfg->spi_host, &io_cfg, &io);
+    err = co5300_new_qspi_io((spi_host_device_t)cfg->spi_host, cfg->pin_cs,
+                            cfg->pclk_hz, cfg->max_transfer_bytes, &io);
     if (err != ESP_OK) {
         ESP_LOGE(QTAG, "panel io: %s", esp_err_to_name(err));
         return err;
@@ -218,6 +217,7 @@ esp_err_t co5300_hal_init_qspi(const co5300_qspi_config_t *cfg, co5300_hal_handl
     err = esp_lcd_new_panel_co5300(io, &panel_cfg, &panel);
     if (err != ESP_OK) {
         ESP_LOGE(QTAG, "new panel: %s", esp_err_to_name(err));
+        (void)esp_lcd_panel_io_del(io);
         return err;
     }
     err = esp_lcd_panel_reset(panel);   // the reset pin, or SWRESET without one
@@ -229,6 +229,8 @@ esp_err_t co5300_hal_init_qspi(const co5300_qspi_config_t *cfg, co5300_hal_handl
     }
     if (err != ESP_OK) {
         ESP_LOGE(QTAG, "panel init: %s", esp_err_to_name(err));
+        (void)esp_lcd_panel_del(panel);
+        (void)esp_lcd_panel_io_del(io);
         return err;
     }
 

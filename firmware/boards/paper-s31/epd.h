@@ -34,7 +34,7 @@ extern "C" {
 #elif EPD_PANEL == EPD_PANEL_3IN6
 #define EPD_PANEL_W     400
 #define EPD_PANEL_H     600
-#define EPD_ROTATION    0
+#define EPD_ROTATION    180
 #elif EPD_PANEL == EPD_PANEL_4IN0
 /* 规格书写 528(H)x792(V) 是竖放时的观感。芯片（UC8179，栅极最多 600 行）实际是
  * 长边 792 列（源极，竖放时从上往下）x 短边 528 行（栅极）扫描。

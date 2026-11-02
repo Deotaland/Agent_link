@@ -14,7 +14,6 @@
 //   real types in the .cc). That keeps it chip-independent, so it compiles fine even though
 //   boards/common is GLOB-compiled for every board; the real bring-up lives in co5300_hal.c.
 // ═══════════════════════════════════════════════════════════════════════════════
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -46,7 +45,7 @@ struct Co5300Config {
     uint16_t y_gap        = 0;
     bool     bgr          = false;
     bool     waveshare_175 = false;  // glass-specific CO5300 drive settings
-    // Rows per DMA stripe, even. Two stripes of width*rows*2 bytes live in internal RAM.
+    // Rows per transfer, even. The IO owns one width*rows*2-byte internal DMA buffer.
     uint16_t stripe_rows  = 12;
 };
 
@@ -75,17 +74,16 @@ public:
     esp_err_t DisplayOn();
     esp_err_t DisplayOff();
 
+    // Nonblocking while a timed-out DMA is pending. Reinitialize the panel once
+    // SPI returns ownership; recovered=true tells the UI to redraw the full screen.
+    esp_err_t Recover(bool* recovered);
+
     uint16_t Width()  const { return cfg_.width; }
     uint16_t Height() const { return cfg_.height; }
     bool     Ready()  const { return panel_ != nullptr; }
 
-    // The QSPI transfer-done callback lands here; not for callers.
-    bool NotifyDoneFromIsr();
-
 private:
     esp_err_t InitQspi();
-    esp_err_t EnsureStripes(size_t bytes);
-    bool      WaitDone(uint32_t target, uint32_t timeout_ms);
     int       Cmd(uint8_t cmd) const;
 
     Co5300Config cfg_       = {};
@@ -97,8 +95,7 @@ private:
     size_t       fb_bytes_  = 0;
 
     // QSPI
-    void*                 done_sem_   = nullptr;              // SemaphoreHandle_t
-    uint8_t*              stripe_[2]  = {nullptr, nullptr};   // internal DMA RAM
-    size_t                stripe_cap_ = 0;                    // bytes in each stripe
-    std::atomic<uint32_t> done_count_{0};                     // transfers finished so far
+    size_t       transfer_bytes_ = 0;
+    uint8_t      brightness_ = 0;
+    bool         reset_pending_ = false;
 };

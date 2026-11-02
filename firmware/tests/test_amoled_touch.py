@@ -34,9 +34,10 @@ else:
 subprocess.run(command, env=environment, cwd=build, check=True)
 subprocess.run([str(binary)], check=True)
 profiles = json.loads((root / "profiles/profiles.json").read_text(encoding="utf-8"))
-for name in ("waveshare-amoled-175c-wifi",):
+for name in ("waveshare-amoled-175c-wifi", "waveshare-amoled-175-wifi"):
     profile = profiles[name]
     assert "cjk_font.cc" in profile["drivers"]
-    assert "amoled_fonts.cc" in profile["hardware_sources"]
+    assert profile["app_shared"] == "amoled-wifi"
+    assert (root / "apps/common" / profile["app_shared"] / "amoled_fonts.cc").is_file()
     assert profile["flash_assets"] == [{"partition": "anim_pack", "file": "boards/common/fonts/cjk_font.bin"}]
 print("The AMOLED profile includes the shared Chinese font and resident font loader.")

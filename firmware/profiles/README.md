@@ -17,6 +17,7 @@ python tools/build_firmware.py korvo-wifi --jobs 2
 | WOWNNY | `wownny-muse`, `wownny-old-muse` | Muse; choose the correct revision |
 | FoloToy AI Passport | `ai-passport-ble`, `ai-passport-wifi` | BLE / WiFi; ESP32-C3 |
 | M5Stack StopWatch C152 | `m5stack-stopwatch-ble`, `m5stack-stopwatch-wifi` | BLE / WiFi |
+| Waveshare ESP32-S3-Touch-AMOLED-1.75 (non-C, 16 MB) | `waveshare-amoled-175-wifi` | WiFi |
 | Waveshare ESP32-S3-Touch-AMOLED-1.75C | `waveshare-amoled-175c-wifi` | WiFi |
 | OpenJumper AIoT Basic V2 | `gc2145-camera-ble` | BLE |
 | ESP32-S3 + ES8311 wiring examples | `es8311-asr-ble`, `es8311-voice-ble` | BLE |
@@ -62,7 +63,8 @@ response data and auth keys are not logged; echoed device keys in messages are r
 | Field | Meaning |
 | --- | --- |
 | `board`, `board_type`, `target` | Catalog/config directory, Kconfig identity and chip |
-| `app` | Application under `apps/` |
+| `app` | Application entrypoint under `apps/` |
+| `app_shared` | Optional shared implementation under `apps/common/`; compiled with the selected board headers |
 | `hardware`, `hardware_sources` | Hardware directory and its compiled source files |
 | `drivers` | Selected files under `boards/common/` |
 | `ui` | `lvgl`, `raster` or `none` |
