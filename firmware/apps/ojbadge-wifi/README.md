@@ -19,7 +19,7 @@ the received count. **Find another partner** disconnects and resumes discovery. 
 holding SW2 for one second, disconnects and stops the local radio. Pairing is
 ephemeral and is not saved as a persistent friends list.
 
-For cross-board testing, run `waveshare-amoled-175-wifi` on the existing Waveshare
+For cross-board testing, run `waveshare-amoled-175c-wifi` on the existing Waveshare
 board and open its launcher → **Friends**. Button names here describe the Chinese UI.
 OJBadge uses the same channel 6, packet
 version, ECDH key exchange, code confirmation, encrypted peer setup, authenticated

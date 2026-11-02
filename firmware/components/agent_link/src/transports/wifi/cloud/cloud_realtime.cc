@@ -139,6 +139,7 @@ bool                       s_grants_caps = false;
 std::atomic<TaskHandle_t>  s_task{nullptr};
 std::atomic<bool>          s_run{false};
 std::atomic<bool>          s_ready{false};
+std::atomic<bool>          s_busy{false};
 std::atomic<bool>          s_recovering{false};
 std::atomic<bool>          s_mute{false};
 std::atomic<bool>          s_continuous{false};
@@ -1945,6 +1946,11 @@ void Worker(void*) {
     Grant grant = {};
     while (s_run.load(std::memory_order_acquire)) {
         if (xQueueReceive(s_grants, &grant, pdMS_TO_TICKS(500)) != pdTRUE) continue;
+        {
+            std::lock_guard<std::mutex> lock(s_mutex);
+            if (!Current(grant.epoch)) continue;
+            s_busy.store(true);
+        }
         const char* hint = "Voice ended. Tap Connect to retry";
         agentlink::realtime::RecoverTransport([&](agentlink::realtime::RetryBudget& recovery) {
             bool granted = !grant.direct && !grant.platform;
@@ -1992,6 +1998,7 @@ void Worker(void*) {
             return true;
         });
         FinishGrant(grant.epoch);
+        s_busy.store(false);
         grant = {};
     }
     s_task.store(nullptr, std::memory_order_release);
@@ -2163,6 +2170,15 @@ void cloud_realtime_cancel(void) {
     s_input = AGENT_STREAM_KIND_COUNT;
     if (s_grants) xQueueReset(s_grants);
     if (s_tx) xQueueReset(s_tx);
+}
+
+esp_err_t cloud_realtime_wait_idle(uint32_t timeout_ms) {
+    const int64_t until = esp_timer_get_time() + static_cast<int64_t>(timeout_ms) * 1000;
+    while (s_busy.load()) {
+        if (esp_timer_get_time() >= until) return ESP_ERR_TIMEOUT;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return ESP_OK;
 }
 
 esp_err_t cloud_realtime_stream_start(agent_stream_t type) {

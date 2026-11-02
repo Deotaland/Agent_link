@@ -7,7 +7,7 @@ import subprocess
 import json
 
 root = Path(__file__).resolve().parents[1]
-app = root / 'apps/waveshare-amoled-175-wifi'
+app = root / 'apps/waveshare-amoled-175C-wifi'
 lvgl = root / 'managed_components/lvgl__lvgl'
 build = root / 'build/amoled-voice-tests/ui'
 build.mkdir(parents=True, exist_ok=True)
@@ -23,7 +23,7 @@ flags = ['/nologo', '/utf-8', '/w', '/D_CRT_SECURE_NO_WARNINGS', '/DLV_CONF_SKIP
          '/DLV_USE_STDLIB_MALLOC=1', '/DLV_USE_STDLIB_STRING=1', '/DLV_USE_STDLIB_SPRINTF=1',
          '/DLV_FONT_MONTSERRAT_20=1', '/DLV_FONT_MONTSERRAT_24=1', '/DLV_FONT_MONTSERRAT_48=1',
          '/DLV_FONT_SIMSUN_14_CJK=1', '/DLV_USE_TINY_TTF=1', '/DLV_USE_LOG=0', '/DLV_USE_ASSERT_MALLOC=1',
-         '/I' + str(lvgl), '/I' + str(app), '/I' + str(root / 'boards/waveshare-amoled-175')]
+         '/I' + str(lvgl), '/I' + str(app), '/I' + str(root / 'boards/waveshare-amoled-175C')]
 sources = sorted((lvgl / 'src').rglob('*.c'))
 assert len({s.stem for s in sources}) == len(sources)
 stamp = hashlib.sha256((' '.join(flags) + ''.join(hashlib.sha256(s.read_bytes()).hexdigest() for s in sources)).encode()).hexdigest()
@@ -88,7 +88,7 @@ lv_font_t* LoadCjkFont(const char*, int32_t size, uint32_t cache) {
 '''
 header = (app/'amoled_voice_ui.h').read_text(encoding='utf-8')
 header = header[header.index('namespace amoled_voice {'):]
-fonts = (root/'boards/waveshare-amoled-175/amoled_fonts.cc').read_text(encoding='utf-8')
+fonts = (root/'boards/waveshare-amoled-175C/amoled_fonts.cc').read_text(encoding='utf-8')
 fonts = '\n'.join(l for l in fonts.splitlines() if not l.startswith('#include'))
 source = (app/'amoled_voice_ui.cc').read_text(encoding='utf-8')
 source = source[source.index('namespace amoled_voice {'):]

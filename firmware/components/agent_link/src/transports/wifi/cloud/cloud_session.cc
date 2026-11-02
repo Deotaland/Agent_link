@@ -6,6 +6,7 @@
 #include "cloud_session.h"
 
 #include <cstring>
+#include <atomic>
 
 #include "agent_link_ota.h"
 #include "cloud_api.h"
@@ -70,7 +71,10 @@ constexpr size_t kAgentJsonCap = 2048;
 cloud_session_config_t s_cfg  = {};
 agent_cloud_status_t s_status = {};
 TaskHandle_t         s_task   = nullptr;
-bool                 s_run    = false;
+std::atomic<bool>    s_run{false};
+// Each lease has its own acknowledgement, so a timed-out request cannot satisfy
+// a later entry while the session is still waking from the previous pause.
+std::atomic<uint32_t> s_pause_request{0}, s_pause_ack{0}, s_pause_generation{0};
 char*                s_agent_json = nullptr;
 
 // MQTT credentials. Session task only, and RAM only: the platform issues them on demand, and NVS is
@@ -167,15 +171,31 @@ const char* StaMac() {
 }
 
 // Delegated to the backend, which knows more than whether there is an IP.
-bool NetReady() { return s_cfg.net_ready(); }
+bool NetReady() { return !s_pause_request.load() && s_cfg.net_ready(); }
+
+void StopMqtt();
+
+// Backoff remains interruptible when local mode is requested while offline,
+// claiming or waiting for an Agent. Only the session task closes its clients.
+void SessionDelay(uint32_t ms) {
+    const int64_t until = esp_timer_get_time() + static_cast<int64_t>(ms) * 1000;
+    while (s_run && !s_pause_request.load() && esp_timer_get_time() < until)
+        vTaskDelay(pdMS_TO_TICKS(50));
+}
 
 void WaitForNet() {
     if (NetReady()) return;
+    StopMqtt();
     // A kept-alive connection belongs to the network that just went away.
     cloud_api_drop_connection();
     ESP_LOGI(TAG, "waiting for the network (station joining, or the portal is still up)");
     Publish(AGENT_CLOUD_NO_NETWORK, nullptr);
-    while (s_run && !NetReady()) vTaskDelay(pdMS_TO_TICKS(kNetPollMs));
+    while (s_run && !NetReady()) {
+        // No cloud request can run beyond this point until the lease is released.
+        s_pause_ack.store(s_pause_request.load());
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    s_pause_ack.store(0);
 }
 
 // The key was revoked in the console (reset-key or unbind): clear it and re-claim.
@@ -200,7 +220,7 @@ bool ClaimLoop() {
             // Already bound: no new code until the device is unbound in the console.
             PublishFailure(err.code == CLOUD_API_ALREADY_BOUND ? AGENT_CLOUD_ALREADY_BOUND
                                                                : AGENT_CLOUD_FAULT, err);
-            vTaskDelay(pdMS_TO_TICKS(BackoffFor(err)));
+            SessionDelay(BackoffFor(err));
             continue;
         }
 
@@ -210,8 +230,9 @@ bool ClaimLoop() {
         ESP_LOGI(TAG, "waiting for device claim");
 
         while (s_run && left > kCodeRenewLeadS) {
-            vTaskDelay(pdMS_TO_TICKS(kBindPollMs));
+            SessionDelay(kBindPollMs);
             if (!s_run) return false;
+            if (!NetReady()) break;  // obtain a fresh claim code after local mode
 
             cloud_bind_t bind = {};
             if (cloud_api_bind_status(dev_identity_sn(), claim.code, &bind, &err) != ESP_OK) {
@@ -425,7 +446,7 @@ void OnlineLoop() {
             // NO_AGENT: claimed, but no agent attached yet. Keep retrying until one is bound.
             PublishFailure(err.code == CLOUD_API_NO_AGENT ? AGENT_CLOUD_NO_AGENT
                                                           : AGENT_CLOUD_FAULT, err);
-            vTaskDelay(pdMS_TO_TICKS(BackoffFor(err)));
+            SessionDelay(BackoffFor(err));
             continue;
         }
         NoteAccepted();
@@ -439,7 +460,7 @@ void OnlineLoop() {
         ESP_LOGI(TAG, "online");
 
         // No agent: wait as after auth's own refusal, then authenticate again.
-        if (StayOnline() == Leave::kNoAgent) vTaskDelay(pdMS_TO_TICKS(kFaultRetryMs));
+        if (StayOnline() == Leave::kNoAgent) SessionDelay(kFaultRetryMs);
     }
 }
 
@@ -489,6 +510,8 @@ esp_err_t cloud_session_start(const cloud_session_config_t* cfg) {
 
     memset(&s_status, 0, sizeof s_status);
     s_status.state = AGENT_CLOUD_IDLE;
+    s_pause_request.store(0);
+    s_pause_ack.store(0);
     s_run = true;
 
     // TLS handshakes run on this stack and need several KB.
@@ -503,6 +526,24 @@ esp_err_t cloud_session_start(const cloud_session_config_t* cfg) {
 void cloud_session_stop(void) {
     s_run = false;   // the task notices at its next delay and deletes itself
 }
+
+esp_err_t cloud_session_pause(uint32_t timeout_ms) {
+    if (!s_run) return ESP_OK;  // station-only backend, no cloud clients
+    uint32_t ticket = s_pause_generation.fetch_add(1) + 1;
+    if (!ticket) ticket = s_pause_generation.fetch_add(1) + 1;
+    s_pause_request.store(ticket);
+    const int64_t until = esp_timer_get_time() + static_cast<int64_t>(timeout_ms) * 1000;
+    while (s_pause_ack.load() != ticket) {
+        if (!s_run || esp_timer_get_time() >= until) {
+            s_pause_request.compare_exchange_strong(ticket, 0);
+            return ESP_ERR_TIMEOUT;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return ESP_OK;
+}
+
+void cloud_session_resume(void) { s_pause_request.store(0); }
 
 void cloud_session_get_status(agent_cloud_status_t* out) {
     if (!out) return;

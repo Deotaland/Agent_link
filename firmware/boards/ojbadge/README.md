@@ -24,8 +24,9 @@ reserved for future platform integration. Audio and the AW8010 remain disabled;
 its amplifier control wiring has not been supplied.
 
 The GC9A01 uses Espressif's managed driver and its default initialization table,
-40 MHz mode-0 SPI, RGB565/BGR and inversion. Vertical panel mirroring is enabled
-to correct the reversed image reported on the device. Touch coordinates are unrotated.
+40 MHz mode-0 SPI, RGB565/BGR and inversion. Panel mirroring is X enabled and Y
+disabled, rotating the image 180 degrees from the previous X-disabled/Y-enabled
+orientation. Touch coordinates retain their existing mapping without rotation.
 Panel color order, backlight polarity and touch/display alignment need hardware
 verification. Do not infer these results from a successful compile.
 

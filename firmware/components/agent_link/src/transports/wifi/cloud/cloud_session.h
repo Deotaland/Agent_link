@@ -3,6 +3,7 @@
 
 #include "cloud_status.h"
 #include "esp_err.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,6 +41,13 @@ esp_err_t cloud_session_start(const cloud_session_config_t* cfg);
 
 /** @brief Ask the task to exit. */
 void cloud_session_stop(void);
+
+/** @brief Wait until the session owner has closed MQTT/HTTP for local radio use.
+ * A timeout cancels the request; the caller must keep WiFi running in that case.
+ * The task and stored credentials remain alive. Call from a different task.
+ */
+esp_err_t cloud_session_pause(uint32_t timeout_ms);
+void cloud_session_resume(void);
 
 /** @brief Current snapshot. Safe from any task. */
 void cloud_session_get_status(agent_cloud_status_t* out);

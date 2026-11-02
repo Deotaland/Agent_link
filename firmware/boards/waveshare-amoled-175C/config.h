@@ -5,7 +5,7 @@
 #include "platform_product.h"
 
 // Actual hardware: Waveshare ESP32-S3-Touch-AMOLED-1.75C.
-// Keep the existing profile/directory names for installed firmware compatibility.
+// The application retains its existing Model() string for OTA compatibility.
 #define SYS_I2C_PORT I2C_NUM_0
 #define SYS_I2C_SDA GPIO_NUM_15
 #define SYS_I2C_SCL GPIO_NUM_14

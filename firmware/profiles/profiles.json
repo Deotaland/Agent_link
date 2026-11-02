@@ -363,18 +363,18 @@
       }
     ]
   },
-  "waveshare-amoled-175-wifi": {
-    "board": "waveshare-amoled-175",
-    "board_type": "WAVESHARE_AMOLED_175_WIFI",
+  "waveshare-amoled-175c-wifi": {
+    "board": "waveshare-amoled-175C",
+    "board_type": "WAVESHARE_AMOLED_175C_WIFI",
     "target": "esp32s3",
     "backend": "WIFI",
     "defaults": [
       "profiles/lvgl.defaults",
       "profiles/s3-network.defaults",
-      "profiles/waveshare-amoled-175-wifi.defaults"
+      "profiles/waveshare-amoled-175c-wifi.defaults"
     ],
-    "app": "waveshare-amoled-175-wifi",
-    "hardware": "waveshare-amoled-175",
+    "app": "waveshare-amoled-175C-wifi",
+    "hardware": "waveshare-amoled-175C",
     "drivers": [
       "cjk_font.cc",
       "co5300_hal.c",

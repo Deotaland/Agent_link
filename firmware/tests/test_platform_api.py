@@ -48,7 +48,7 @@ if args.gateway:
 if args.session:
     production = (root / 'components/agent_link/src/transports/wifi/cloud/cloud_session.cc').read_text(encoding='utf-8')
     fixture = (root / 'tests/cloud_session_policy_test.cc').read_text(encoding='utf-8')
-    stop = production[production.index('void StopMqtt()'):production.index('\nvoid HandleMqttRefused()')]
+    stop = production[production.index('void StopMqtt() {'):production.index('\nvoid HandleMqttRefused()')]
     loop = production[production.index('Leave StayOnline()'):production.index('\n// Authenticate, then stay online.')]
     begin = production.index('    if (kMqttEnabled && !s_token)')
     allocation = production[begin:production.index('    s_token_ok = false;', begin)]
@@ -76,7 +76,7 @@ if args.voice_worker:
         'QUEUE_GRANT': ('esp_err_t QueueGrant(Grant* grant) {', '\n}  // namespace'),
         'SDK_START': ('esp_err_t cloud_realtime_start(void) {', '\nvoid cloud_realtime_stop(void)'),
         'SDK_STOP': ('void cloud_realtime_stop(void) {', '\nesp_err_t cloud_realtime_offer('),
-        'CANCEL': ('void cloud_realtime_cancel(void) {', '\nesp_err_t cloud_realtime_stream_start('),
+        'CANCEL': ('void cloud_realtime_cancel(void) {', '\nesp_err_t cloud_realtime_wait_idle('),
         'FINISH_GRANT': ('void FinishGrant(uint32_t epoch) {', '\nvoid Worker(void*)'),
         'RECOVERY_STATE': ('void SetRecovering(uint32_t epoch, bool recovering) {', '\nclass VoiceWifiPower'),
         'NATIVE_WSS': ('class NativeWss {', '\n// One resident C3 worker'),

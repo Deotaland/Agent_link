@@ -331,6 +331,7 @@ void WifiControl(void*, esp_event_base_t, int32_t id, void* data) {
     bool report = false;
     {
         std::lock_guard<std::mutex> lock(s_wifi_mtx);
+        if (s_local_radio.load()) return;
         if (id == kWifiSetup) {
             if (s_phase != Phase::kIdle) { StartProvisioning(); report = true; }
         } else if (id == kWifiCredentials) {
@@ -506,6 +507,11 @@ void Compose(const agent_cloud_status_t& c, agent_link_status_t* out) {
         snprintf(out->hint,  sizeof out->hint,  "%s", hint);
     };
 
+    if (s_local_radio.load()) {
+        say(AGENT_LINK_PHASE_IDLE, "Nearby friends", "Cloud WiFi paused for local radio; exit to reconnect");
+        return;
+    }
+
     if (!s_platform) {
         say(AGENT_LINK_PHASE_BLOCKED, "Not configured",
             "This firmware has no platform set (Board::Platform), so it cannot reach the platform");
@@ -661,6 +667,7 @@ void OnRealtimeText(const char* text) {
 // the portal stays up for kProvTeardownMs after provisioning so the phone can show the result, and
 // meanwhile its SoftAP and HTTP server compete for the internal RAM a TLS handshake may need.
 bool NetReady() {
+    if (s_local_radio.load()) return false;
     if (s_phase != Phase::kStaConnected) return false;
     if (al_wifi_prov_active()) return false;
     esp_netif_t* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -825,22 +832,41 @@ extern "C" agent_transport_t* agent_transport_wifi(void) { return &s_wifi; }
 esp_err_t agent_wifi_local_end() {
     {
         std::lock_guard<std::mutex> lock(s_wifi_mtx);
-        if (!s_local_radio.exchange(false)) return ESP_OK;
-        esp_wifi_stop(); s_started = false;
+        if (!s_local_radio.load()) return ESP_OK;
+        const esp_err_t result = esp_wifi_stop();
+        if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_STARTED) return result;
+        s_started = false;
+        s_local_radio.store(false);
     }
-    // The cloud task waits in NetReady(), so no stop/start task race or loss of
-    // binding/session state is introduced by a brief visit to local mode.
-    return wifi_start(nullptr);
+    // Reconnect with the stored credentials before releasing the cloud worker.
+    const esp_err_t result = wifi_start(nullptr);
+    cloud_session_resume();
+    return result;
 }
 
 esp_err_t agent_wifi_local_begin(uint8_t channel) {
     if (channel < 1 || channel > 11) return ESP_ERR_INVALID_ARG;
-    esp_err_t result;
     {
         std::lock_guard<std::mutex> lock(s_wifi_mtx);
         if (!s_wifi_inited || s_local_radio.load()) return ESP_ERR_INVALID_STATE;
         s_local_radio.store(true);
-        s_realtime_wanted.store(false); s_platform_voice.store(false);
+    }
+    s_realtime_wanted.store(false); s_platform_voice.store(false);
+    cloud_realtime_cancel();
+    UpdateLink();
+    // Never hold the WiFi/core mutex while waiting: the cloud owner can report
+    // state and drain its clients while the existing station is still online.
+    esp_err_t result = cloud_session_pause(15000);
+    if (result == ESP_OK) result = cloud_realtime_wait_idle(15000);
+    if (result != ESP_OK) {
+        s_local_radio.store(false);
+        cloud_session_resume();
+        UpdateLink();
+        ESP_LOGW(TAG, "local radio entry cancelled: cloud cleanup %s; WiFi retained", esp_err_to_name(result));
+        return result;
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_wifi_mtx);
         s_want_connect = false; s_join.Stop(); s_phase = Phase::kIdle;
         s_portal_close_at = 0; UpdateJoinProgress();
         if (s_tick_timer) esp_timer_stop(s_tick_timer);
@@ -850,7 +876,7 @@ esp_err_t agent_wifi_local_begin(uint8_t channel) {
         if (result == ESP_OK) result = esp_wifi_start();
         if (result == ESP_OK) { s_started = true; result = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE); }
     }
-    cloud_realtime_cancel();
+    if (result == ESP_OK) ESP_LOGI(TAG, "local radio on channel %u; cloud paused", channel);
     UpdateLink();
     if (result != ESP_OK) (void)agent_wifi_local_end();
     return result;
@@ -867,6 +893,9 @@ extern "C" esp_err_t agent_link_wifi_info(agent_link_wifi_info_t* info) {
     if (!s_wifi_inited) return ESP_ERR_INVALID_STATE;
     info->setup_active = al_wifi_prov_active();
     snprintf(info->setup_ssid, sizeof info->setup_ssid, "%s", s_ap_ssid);
+    // The STA interface stays started for ESP-NOW but has no associated AP.
+    // Querying it every second in that state makes the driver log a warning.
+    if (s_local_radio.load() || s_phase != Phase::kStaConnected) return ESP_OK;
     wifi_ap_record_t ap{};
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         info->connected = true; info->rssi = ap.rssi;

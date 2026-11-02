@@ -8,7 +8,10 @@ esp_err_t OjBadgeHardware::Init() {
     Gc9a01Config lcd{};
     lcd.mosi = LCD_MOSI; lcd.sclk = LCD_SCLK; lcd.cs = LCD_CS;
     lcd.dc = LCD_DC; lcd.reset = LCD_RESET; lcd.backlight = LCD_BACKLIGHT;
-    lcd.mirror_y = true;  // Correct the vertically mirrored image on OJBadge.
+    // Rotate the display 180 degrees from the previous (X=false, Y=true)
+    // orientation. The independent touch coordinate mapping stays unchanged.
+    lcd.mirror_x = true;
+    lcd.mirror_y = false;
     ESP_RETURN_ON_ERROR(panel.Init(lcd), "OJBadge", "display");
 
     i2c_master_bus_config_t bus{};

@@ -24,6 +24,8 @@ typedef struct {
 
 void cloud_realtime_set_callbacks(const cloud_realtime_callbacks_t* callbacks);
 void cloud_realtime_cancel(void);
+// After cancel, wait for the worker's TLS and platform cleanup before taking WiFi.
+esp_err_t cloud_realtime_wait_idle(uint32_t timeout_ms);
 bool cloud_realtime_ready(void);
 // True only during an actual retry (cleanup/backoff/grant/connect), until READY.
 bool cloud_realtime_recovering(void);

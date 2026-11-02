@@ -34,13 +34,27 @@ struct Device {
     uint8_t mac[6]{2,0,0,0,0,0}, pmk[16]{}, lmk[16]{};
     uint32_t random = 1;
     int pmk_calls = 0, pmk_error = ESP_OK, peer_error = ESP_OK, send_error = ESP_OK;
+    int local_begins = 0, local_ends = 0, local_end_error = ESP_OK;
+    bool lease_held = false;
     bool pmk_set = false, peer_set = false, opened = false;
     SendCallback callback = nullptr;
     agentlink::friends::Packet outgoing{};
 };
 Device* device = nullptr;
-int agent_wifi_local_begin(uint8_t channel) { assert(channel == 6); return ESP_OK; }
-int agent_wifi_local_end() { return ESP_OK; }
+int agent_wifi_local_begin(uint8_t channel) {
+    assert(channel == 6);
+    ++device->local_begins;
+    if (device->lease_held) return ESP_ERR_INVALID_STATE;
+    device->lease_held = true;
+    return ESP_OK;
+}
+int agent_wifi_local_end() {
+    ++device->local_ends;
+    // Match the backend contract: a failed close retains exclusive ownership.
+    if (device->local_end_error != ESP_OK) return device->local_end_error;
+    device->lease_held = false;
+    return ESP_OK;
+}
 int esp_wifi_get_ps(int* value) { *value = WIFI_PS_MIN_MODEM; return ESP_OK; }
 int esp_wifi_set_ps(int) { return ESP_OK; }
 int esp_wifi_get_mac(int iface, uint8_t* mac) { assert(iface == WIFI_IF_STA); memcpy(mac, device->mac, 6); return ESP_OK; }
@@ -161,5 +175,25 @@ int main() {
     device = &b; assert(!rb.Verify(old));
     device = &a; assert(ra.Close() == ESP_OK && !a.callback && !a.opened);
     device = &b; assert(rb.Close() == ESP_OK && !b.callback && !b.opened);
+
+    Device retry{}; device = &retry; EspRadio recovering;
+    assert(recovering.Open(key_a) == ESP_OK);
+    retry.local_end_error = ESP_FAIL;
+    assert(recovering.Close() == ESP_FAIL && retry.lease_held && retry.local_ends == 1);
+    retry.local_end_error = ESP_OK;
+    assert(recovering.Close() == ESP_OK && !retry.lease_held && retry.local_ends == 2);
+    assert(recovering.Close() == ESP_OK && retry.local_ends == 2);  // idempotent after success
+
+    assert(recovering.Open(key_a) == ESP_OK);
+    retry.local_end_error = ESP_FAIL;
+    assert(recovering.Close() == ESP_FAIL && retry.lease_held);
+    const int begins = retry.local_begins, ends = retry.local_ends;
+    // A user can return home after an exit error and enter nearby mode again.
+    // Re-entry must retry cleanup before attempting to acquire another lease.
+    assert(recovering.Open(key_a) == ESP_FAIL && retry.local_begins == begins && retry.local_ends == ends + 1);
+    retry.local_end_error = ESP_OK;
+    assert(recovering.Open(key_a) == ESP_OK && retry.lease_held && retry.local_begins == begins + 1);
+    assert(recovering.Close() == ESP_OK && !retry.lease_held);
+    puts("Production friends radio: failed close retry, repeated failure and direct re-entry recovery passed.");
     puts("Production friends radio: symmetric session PMK/LMK, install order, failure cleanup, packet authentication, fresh-session keys and send diagnostics passed (deterministic crypto fakes; no RF test).");
 }

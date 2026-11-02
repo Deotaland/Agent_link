@@ -39,7 +39,7 @@ class ProfileHardwareTests(unittest.TestCase):
                 else:
                     # The AMOLED C revision has 32 MB; OJBadge and the other
                     # existing network boards have 16 MB.
-                    flash_mb = 32 if profile['board'] == 'waveshare-amoled-175' else 16
+                    flash_mb = 32 if profile['board'] == 'waveshare-amoled-175C' else 16
                     self.assertEqual(values[f'CONFIG_ESPTOOLPY_FLASHSIZE_{flash_mb}MB'], 'y')
                     self.assertEqual(values['CONFIG_SPIRAM'], 'y')
                     self.assertEqual(values['CONFIG_SPIRAM_IGNORE_NOTFOUND'], 'n')

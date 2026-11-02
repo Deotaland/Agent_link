@@ -1,10 +1,10 @@
 {
   "manufacturer": "waveshare",
-  "type": "waveshare-amoled-175",
+  "type": "waveshare-amoled-175C",
   "target": "esp32s3",
   "boards": [
     {
-      "board_type": "WAVESHARE_AMOLED_175_WIFI",
+      "board_type": "WAVESHARE_AMOLED_175C_WIFI",
       "model": "ESP32-S3-Touch-AMOLED-1.75C",
       "product": "Waveshare ESP32-S3-Touch-AMOLED-1.75C",
       "vendor": "Waveshare",
@@ -15,7 +15,7 @@
       "aliases": [
         "ESP32-S3-Touch-AMOLED-1.75C",
         "Waveshare AMOLED 1.75C",
-        "waveshare-amoled-175",
+        "waveshare-amoled-175C",
         "33691",
         "33692"
       ],
@@ -27,7 +27,7 @@
       "ble_name": null,
       "fw_model": "ESP32-S3-Touch-AMOLED-1.75",
       "status": "supported",
-      "notes": "Hardware corrected to the C variant. Existing profile names and firmware model are retained for installed-device/OTA compatibility. Product ID remains 10. Use waveshare-amoled-175-wifi. Hotspot Amoled175-XXXX. Product esp32-s3-touch-amoled-175 (id 10), supplied by the developer. Short-press BOOT to start/end the selected call. Swipe left for apps and right to return. Settings includes WiFi status and persistent Chinese/English choice. Nearby mode pauses cloud WiFi, pairs two compatible devices after both confirm matching codes, supports acknowledged greetings and restores WiFi on exit. Delete/reset require confirmation. Two-device radio acceptance pending."
+      "notes": "Hardware corrected to the C variant. Source directories use 175C; the lowercase build profile is waveshare-amoled-175c-wifi. The firmware model is retained for OTA compatibility. Product ID is 12 (enterprise 0). Use waveshare-amoled-175c-wifi. Hotspot Amoled175-XXXX. Product esp32-s3-touch-amoled-175c (id 12), supplied by the developer. Short-press BOOT to start/end the selected call. Swipe left for apps and right to return. Settings includes WiFi status and persistent Chinese/English choice. Nearby mode pauses cloud WiFi, pairs two compatible devices after both confirm matching codes, supports acknowledged greetings and restores WiFi on exit. Delete/reset require confirmation. Two-device radio acceptance pending."
     }
   ]
 }

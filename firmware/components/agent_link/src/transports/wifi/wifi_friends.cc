@@ -60,6 +60,12 @@ public:
 #endif
     }
     esp_err_t Open(uint8_t key[65]) {
+        // An earlier exit may have failed after ESP-NOW was already torn down.
+        // Recover that lease before starting a fresh session from the UI.
+        if (leased_) {
+            const esp_err_t result = Close();
+            if (result != ESP_OK) return result;
+        }
         esp_err_t result = agent_wifi_local_begin(kChannel);
         if (result != ESP_OK) return result;
         leased_ = true;
@@ -103,8 +109,10 @@ public:
         mbedtls_ecp_group_free(&group_); mbedtls_ecp_group_init(&group_);
 #endif
         if (!leased_) return ESP_OK;
-        esp_wifi_set_ps(previous_ps_); leased_ = false;
-        return agent_wifi_local_end();
+        esp_wifi_set_ps(previous_ps_);
+        const esp_err_t result = agent_wifi_local_end();
+        if (result == ESP_OK) leased_ = false;
+        return result;
     }
     const uint8_t* Mac() const { return mac_; }
     uint64_t RenewNonce() override {

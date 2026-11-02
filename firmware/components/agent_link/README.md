@@ -109,7 +109,13 @@ confirmation, greeting and disconnect commands plus a copied status snapshot.
 Start after the SDK WiFi backend is initialized; end application audio first.
 The worker temporarily leases channel 6, suppresses cloud joins/downlinks and
 returns the existing WiFi credential lifecycle on exit. It does not clear NVS or
-restart cloud workers. The feature is opt-in and unused by other applications;
+restart cloud workers. The cloud owner acknowledges MQTT/HTTP closure and the
+voice worker finishes cleanup before the station is disconnected. A cleanup
+timeout cancels entry without taking WiFi down. Local-mode link status reports
+cloud WiFi as paused, and WiFi-info queries skip the unassociated AP. On exit,
+station startup precedes cloud resume. A failed radio release retains its lease;
+a later stop or start retries cleanup before beginning another session.
+The feature is opt-in and unused by other applications;
 omitted WiFi backends return `ESP_ERR_NOT_SUPPORTED`.
 
 Only peers in this protocol's discovery mode appear. Pairing requires comparing

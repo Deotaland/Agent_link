@@ -134,7 +134,7 @@ def load_profiles():
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
             raise ValueError("Invalid profile name")
         for field in ("board", "app", "hardware"):
-            if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", profile[field]):
+            if not re.fullmatch(r"[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*", profile[field]):
                 raise ValueError(f"{name}: invalid {field}")
         app = ROOT / "apps" / profile["app"]
         if not any(app.glob("*.cc")) or profile["ui"] not in {"lvgl", "raster", "none"}:

@@ -34,7 +34,7 @@ else:
 subprocess.run(command, env=environment, cwd=build, check=True)
 subprocess.run([str(binary)], check=True)
 profiles = json.loads((root / "profiles/profiles.json").read_text(encoding="utf-8"))
-for name in ("waveshare-amoled-175-wifi",):
+for name in ("waveshare-amoled-175c-wifi",):
     profile = profiles[name]
     assert "cjk_font.cc" in profile["drivers"]
     assert "amoled_fonts.cc" in profile["hardware_sources"]

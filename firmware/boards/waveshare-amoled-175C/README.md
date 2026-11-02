@@ -1,10 +1,11 @@
 # Waveshare ESP32-S3-Touch-AMOLED-1.75C
 
 Target hardware is the **C variant**, confirmed by the developer on 2026-10-30.
-The legacy directory/profile name `waveshare-amoled-175-wifi` remains in use. The installed firmware model
+Sources use `boards/waveshare-amoled-175C` and `apps/waveshare-amoled-175C-wifi`;
+build with the lowercase profile `waveshare-amoled-175c-wifi`. The installed firmware model
 `ESP32-S3-Touch-AMOLED-1.75` is retained for OTA compatibility; it does not identify
-this as the non-C PCB. Platform product ID remains 10 and the registered key
-remains `esp32-s3-touch-amoled-175`, as explicitly requested by the developer.
+this as the non-C PCB. Platform product ID is 12 (enterprise 0), with product key
+`esp32-s3-touch-amoled-175c` and chip `esp32-s3`, as supplied by the developer.
 Use these profiles only on the ESP32-S3-Touch-AMOLED-1.75C (SKU 33691/33692).
 
 ## Hardware
@@ -105,13 +106,13 @@ view or older than 500 ms are discarded.
 
 ## Setup and build
 
-The developer supplied the platform registration on 2026-10-29:
-`esp32-s3-touch-amoled-175`, product ID 10, chip `esp32-s3`, on
+The developer supplied the C-variant platform registration on 2026-10-30:
+`esp32-s3-touch-amoled-175c`, product ID 12, chip `esp32-s3`, on
 [bot.deotaland.cn](https://bot.deotaland.cn). The account-token lookup was not
 available in the development environment; no account token is compiled in.
 
 1. Build with an activated ESP-IDF 5.5.x or 6.1.x environment:
-   `python firmware/tools/build_firmware.py waveshare-amoled-175-wifi --jobs 1`.
+   `python firmware/tools/build_firmware.py waveshare-amoled-175c-wifi --jobs 1`.
    The helper reuses `firmware/build`.
 2. After an explicitly requested flash, join `Amoled175-XXXX`, open
    `http://192.168.4.1`, and provision a 2.4 GHz WiFi network.
@@ -187,8 +188,19 @@ Keep the matching ELF and capture the `PCM` and existing `voice` lines together.
 Both devices must run this compatible Agent Link firmware and enter the Friend
 app. Entering ends voice, pauses cloud WiFi, and acquires channel 6 through the
 SDK. Credentials, binding and selected conversation are retained. The cloud
-workers wait for network readiness rather than racing a stop/start cycle.
+worker closes MQTT/HTTP and acknowledges its pause before WiFi is disconnected.
+Voice cleanup also finishes before the radio switches channels. A cleanup timeout
+aborts entry and keeps station WiFi running. The workers remain alive, and local
+mode reports cloud WiFi as paused without polling the disconnected AP.
 Exiting by Back, a right swipe or BOOT releases ESP-NOW and restores WiFi.
+It resumes the cloud worker only after station startup. The existing activation
+key is retained; if the platform rejects a previous product-10 binding after the
+product change, unbind/reset activation and claim it under product 12. A binding
+already issued under product 10 may otherwise continue identifying that product.
+
+`python firmware/tests/test_wifi_local_radio.py` checks the production pause and
+radio transitions, cleanup timeout rollback, repeated entry/exit, stale pause
+acknowledgements, voice drain and disconnected AP-query suppression on the host.
 
 The scrollable list shows up to six devices with a local `Link-XXXXXX`
 name and RSSI. Advertisements expire after five seconds. Select a peer; both

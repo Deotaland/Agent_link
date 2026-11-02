@@ -5,7 +5,7 @@ import shutil
 import subprocess
 
 root = Path(__file__).resolve().parents[1]
-app = root / "apps/waveshare-amoled-175-wifi"
+app = root / "apps/waveshare-amoled-175C-wifi"
 source = (app / "waveshare_amoled_wifi.cc").read_text(encoding="utf-8")
 ui = (app / "amoled_voice_ui.cc").read_text(encoding="utf-8")
 fixture = (root / "tests/amoled_voice_fixture.cc").read_text(encoding="utf-8")
@@ -45,7 +45,7 @@ subprocess.run(command, env=environment, cwd=build, check=True)
 subprocess.run([str(binary)], check=True)
 
 # Exercise the C-board production standard I2S path and checked-open boundary.
-board_audio = (root / "boards/waveshare-amoled-175/amoled_audio.cc").read_text(encoding="utf-8")
+board_audio = (root / "boards/waveshare-amoled-175C/amoled_audio.cc").read_text(encoding="utf-8")
 audio_fixture = (root / "tests/amoled_audio_fixture.cc").read_text(encoding="utf-8")
 audio_fixture = audio_fixture.replace("// INSERT_CHECKED_DATA",
     board_audio[board_audio.index("struct CheckedData {"):board_audio.index("\n}\n\nstruct AmoledAudio::State")])
