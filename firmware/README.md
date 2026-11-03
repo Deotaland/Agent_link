@@ -9,7 +9,8 @@ First computer setup, SDK activation and China/offline downloads are covered in
 the [environment guide](../guides/environment.md) ([Chinese](../guides/environment.zh-CN.md)).
 From the repository root run `python tools/check_env.py --profile PROFILE`
 before building. This read-only check is separate from profile metadata checks.
-Prebuilt browser installation needs no SDK; BLE requires the unpublished app.
+Prebuilt browser installation needs no SDK; BLE uses [Rorolee](../app/readme.md):
+iOS overseas App Store search **rorolee**, Android APK at [rorolee.com](https://rorolee.com).
 
 Activate ESP-IDF 5.5.x or 6.1.x. Maintainers use 5.5.4 for existing S3/C3 profiles;
 ESP32-S31 requires 6.1 with S31 support. From `firmware/`:
@@ -63,7 +64,7 @@ it clears incompatible files in the existing build directory.
 For activation, Agent binding, the first successful interaction and recovery,
 follow [first use](../guides/getting-started.md) and the [device table](../guides/devices.md).
 
-- **BLE:** use the Deotaland phone app. The app provides the platform connection.
+- **BLE:** use the Rorolee phone app. The app provides the platform connection.
 - **WiFi:** join the device hotspot, set WiFi at `http://192.168.4.1`, claim the
   six-digit activation code in the console and bind an Agent.
 - **Muse:** pair and provision through the Muse app. See [Muse](components/muse_gadget/README.md).

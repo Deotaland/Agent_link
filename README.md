@@ -13,11 +13,13 @@ hardware and user interface. Existing Muse firmware is also included.
 | Goal | Guide |
 | --- | --- |
 | Install published firmware directly in the browser | [Firmware center](https://bot.deotaland.cn/#/firmware) / [First-use guide](guides/getting-started.md) |
+| Download the Rorolee phone app | iOS: search **rorolee** in an overseas App Store; Android: [rorolee.com](https://rorolee.com). [App setup](app/readme.md) |
 | Prepare a new computer or fix downloads in China | [Environment setup, mirrors and offline installation](guides/environment.md) |
 | Find hotspot names and first actions | [Device guide](guides/devices.md) |
 | Customize or add hardware | [Firmware](firmware/README.md) / [Board porting](firmware/boards/README.md) |
 
-BLE requires the **unpublished Deotaland phone app**; confirm availability first.
+BLE uses the **Rorolee phone app**: search **rorolee** in an overseas App Store
+for iOS, or download the Android APK from [rorolee.com](https://rorolee.com).
 Use a supported WiFi profile for standalone access. Muse uses its own app/cloud.
 Catalog `supported` means a source profile exists; read device-acceptance caveats.
 
@@ -76,7 +78,7 @@ matching published firmware first, or build a source profile when needed, find
 the USB port and verify the result. It asks about the connection only when the hardware supports several
 firmware choices. You do not need to know the chip or configuration symbols.
 
-Connect a USB data cable. BLE firmware needs the Deotaland phone app; WiFi
+Connect a USB data cable. BLE firmware needs the [Rorolee phone app](app/readme.md); WiFi
 firmware uses hotspot setup and a six-digit activation code in the
 [platform console](https://bot.deotaland.cn). Prebuilt images are available in the
 [firmware center](https://bot.deotaland.cn/#/firmware).

@@ -12,12 +12,14 @@
 | 你要做什么 | 入口 |
 | --- | --- |
 | 在网页直接烧录已发布固件 | [固件中心](https://bot.deotaland.cn/#/firmware) / [首次使用指南](guides/getting-started.zh-CN.md) |
+| 下载 Rorolee 手机 App | iOS：海外 App Store 搜索 **rorolee**；安卓：[rorolee.com](https://rorolee.com) 下载 APK |
 | 电脑什么都没装，或国内下载很慢 | [Windows / macOS / Linux 环境安装，含国内镜像和离线兜底](guides/environment.zh-CN.md) |
 | 不知道设备该按哪个键、连哪个热点 | [按设备查第一次操作](guides/devices.zh-CN.md) |
 | 想修改固件或接入新硬件 | [固件说明](firmware/README.md) / [板级接入](firmware/boards/README.md) |
 
-**BLE 需要尚未公开发布的 Deotaland 手机 App，请先确认已取得。**没有 App 时，
-查看这款设备是否有 WiFi 方案。WiFi 可独立联网；Muse 使用自己的 App 和服务。
+**BLE 使用 Rorolee 手机 App：iOS 已在海外 App Store 上架，搜索 `rorolee` 即可下载；
+安卓安装包在 [rorolee.com](https://rorolee.com) 下载。**安装后在 App 内添加设备。
+WiFi 可独立联网；Muse 使用自己的 App 和服务。
 目录的 `supported` 表示存在源码方案，真机验收状态请看对应备注。
 
 ## 网页直接烧录（使用现成固件推荐）
@@ -65,7 +67,7 @@ AI 按 [AGENTS.md](AGENTS.md) 识别板子，优先引导固件中心网页烧�
 并确认串口、验证结果。
 同一块硬件有多个固件时，才需要补充选择 BLE、WiFi 或其他用途，无需知道芯片或配置符号。
 
-请使用 USB 数据线。BLE 需要 Deotaland 手机 App；WiFi 通过设备热点配网，再到
+请使用 USB 数据线。BLE 需要 [Rorolee 手机 App](app/readme.md)；WiFi 通过设备热点配网，再到
 [平台](https://bot.deotaland.cn) 输入六位激活码并绑定 Agent。
 预编译固件在[固件中心](https://bot.deotaland.cn/#/firmware)。
 整包烧录可能覆盖设备设置和配对信息，AI 应在写入前说明影响。

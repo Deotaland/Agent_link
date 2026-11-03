@@ -20,7 +20,10 @@ Locate that checkout before running helpers from an installed skill. Read
 installation, verified official sources, China downloads and offline limitations.
 A prebuilt image flashed from the terminal needs only the flashing tools;
 `python tools/check_env.py --mode flash --ports` enumerates without opening ports.
-Do not route a user without the unpublished Deotaland app to BLE by default.
+For BLE, guide Rorolee installation: iOS users search **rorolee** in an overseas
+App Store; Android users download the APK from [rorolee.com](https://rorolee.com).
+Do not treat the app as unpublished or require private access. If it cannot be
+installed or the user prefers standalone use, check for a supported WiFi profile.
 
 For source builds identify hardware with the flash skill's board lookup. Ask
 only for behavior/backend when several choices fit. Run from the repository root:

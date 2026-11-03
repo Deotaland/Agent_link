@@ -4,7 +4,9 @@
 
 表中操作以当前源码为准，不代表每一款设备都已完成真机验收。
 目录中的 `supported` 表示有源码方案。选择前用完整型号核对[目录](../AGENTS.md#board-catalog)及其备注；
-表中的 WiFi 方案先完成配网、激活、绑定 Agent，再做首次操作。BLE 先取得 Deotaland App。
+表中的 WiFi 方案先完成配网、激活、绑定 Agent，再做首次操作。
+BLE 先安装 Rorolee App：iOS 在海外 App Store 搜索 `rorolee`；安卓在
+[rorolee.com](https://rorolee.com) 下载 APK，再在 App 内添加设备。
 
 | 硬件与方案 | 连接入口 | 第一次操作与验收 |
 | --- | --- | --- |

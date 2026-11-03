@@ -29,7 +29,9 @@ The OS must recognize the correct serial device; a driver may still be needed.
 Identify the exact board/revision and intended BLE/WiFi/Muse/local behavior.
 Use the bundled `references/boards.json` if no checkout/Python is available;
 otherwise use the lookup helper below. A broad vendor name needs clarification.
-Confirm BLE app availability before selecting BLE; the Deotaland app is unpublished.
+For BLE, guide installation of Rorolee: search **rorolee** in an overseas App Store
+for iOS; download the Android APK from [rorolee.com](https://rorolee.com). It is
+publicly available; do not require private access or reject BLE as unavailable.
 
 Guide the user through desktop Chrome/Edge, console sign-in, a USB data cable,
 hardware-product/chip filters and release notes. Match board revision and backend;
@@ -43,8 +45,8 @@ just because the agent cannot operate the browser.
 After writing, verify the page result and device restart. Guide WiFi hotspot
 setup at `http://192.168.4.1`, restoring phone internet, console activation with
 the device's current six-digit code, Agent binding and the first interaction.
-Already activated devices may go online directly. BLE uses the existing phone
-app; Muse uses its own app/developer mode and BOOT confirmation. Local-only
+Already activated devices may go online directly. BLE pairs inside Rorolee;
+Muse uses its own app/developer mode and BOOT confirmation. Local-only
 profiles do not use platform activation. Report browser write, observed boot
 behavior and online acceptance separately; do not invent a serial-log check.
 
@@ -62,9 +64,10 @@ symbols. If one model has several firmware choices, ask which behavior or
 connection they want. Confirm weak matches. Do not flash `not-adapted` boards;
 check pins before using a wiring example. `supported` denotes an available source
 profile; read its acceptance caveats and report pending hardware tests.
-Before selecting BLE, confirm the user already has the unpublished Deotaland app.
-For a supported WiFi alternative, explain that it works without that app. Muse
-uses its own app/cloud. Do not promise voice on a display-only/local-only profile.
+Before BLE pairing, guide Rorolee installation using the download channels above.
+If installation is unavailable, check for a supported WiFi alternative, which
+works without that app. Muse uses its own app/cloud. Do not promise voice on a
+display-only/local-only profile.
 
 Use an existing matching package, the firmware center, or build the returned
 profile in the user's checkout with `firmware/tools/build_firmware.py`. Follow

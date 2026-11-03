@@ -16,8 +16,10 @@ Confirm the AMOLED C revision, WOWNNY revision and Korvo display variant.
 P4 is not adapted; wiring examples require a pin check.
 
 WiFi connects directly and requires a supported WiFi profile, 2.4 GHz network
-and console account. BLE requires the **unpublished Deotaland phone app**;
-confirm the user has it before selecting firmware. Muse uses its own app/cloud.
+and console account. BLE uses the **Rorolee phone app**: search **rorolee** in an
+overseas App Store for iOS, or download the Android APK from
+[rorolee.com](https://rorolee.com). Follow [app setup](../app/readme.md) before pairing.
+Muse uses its own app/cloud.
 Local-only and display-only profiles do not acquire voice just by installing them.
 
 ## Install
@@ -57,7 +59,7 @@ a new code. If no Agent is available, resolve that in the console/account first.
 Choose/create a conversation as required by the [device table](devices.md), start
 the first interaction, verify a reply and end it. E-paper refresh takes time.
 
-BLE: add the advertised name from inside the Deotaland app with Bluetooth/nearby
+BLE: add the advertised name from inside Rorolee with Bluetooth/nearby
 permissions. System Bluetooth connection alone does not verify encrypted app
 pairing. Use the exact board's local pairing reset before changing phones.
 Muse: enable app developer mode, add MuseGadget-XXXXXX, press BOOT to confirm and

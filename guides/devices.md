@@ -5,7 +5,8 @@
 `supported` means a source profile exists. It does not establish successful
 hardware acceptance. Check the selected profile's [catalog notes](../AGENTS.md#board-catalog),
 revision and USB connector before installation. WiFi profiles need provisioning,
-activation and Agent binding first; BLE profiles need the unpublished phone app.
+activation and Agent binding first; BLE profiles use [Rorolee](../app/readme.md):
+iOS overseas App Store search **rorolee**, Android APK at [rorolee.com](https://rorolee.com).
 
 | Hardware / profile | Discovery | First action |
 | --- | --- | --- |

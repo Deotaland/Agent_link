@@ -27,8 +27,11 @@ in [skills/](skills/README.md) for device tasks.
 
 ## Flash a device from its name
 
-Start with [first use](guides/getting-started.md) for new users. Before choosing
-BLE confirm the unpublished Deotaland app is available; otherwise check for a
+Start with [first use](guides/getting-started.md) for new users. For BLE, guide
+installation of Rorolee: search **rorolee** in an overseas App Store for iOS;
+download the Android APK from [rorolee.com](https://rorolee.com). The app is
+publicly available; do not require private access. See [app setup](app/readme.md).
+If installation is unavailable or standalone use is preferred, check for a
 supported WiFi alternative. Muse and local-only applications have separate flows.
 For an existing device, first look for matching published firmware in the
 [developer console's firmware center](https://bot.deotaland.cn/#/firmware).
@@ -114,7 +117,7 @@ source-build route and use a terminal-capable assistant when the user chooses it
 
 | Backend | Setup                                                                                                                                  |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| BLE     | Pair from the Deotaland phone app using the catalog's `ble_name`. Confirm the user has the app; it is not publicly released.           |
+| BLE     | Install [Rorolee](app/readme.md): iOS overseas App Store search **rorolee**, Android APK at [rorolee.com](https://rorolee.com). Pair inside the app using the catalog's `ble_name`. |
 | WiFi    | Join the device hotspot, open `http://192.168.4.1`, set WiFi, then claim the six-digit code in the platform console and bind an Agent. |
 | Muse    | In the Muse app enable developer mode, add `MuseGadget-XXXXXX`, press BOOT to confirm, then let the app provision WiFi.                |
 
