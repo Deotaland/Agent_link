@@ -61,7 +61,8 @@ void KorvoCloudAudio::StopPlayback() { play_generation_.fetch_add(1); }
 
 void KorvoCloudAudio::EndPlayback() {
     play_finished_.store(true);
-    ESP_LOGI(TAG, "speaker reply end #%u", play_ends_.fetch_add(1) + 1);
+    const unsigned ends = play_ends_.fetch_add(1) + 1;
+    ESP_LOGD(TAG, "speaker reply end #%u", ends);
 }
 
 void KorvoCloudAudio::PlayTaskEntry(void* arg) { static_cast<KorvoCloudAudio*>(arg)->PlayLoop(); }
@@ -74,7 +75,7 @@ void KorvoCloudAudio::PlayLoop() {
     kc_audio::PlaybackGate gate(start_bytes, resume_bytes);
     size_t played = 0;
     unsigned drains = 0, resets = 0;
-    ESP_LOGI(TAG, "speaker prebuffer: start=%u ms resume=%u ms (reply end bypasses both)",
+    ESP_LOGD(TAG, "speaker prebuffer: start=%u ms resume=%u ms (reply end bypasses both)",
              static_cast<unsigned>(start_bytes / 32), static_cast<unsigned>(resume_bytes / 32));
     while (true) {
         const uint32_t generation = play_generation_.load();
@@ -210,7 +211,7 @@ void KorvoCloudAudio::MicLoop() {
 
         if (!need_mic) {
             if (echo_muted) {
-                ESP_LOGI(TAG, "mic echo guard off (%u frames sent as silence)", muted_frames);
+                ESP_LOGD(TAG, "mic echo guard off (%u frames sent as silence)", muted_frames);
                 echo_muted = false;
                 muted_frames = 0;
             }
@@ -251,8 +252,8 @@ void KorvoCloudAudio::MicLoop() {
             } else {
                 const bool silence = continuous && echo_guard_.Muted(esp_timer_get_time());
                 if (silence != echo_muted) {
-                    if (silence) ESP_LOGI(TAG, "mic echo guard on");
-                    else ESP_LOGI(TAG, "mic echo guard off (%u frames sent as silence)", muted_frames);
+                    if (silence) ESP_LOGD(TAG, "mic echo guard on");
+                    else ESP_LOGD(TAG, "mic echo guard off (%u frames sent as silence)", muted_frames);
                     echo_muted = silence;
                     muted_frames = 0;
                 }

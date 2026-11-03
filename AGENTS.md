@@ -188,6 +188,11 @@ Read [the board guide](firmware/boards/README.md), the
 
 ## Checks before merge
 
+Follow the [logging and maintenance guide](guides/logging.md). Keep normal logs
+at Info, repeated diagnostics at Debug and failures visible at Warn/Error. Never
+log conversation content or credentials, including at Debug. Keep state changes
+outside logging arguments and preserve third-party headers.
+
 Run from the repository root:
 
 ```sh

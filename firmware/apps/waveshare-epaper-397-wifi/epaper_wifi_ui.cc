@@ -265,7 +265,7 @@ void Ui::Loop() {
                 if (pixels_changed) {
                     memcpy(previous_frame_, frame_, EPD_WIDTH * EPD_HEIGHT / 8);
                     refresh.Success(full, scene, screen.page);
-                    ESP_LOGI("WS397.ui", "%s scene=%d page=%d view=%u render=%ums transfer=%ums dirty=%dx%d window=%dx%d",
+                    ESP_LOGD("WS397.ui", "%s scene=%d page=%d view=%u render=%ums transfer=%ums dirty=%dx%d window=%dx%d",
                              full ? "full" : "partial", int(scene), screen.page, unsigned(screen.view),
                              unsigned((transfer_started - render_started) / 1000), unsigned((completed - transfer_started) / 1000),
                              rect.x1 - rect.x0, rect.y1 - rect.y0, EPD_WIDTH, EPD_HEIGHT);

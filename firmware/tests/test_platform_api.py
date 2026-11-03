@@ -89,6 +89,8 @@ if args.voice_worker:
     sources = [source]
 
 if args.voice_send:
+    if not args.c3:
+        parser.error('--voice-send requires --c3')
     production = (root / 'components/agent_link/src/transports/wifi/cloud/cloud_realtime.cc').read_text(encoding='utf-8')
     fixture = (root / 'tests/realtime_send_test.cc').read_text(encoding='utf-8')
     for marker, start, end in [

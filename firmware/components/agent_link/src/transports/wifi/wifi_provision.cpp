@@ -193,7 +193,7 @@ void DoScanAndCache() {
         s_scan_json = std::move(json);
         s_scan_options = std::move(opts);
     }
-    ESP_LOGI(TAG, "provisioning scan: %d network(s) found", count);
+    ESP_LOGD(TAG, "provisioning scan: %d network(s) found", count);
 }
 
 void ScanTask(void*) {

@@ -144,7 +144,6 @@ public:
     }
 
     void ShowText(const char* utf8) override {
-        ESP_LOGI(TAG, "screen: %.80s", utf8 ? utf8 : "");
         switch (Classify(utf8)) {
         case Said::kHeard:
             break;   // keep thinking

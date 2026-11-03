@@ -20,8 +20,8 @@ public:
     uint32_t Capabilities() const override { return AGENT_CAP_SCREEN; }  // screen only for now
 
     // Agent asks the device to show text: at this reference stage a blue fill stands in for "received" (font rendering TODO).
-    void ShowText(const char* utf8) override {
-        ESP_LOGI(TAG, "ShowText \"%s\" (reference stage: blue fill for now; TODO font rendering)", utf8 ? utf8 : "");
+    void ShowText(const char* /*utf8*/) override {
+        ESP_LOGD(TAG, "text received; reference display uses a blue fill");
         if (panel_.Ready()) panel_.FillSolid(0x001F);  // blue
     }
 

@@ -153,6 +153,10 @@ long replies, speaker echo suppression, WiFi reconnect and sustained calls.
 
 ## PCM capture diagnostics
 
+Register dumps, PCM statistics and five-second UI reports use Debug verbosity;
+see the [logging guide](../../../guides/logging.md) to enable them for diagnosis.
+Audio read/write failures and dropped uplink frames retain a Warning summary.
+
 Network voice remains Opus with the server-negotiated rates. The SDK application
 boundary remains PCM16 mono at 16 kHz in both directions. This board's
 `amoled_audio.cc` uses the official C-board topology: master standard I2S TX/RX,

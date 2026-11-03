@@ -165,7 +165,7 @@ esp_err_t AmoledAudio::StartMic() {
             ESP_LOGE(TAG, "ES7210 register read failed: 0x%02x", reg);
             (void)esp_codec_dev_close(state_->input); return ESP_FAIL;
         }
-        ESP_LOGI(TAG, "ES7210 reg 0x%02x=0x%02x", reg, value);
+        ESP_LOGD(TAG, "ES7210 reg 0x%02x=0x%02x", reg, value);
     }
     channels_ = {}; mic_on_ = true;
     return ESP_OK;

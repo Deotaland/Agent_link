@@ -187,7 +187,7 @@ private:
 
     void Clear(Page page) {
         page_ = page; count_ = 0; ++view_; ++navigation_; error_message_[0] = '\0';
-        ESP_LOGI(TAG, "Page: %d", static_cast<int>(page));
+        ESP_LOGD(TAG, "Page: %d", static_cast<int>(page));
     }
     void Add(Action action, const char* text, int value = 0) {
         if (count_ >= sizeof items_ / sizeof items_[0]) return;
@@ -349,7 +349,7 @@ private:
         else Launcher();
     }
     void PhysicalButton() {
-        ESP_LOGI(TAG, "BOOT dispatch: page=%d call=%d state=%d audio=%d session=%d",
+        ESP_LOGD(TAG, "BOOT dispatch: page=%d call=%d state=%d audio=%d session=%d",
             static_cast<int>(page_), call_, static_cast<int>(agent_link_state()), audio_.Ready(), session_[0] != 0);
         amoled_voice::Wake();
         if (friends_open_) { CloseFriends(Page::kHome); return; }
@@ -551,7 +551,7 @@ private:
             }
         }
         if (last_activity_ != screen.activity || last_calling_ != call_) {
-            ESP_LOGI(TAG, "UI state: activity=%d calling=%d ended=%d view=%lu",
+            ESP_LOGD(TAG, "UI state: activity=%d calling=%d ended=%d view=%lu",
                 static_cast<int>(screen.activity), call_, ended_, static_cast<unsigned long>(view_));
             last_activity_ = screen.activity; last_calling_ = call_;
         }
@@ -617,15 +617,15 @@ private:
     void KeyLoop() {
         amoled_voice::ButtonDebounce key;
         bool previous = hardware_.ButtonDown();
-        ESP_LOGI(TAG, "BOOT polling started: GPIO0 level=%d, debounce=40ms", previous ? 0 : 1);
+        ESP_LOGD(TAG, "BOOT polling started: GPIO0 level=%d, debounce=40ms", previous ? 0 : 1);
         while (true) {
             const bool down = hardware_.ButtonDown();
             if (down != previous) {
-                ESP_LOGI(TAG, "BOOT GPIO0 level=%d", down ? 0 : 1);
+                ESP_LOGD(TAG, "BOOT GPIO0 level=%d", down ? 0 : 1);
                 previous = down;
             }
             if (key.Update(down, esp_timer_get_time())) {
-                ESP_LOGI(TAG, "BOOT press accepted");
+                ESP_LOGD(TAG, "BOOT press accepted");
                 button_pending_.store(true);
                 amoled_voice::Wake();
             }
@@ -674,5 +674,3 @@ private:
     int attempts_ = 0;
     int64_t requested_at_ = 0, last_attempt_ = 0;
 };
-
-

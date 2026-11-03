@@ -691,7 +691,7 @@ static bool noise_handshake(esp_tls_t *tls, ClientSession &session,
         ESP_LOGE(TAG, "failed to send handshake msg1");
         return false;
     }
-    ESP_LOGI(TAG, "handshake msg1 sent (%u bytes)", (unsigned)msg1.size());
+    ESP_LOGD(TAG, "handshake msg1 sent (%u bytes)", (unsigned)msg1.size());
 
     // msg2: responder → initiator
     ssize_t msg2_len = ws_recv_frame(tls, scratch, scratch_len);
@@ -699,7 +699,7 @@ static bool noise_handshake(esp_tls_t *tls, ClientSession &session,
         ESP_LOGE(TAG, "failed to receive handshake msg2: %d", (int)msg2_len);
         return false;
     }
-    ESP_LOGI(TAG, "handshake msg2 received (%d bytes)", (int)msg2_len);
+    ESP_LOGD(TAG, "handshake msg2 received (%d bytes)", (int)msg2_len);
 
     uint8_t peer_extra[256];
     size_t peer_extra_written = 0;
@@ -1140,7 +1140,7 @@ static void identity_finish(identity_fetch &f) {
     cJSON *result = root ? cJSON_GetObjectItem(root, "result") : nullptr;
     cJSON *name = cJSON_GetObjectItem(result, "name");
     if (cJSON_IsString(name) && name->valuestring && *name->valuestring) {
-        ESP_LOGI(TAG, "agent name: %s", name->valuestring);
+        ESP_LOGD(TAG, "agent name received");
         if (s_agent_name_cb) s_agent_name_cb(name->valuestring);
     } else {
         ESP_LOGW(TAG, "identity reply has no name");
@@ -1843,7 +1843,7 @@ static session_result_t run_session(stack_monitor_t *stack) {
         esp_tls_conn_destroy(tls);
         return SESSION_FAILED;
     }
-    ESP_LOGI(TAG, "TLS connected to %s:%d (vm_id=%s)", s_noise_host, NOISE_PORT, s_vm_id);
+    ESP_LOGI(TAG, "TLS connected to Muse");
 
     // 2. WebSocket upgrade
     noise_upgrade_result_t upgrade = ws_upgrade(tls);
@@ -2148,7 +2148,7 @@ static session_result_t run_session(stack_monitor_t *stack) {
                     heartbeat_sent = true;
                     last_heartbeat_us = esp_timer_get_time();
                 }
-                ESP_LOGI(TAG, "sent %s (%u bytes)",
+                ESP_LOGD(TAG, "sent %s (%u bytes)",
                          control_tx.is_registration ? "link.register" :
                          control_tx.is_heartbeat ? "link.heartbeat" : "control message",
                          (unsigned)control_tx.json_len);

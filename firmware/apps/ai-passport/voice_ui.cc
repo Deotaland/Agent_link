@@ -261,7 +261,7 @@ void RenderTask(void*) {
                 seen_token = s_frame.token;
             }
             taskEXIT_CRITICAL(&s_lock);
-            ESP_LOGI(TAG, "session frame flushed: token=%u stack_remaining=%u", (unsigned)s_frame.token,
+            ESP_LOGD(TAG, "session frame flushed: token=%u stack_remaining=%u", (unsigned)s_frame.token,
                      (unsigned)uxTaskGetStackHighWaterMark(nullptr));
         }
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(50));

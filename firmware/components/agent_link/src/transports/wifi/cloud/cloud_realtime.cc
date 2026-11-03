@@ -188,11 +188,13 @@ void ReportUplink() {
     const uint32_t messages = sent_messages - s_diag_prev_sent_messages;
     const uint32_t send_ms = s_tx_send_ms.exchange(0);
     const uint32_t writes = s_tx_write_calls.exchange(0);
+    const uint32_t max_send_ms = s_tx_send_max_ms.exchange(0);
+    const uint32_t max_encode_us = s_tx_encode_max_us.exchange(0);
     const uint32_t phase = s_worker_phase.load();
     const uint32_t phase_age = now - s_worker_phase_since_ms.load();
     constexpr const char* phases[] = {"loop", "send", "poll", "read", "handle"};
     const char* phase_name = phase < sizeof phases / sizeof phases[0] ? phases[phase] : "unknown";
-    ESP_LOGI(TAG,
+    ESP_LOGD(TAG,
              "voice %ums: mic=%u tx=%u drop=%u queue=%ums ws=%u writes=%u tx=%uB/s rx=%uB/s "
              "decoded=%ums send=%u/%ums enc=%uus pending=%uB worker=%s/%ums stack=%u/%u/%uB",
              static_cast<unsigned>(now - s_diag_last_ms), static_cast<unsigned>(s_diag_mic_frames),
@@ -205,15 +207,15 @@ void ReportUplink() {
              static_cast<unsigned>((rx_bytes - s_diag_prev_rx_bytes) * 1000 / interval),
              static_cast<unsigned>((samples - s_diag_prev_samples) / 16),
              static_cast<unsigned>(writes ? send_ms / writes : 0),
-             static_cast<unsigned>(s_tx_send_max_ms.exchange(0)),
-             static_cast<unsigned>(s_tx_encode_max_us.exchange(0)),
+             static_cast<unsigned>(max_send_ms),
+             static_cast<unsigned>(max_encode_us),
              static_cast<unsigned>(s_downlink_bytes.load()),
              phase_name,
              static_cast<unsigned>(phase_age),
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
              static_cast<unsigned>(s_media_stack.load()), static_cast<unsigned>(s_encoder_stack.load()));
 #if CONFIG_IDF_TARGET_ESP32C3
-    ESP_LOGI(TAG, "voice memory: internal free=%u largest=%u minimum=%u",
+    ESP_LOGD(TAG, "voice memory: internal free=%u largest=%u minimum=%u",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
@@ -222,7 +224,7 @@ void ReportUplink() {
     const unsigned partial = s_tx_partial.exchange(0);
     const unsigned low_water = s_tx_select0_accepted.exchange(0);
     if (waiting || partial || low_water)
-        ESP_LOGI(TAG, "uplink TLS progress: would_block=%u partial=%u select0_accepted=%u",
+        ESP_LOGD(TAG, "uplink TLS progress: would_block=%u partial=%u select0_accepted=%u",
                  waiting, partial, low_water);
     s_diag_last_ms = now;
     s_diag_mic_frames = s_diag_dropped_frames = 0;
@@ -286,7 +288,7 @@ public:
     VoiceWifiPower() {
         changed_ = esp_wifi_get_ps(&previous_) == ESP_OK && previous_ != WIFI_PS_NONE &&
                    esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
-        if (changed_) ESP_LOGI(TAG, "WiFi power saving suspended for voice");
+        if (changed_) ESP_LOGD(TAG, "WiFi power saving suspended for voice");
     }
     ~VoiceWifiPower() { if (changed_) (void)esp_wifi_set_ps(previous_); }
 private:
@@ -648,7 +650,7 @@ public:
 #if CONFIG_AGENT_LINK_REALTIME_OPUS && CONFIG_IDF_TARGET_ESP32C3
         // The shared worker stack is already resident. TLS handshake scratch
         // has been released before these per-call codec states are allocated.
-        ESP_LOGI(TAG, "before Opus allocation: internal free=%u largest=%u",
+        ESP_LOGD(TAG, "before Opus allocation: internal free=%u largest=%u",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
         if (SharedCodec() && !codec_memory_.Reserve()) {
@@ -664,7 +666,7 @@ public:
 
     bool Start() {
 #if CONFIG_IDF_TARGET_ESP32C3
-        ESP_LOGI(TAG, "resident voice worker: network + codec, internal free=%u largest=%u stack_free=%u",
+        ESP_LOGD(TAG, "resident voice worker: network + codec, internal free=%u largest=%u stack_free=%u",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
@@ -723,7 +725,7 @@ public:
     void ReportMemory(const char* phase) {
         (void)phase;
 #if CONFIG_IDF_TARGET_ESP32C3
-        ESP_LOGI(TAG, "voice memory %s: free=%u largest=%u minimum=%u stack_free=%u",
+        ESP_LOGD(TAG, "voice memory %s: free=%u largest=%u minimum=%u stack_free=%u",
                  phase,
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
@@ -731,7 +733,7 @@ public:
                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 #if CONFIG_AGENT_LINK_REALTIME_OPUS
         if (SharedCodec())
-            ESP_LOGI(TAG, "Opus workspace: reserved=%u peak=%u allocations=%u",
+            ESP_LOGD(TAG, "Opus workspace: reserved=%u peak=%u allocations=%u",
                      static_cast<unsigned>(agentlink::realtime::CodecWorkspace::kBytes),
                      static_cast<unsigned>(codec_memory_.Peak()), static_cast<unsigned>(codec_memory_.Live()));
 #endif
@@ -1038,12 +1040,13 @@ public:
                 }
             }
         } else if (strcmp(event, "response.audio.done") == 0) {
-            ESP_LOGI(TAG, "reply audio end #%u (started=%u, interrupted=%u)",
-                     ++reply_ends_, replies_, interruptions_);
-            ESP_LOGI(TAG, "reply audio: %s, %u packets, %u bytes, %u ms PCM, max gap %u ms",
+            ++reply_ends_;
+            ESP_LOGD(TAG, "reply audio end #%u (started=%u, interrupted=%u)",
+                     reply_ends_, replies_, interruptions_);
+            ESP_LOGD(TAG, "reply audio: %s, %u packets, %u bytes, %u ms PCM, max gap %u ms",
                      audio_.output_opus ? "Opus" : "PCM16", packets_, static_cast<unsigned>(encoded_bytes_),
                      static_cast<unsigned>(samples_ / 16), static_cast<unsigned>(max_gap_ / 1000));
-            ESP_LOGI(TAG, "reply processing: decode max %u us, sink max %u us, pacing max %u ms",
+            ESP_LOGD(TAG, "reply processing: decode max %u us, sink max %u us, pacing max %u ms",
                      static_cast<unsigned>(max_decode_), static_cast<unsigned>(max_sink_),
                      static_cast<unsigned>(max_pacing_ / 1000));
             if (SharedCodec()) keep = EndReply();
@@ -1052,7 +1055,8 @@ public:
             if (s_cb.state && s_ready)
                 s_cb.state(true, continuous_ ? "Microphone on" : "Hold to talk, release to send");
         } else if (strcmp(event, "response.started") == 0) {
-            ESP_LOGI(TAG, "reply started #%u", ++replies_);
+            ++replies_;
+            ESP_LOGD(TAG, "reply started #%u", replies_);
             if (SharedCodec()) keep = BeginReply();
             else ResetDecoder();
             samples_ = encoded_bytes_ = packets_ = 0;
@@ -1060,7 +1064,8 @@ public:
             max_decode_ = max_sink_ = max_pacing_ = 0;
             if (s_cb.state && s_ready && !s_mute) s_cb.state(true, "Receiving agent reply");
         } else if (strcmp(event, "response.interrupted") == 0) {
-            ESP_LOGI(TAG, "reply interrupted #%u (started=%u, ended=%u)", ++interruptions_, replies_, reply_ends_);
+            ++interruptions_;
+            ESP_LOGD(TAG, "reply interrupted #%u (started=%u, ended=%u)", interruptions_, replies_, reply_ends_);
             if (reset_ != s_reset.load()) ResetAudio();
         } else if (strcmp(event, "transcript.partial") == 0 || strcmp(event, "transcript.final") == 0) {
             const cJSON* text = cJSON_GetObjectItemCaseSensitive(json, "text");
@@ -1282,7 +1287,7 @@ private:
 #if CONFIG_IDF_TARGET_ESP32C3
         if (SharedCodec() && replying_) return silence_ != nullptr;
         const bool opened = OpenEncoder() && (!SharedCodec() || CacheSilence());
-        ESP_LOGI(TAG, "shared Opus worker: codec=%s queue=%u; internal free=%u largest=%u",
+        ESP_LOGD(TAG, "shared Opus worker: codec=%s queue=%u; internal free=%u largest=%u",
                  opened ? "ready" : "failed", static_cast<unsigned>(kEncodedDepth),
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
@@ -1296,7 +1301,7 @@ private:
             encoder_started_ = xTaskCreate(&EncoderEntry, "agentlink_encode", 40960, this, 5, nullptr) == pdPASS;
         }
         if (!encoder_started_) ESP_LOGE(TAG, "could not start microphone Opus worker");
-        else ESP_LOGI(TAG, "Opus encoder stack=%s; internal free=%u largest=%u",
+        else ESP_LOGD(TAG, "Opus encoder stack=%s; internal free=%u largest=%u",
                       encoder_caps_ ? "PSRAM" : "internal",
                       static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
@@ -1593,11 +1598,11 @@ bool ConnectOnce(const Grant& grant, agentlink::realtime::RetryBudget& recovery)
         ESP_LOGW(TAG, "could not reserve %u-byte voice message", static_cast<unsigned>(kMessageBytes));
         return false;
     }
-    ESP_LOGI(TAG, "WSS connected on resident stack: internal free=%u largest=%u stack_free=%u",
+    ESP_LOGD(TAG, "WSS connected on resident stack: internal free=%u largest=%u stack_free=%u",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
-    ESP_LOGI(TAG, "voice receive buffers: TLS RX=fixed, message=%uB retained", static_cast<unsigned>(message.Capacity()));
+    ESP_LOGD(TAG, "voice receive buffers: TLS RX=fixed, message=%uB retained", static_cast<unsigned>(message.Capacity()));
     Call& call = *owner;
     if (!Current(grant.epoch) || !call.Prepare() || !call.Start()) return false;
     WsSender sender{connection.tls, scratch->wire, sizeof scratch->wire};
@@ -1768,7 +1773,7 @@ bool ConnectOnce(const Grant& grant, agentlink::realtime::RetryBudget& recovery)
         ESP_LOGW(TAG, "WSS connection failed (upgrade HTTP %d)", status);
         retryable = status <= 0 || status >= 500;
     } else {
-        ESP_LOGI(TAG, "WSS connected before audio task: internal free=%u largest=%u",
+        ESP_LOGD(TAG, "WSS connected before audio task: internal free=%u largest=%u",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
         const int socket = esp_transport_get_socket(tls);
@@ -2018,7 +2023,7 @@ bool StartWorker() {
     if (xTaskCreate(&Worker, "agentlink_rt", stack_bytes, nullptr, 5, &task) != pdPASS) return false;
     s_task.store(task, std::memory_order_release);
 #if CONFIG_IDF_TARGET_ESP32C3
-    ESP_LOGI(TAG, "resident voice task ready: stack=%uB, internal free=%u largest=%u",
+    ESP_LOGD(TAG, "resident voice task ready: stack=%uB, internal free=%u largest=%u",
              stack_bytes,
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
@@ -2058,7 +2063,7 @@ esp_err_t cloud_realtime_start(void) {
         s_grants_caps = false;
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "voice queues: tx=%s grant=%s, internal free=%u largest=%u",
+    ESP_LOGD(TAG, "voice queues: tx=%s grant=%s, internal free=%u largest=%u",
              s_tx_caps ? "PSRAM" : "internal", s_grants_caps ? "PSRAM" : "internal",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));

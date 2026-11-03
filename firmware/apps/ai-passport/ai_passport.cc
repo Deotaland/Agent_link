@@ -106,7 +106,7 @@ public:
         // Runs even without the codec: UP/DOWN still drive the screen, and their volume steps
         // are skipped rather than the whole task.
         xTaskCreate(&AiPassportBoard::KeyTaskEntry, "keys", 3072, this, 4, &key_task_);
-        ESP_LOGI(TAG, "before link: internal heap free=%u largest=%u",
+        ESP_LOGD(TAG, "before link: internal heap free=%u largest=%u",
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     }
@@ -170,7 +170,6 @@ public:
 
     // The agent's answer (and anything else it puts on the screen).
     void ShowText(const char* utf8) override {
-        ESP_LOGI(TAG, "screen: %.80s", utf8 ? utf8 : "");
         voice::Ui::Instance().SetAnswer(utf8);
     }
 
@@ -183,7 +182,7 @@ public:
 private:
     static void LogMemory(const char* stage) {
         constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-        ESP_LOGI(TAG, "memory %s: free=%u largest=%u DMA=%u", stage,
+        ESP_LOGD(TAG, "memory %s: free=%u largest=%u DMA=%u", stage,
                  (unsigned)heap_caps_get_free_size(caps),
                  (unsigned)heap_caps_get_largest_free_block(caps),
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
@@ -429,7 +428,7 @@ private:
                 const uint32_t received = received_bytes_.load(std::memory_order_relaxed);
                 const uint32_t span_ms = static_cast<uint32_t>((now - stats_at) / 1000);
                 if (queued || received != previous_received || (last_write && now - last_write < 2000 * 1000)) {
-                    ESP_LOGI(TAG, "play: queued=%ums rx=%uB/s under=%u partial=%u dropped=%uB write_err=%u prime=%d",
+                    ESP_LOGD(TAG, "play: queued=%ums rx=%uB/s under=%u partial=%u dropped=%uB write_err=%u prime=%d",
                              (unsigned)(queued / 32), (unsigned)((received - previous_received) * 1000ULL / span_ms),
                              (unsigned)underruns, (unsigned)partials, (unsigned)drop_total_.load(),
                              (unsigned)write_errors, (int)priming);

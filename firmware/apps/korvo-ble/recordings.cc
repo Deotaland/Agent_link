@@ -147,7 +147,7 @@ bool Recordings::HandleList(const uint8_t* payload, size_t len,
     Put16(tail + 3, has_more ? static_cast<uint16_t>(offset + consumed) : 0);
 
     *resp_len = kCountBytes + used + kTailBytes;
-    ESP_LOGI(TAG, "list scope=%u offset=%u -> %u entries, total=%lu, more=%d (%uB)",
+    ESP_LOGD(TAG, "list scope=%u offset=%u -> %u entries, total=%lu, more=%d (%uB)",
              scope, offset, entry_count, static_cast<unsigned long>(total), has_more,
              static_cast<unsigned>(*resp_len));
     return true;

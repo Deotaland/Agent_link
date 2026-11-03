@@ -514,7 +514,7 @@ static void rx_reset(void) {
 
 static void handle_rx_write_locked(const uint8_t *data, size_t len,
                                    uint8_t **complete, size_t *complete_len) {
-    ESP_LOGI(TAG, "RX write (%d bytes)", (int)len);
+    ESP_LOGD(TAG, "RX write (%d bytes)", (int)len);
 
     // Chunked? [0xFE, idx, total, ...payload]
     if (len >= CHUNK_HEADER_BYTES && data[0] == CHUNK_MAGIC) {
@@ -522,7 +522,7 @@ static void handle_rx_write_locked(const uint8_t *data, size_t len,
         uint8_t total = data[2];
         const uint8_t *frag = data + CHUNK_HEADER_BYTES;
         size_t flen = len - CHUNK_HEADER_BYTES;
-        ESP_LOGI(TAG, "RX chunk %d/%d (%d bytes)", idx + 1, total, (int)flen);
+        ESP_LOGD(TAG, "RX chunk %d/%d (%d bytes)", idx + 1, total, (int)flen);
 
         if (total == 0) { rx_reset_locked(); return; }
 
@@ -545,7 +545,7 @@ static void handle_rx_write_locked(const uint8_t *data, size_t len,
 
         if (s_rx_count < s_rx_total) return;
 
-        ESP_LOGI(TAG, "RX reassembled (%d bytes)", (int)s_rx_len);
+        ESP_LOGD(TAG, "RX reassembled (%d bytes)", (int)s_rx_len);
         *complete = s_rx_buf;
         *complete_len = s_rx_len;
         s_rx_buf = NULL;
@@ -674,7 +674,7 @@ static bool send_chunked_locked(const char *data, uint32_t record_generation) {
         return false;
     }
 
-    ESP_LOGI(TAG, "TX chunked %d bytes -> %d chunks (mtu=%d, %d/chunk)",
+    ESP_LOGD(TAG, "TX chunked %d bytes -> %d chunks (mtu=%d, %d/chunk)",
              (int)total_len, (int)total_chunks, s_mtu, (int)usable);
     uint8_t buf[MAX_NOTIFY_CHUNK];
     for (size_t i = 0; i < total_chunks; i++) {

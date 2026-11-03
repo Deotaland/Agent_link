@@ -50,7 +50,7 @@ public:
         }
     }
     // End of a TTS segment: PlayLoop keeps playing whatever is left in the buffer (not flushed).
-    void AudioEnd() override { ESP_LOGI(TAG, "AudioEnd (end of TTS segment; buffer plays out then goes silent)"); }
+    void AudioEnd() override { ESP_LOGD(TAG, "AudioEnd (end of TTS segment; buffer plays out then goes silent)"); }
 
     // Device -> Agent: battery / charging (app_main polls every 5s -> agent_link_report_battery -> event 0x14 + 0x2A19).
     int  GetBatteryLevel() override { return gauge_ok_ ? gauge_.Soc() : -1; }

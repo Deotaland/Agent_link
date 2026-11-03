@@ -622,26 +622,32 @@ void ReportUiDiagnostics() {
     static int64_t next = 0;
     const int64_t now = esp_timer_get_time(); if (now < next) return; next = now + 5000000;
     const int64_t heartbeat = heartbeat_.load();
-    ESP_LOGI("Amoled175.ui", "render revision=%lu/%lu flushes=%lu max_flush=%luus heartbeat_age=%lldms",
+    const auto max_flush_us = max_flush_us_.exchange(0);
+    const auto touch_polls = touch_polls_.exchange(0);
+    const auto touch_errors = touch_errors_.exchange(0);
+    const auto max_touch_gap_ms = max_touch_gap_ms_.exchange(0);
+    const auto volume_events = volume_events_.exchange(0);
+    const auto volume_commits = volume_commits_.exchange(0);
+    ESP_LOGD("Amoled175.ui", "render revision=%lu/%lu flushes=%lu max_flush=%luus heartbeat_age=%lldms",
         static_cast<unsigned long>(applied_.load()), static_cast<unsigned long>(revision_.load()),
-        static_cast<unsigned long>(flushes_.load()), static_cast<unsigned long>(max_flush_us_.exchange(0)),
+        static_cast<unsigned long>(flushes_.load()), static_cast<unsigned long>(max_flush_us),
         static_cast<long long>(heartbeat ? (now - heartbeat) / 1000 : -1));
     const uint32_t xy = flush_xy_.load(), wh = flush_wh_.load();
-    ESP_LOGI("Amoled175.ui", "stage=%s age=%lldms flush=%lu/%lu area=%lu,%lu %lux%lu stack_min=%luB lv_free=%luB largest=%luB",
+    ESP_LOGD("Amoled175.ui", "stage=%s age=%lldms flush=%lu/%lu area=%lu,%lu %lux%lu stack_min=%luB lv_free=%luB largest=%luB",
         StageName(stage_.load()), static_cast<long long>((now - stage_at_.load()) / 1000),
         static_cast<unsigned long>(flushes_.load()), static_cast<unsigned long>(flush_started_.load()),
         static_cast<unsigned long>(xy >> 16), static_cast<unsigned long>(xy & 0xFFFF),
         static_cast<unsigned long>(wh >> 16), static_cast<unsigned long>(wh & 0xFFFF),
         static_cast<unsigned long>(ui_stack_min_.load()), static_cast<unsigned long>(lv_free_.load()), static_cast<unsigned long>(lv_largest_.load()));
-    ESP_LOGI("Amoled175.ui", "text rx=%lu changed=%lu applied=%lu bytes=%lu status rx=%lu changed=%lu",
+    ESP_LOGD("Amoled175.ui", "text rx=%lu changed=%lu applied=%lu bytes=%lu status rx=%lu changed=%lu",
         static_cast<unsigned long>(text_received_.load()), static_cast<unsigned long>(text_changed_.load()),
         static_cast<unsigned long>(text_applied_.load()), static_cast<unsigned long>(text_bytes_.load()),
         static_cast<unsigned long>(status_received_.load()), static_cast<unsigned long>(status_changed_.load()));
-    ESP_LOGI("Amoled175.ui", "panel errors=%lu recoveries=%lu", (unsigned long)panel_errors_.load(), (unsigned long)panel_recoveries_.load());
-    ESP_LOGI("Amoled175.ui", "input polls=%lu errors=%lu max_gap=%lums volume_events=%lu commits=%lu",
-        (unsigned long)touch_polls_.exchange(0), (unsigned long)touch_errors_.exchange(0),
-        (unsigned long)max_touch_gap_ms_.exchange(0), (unsigned long)volume_events_.exchange(0),
-        (unsigned long)volume_commits_.exchange(0));
+    ESP_LOGD("Amoled175.ui", "panel errors=%lu recoveries=%lu", (unsigned long)panel_errors_.load(), (unsigned long)panel_recoveries_.load());
+    ESP_LOGD("Amoled175.ui", "input polls=%lu errors=%lu max_gap=%lums volume_events=%lu commits=%lu",
+        static_cast<unsigned long>(touch_polls), static_cast<unsigned long>(touch_errors),
+        static_cast<unsigned long>(max_touch_gap_ms), static_cast<unsigned long>(volume_events),
+        static_cast<unsigned long>(volume_commits));
     if (heartbeat && now - heartbeat > 2000000)
         ESP_LOGW("Amoled175.ui", "render task stalled at %s; retain this log and matching ELF", StageName(stage_.load()));
 }

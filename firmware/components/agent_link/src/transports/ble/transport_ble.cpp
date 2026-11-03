@@ -449,7 +449,7 @@ namespace {
 #if CONFIG_IDF_TARGET_ESP32C3
     void LogVoiceMemory(const char* stage) {
         constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-        ESP_LOGI(TAG, "memory %s: free=%u largest=%u DMA=%u DMA_largest=%u", stage,
+        ESP_LOGD(TAG, "memory %s: free=%u largest=%u DMA=%u DMA_largest=%u", stage,
                  (unsigned)heap_caps_get_free_size(caps),
                  (unsigned)heap_caps_get_largest_free_block(caps),
                  (unsigned)heap_caps_get_free_size(kVoiceHeapCaps),
@@ -461,7 +461,7 @@ namespace {
         for (;;) {
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             if (!s_voice.active.load(std::memory_order_acquire)) continue;
-            ESP_LOGI(TAG, "voice task started (session=%u mtu=%u voice_notify=%d)",
+            ESP_LOGD(TAG, "voice task started (session=%u mtu=%u voice_notify=%d)",
                      (unsigned)s_voice.session_id, (unsigned)ble_att_mtu(s_conn_handle),
                      (int)s_voice_notify_enabled.load(std::memory_order_acquire));
             bool first_notify_failure_logged = false;
@@ -480,7 +480,7 @@ namespace {
                 const uint32_t elapsed_ms = (now - report_at) / 1000;
                 if (elapsed_ms < 1000) return;
                 const uint32_t input = s_voice.input_bytes.load(std::memory_order_acquire);
-                ESP_LOGI(TAG, "voice flow: session=%u input_Bps=%u submitted_Bps=%u queued=%u peak=%u pools=%d/%d wait_ms=%u",
+                ESP_LOGD(TAG, "voice flow: session=%u input_Bps=%u submitted_Bps=%u queued=%u peak=%u pools=%d/%d wait_ms=%u",
                          (unsigned)s_voice.session_id,
                          (unsigned)((input - report_input) * 1000 / elapsed_ms),
                          (unsigned)((submitted_bytes - report_submitted) * 1000 / elapsed_ms),
@@ -574,11 +574,11 @@ namespace {
                      esp_err_to_name(s_voice.error.load()),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-            ESP_LOGI(TAG, "voice totals: session=%u input=%u submitted=%u elapsed_ms=%u peak=%u",
+            ESP_LOGD(TAG, "voice totals: session=%u input=%u submitted=%u elapsed_ms=%u peak=%u",
                      (unsigned)s_voice.session_id, (unsigned)s_voice.input_bytes.load(std::memory_order_acquire),
                      (unsigned)submitted_bytes, (unsigned)((esp_timer_get_time() - started_at) / 1000),
                      (unsigned)peak_queued);
-            ESP_LOGI(TAG, "voice stack remaining=%u", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+            ESP_LOGD(TAG, "voice stack remaining=%u", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
         }
     }
 
@@ -659,7 +659,7 @@ namespace {
     }
 #else
     void VoiceTask(void*) {
-        ESP_LOGI(TAG, "voice task started (session=%u)", static_cast<unsigned>(s_voice.session_id));
+        ESP_LOGD(TAG, "voice task started (session=%u)", static_cast<unsigned>(s_voice.session_id));
         while (true) {
             if (!s_connected) { ESP_LOGW(TAG, "voice: link down — stop"); break; }
             const bool end_req = s_voice.end_req.load(std::memory_order_acquire);

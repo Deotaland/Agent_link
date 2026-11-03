@@ -728,7 +728,7 @@ static void on_row(row_t *r)
             *att = '\0';
         }
         if (heard[0] && strcmp(heard, "[Voice note]") && !s_turn.heard) {
-            ESP_LOGI(TAG, "heard: %.120s", heard);
+            ESP_LOGD(TAG, "transcript received (%u bytes)", (unsigned)strlen(heard));
             emit(MUSE_NOTE_EV_HEARD, heard);
             s_turn.heard = true;
         }
@@ -753,7 +753,7 @@ static void on_row(row_t *r)
         strlcpy(s_turn.seen[s_turn.seen_count++], r->msg, sizeof(s_turn.seen[0]));
         if (s_turn.text[0]) text_append(s_turn.text, sizeof(s_turn.text), "\n");
         text_append(s_turn.text, sizeof(s_turn.text), r->text);
-        ESP_LOGI(TAG, "reply after %.2fs: %.80s", (esp_timer_get_time() - s_turn.t_end) / 1e6, r->text);
+        ESP_LOGI(TAG, "reply received after %.2fs", (esp_timer_get_time() - s_turn.t_end) / 1e6);
         s_turn.replied = true;
         s_turn.t_reply = esp_timer_get_time();
         emit(MUSE_NOTE_EV_REPLY, NULL);   /* the text is s_turn.text, filled in at muse_note_event() */

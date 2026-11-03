@@ -14,6 +14,7 @@
 constexpr const char* TAG = "fixture";
 template <typename... Args> void Log(const char*, const char*, Args...) {}
 #define ESP_LOGI(...) Log(__VA_ARGS__)
+#define ESP_LOGD(...) Log(__VA_ARGS__)
 #define ESP_LOGW(...) Log(__VA_ARGS__)
 using VoiceTls = int;
 constexpr int ESP_TLS_ERR_SSL_WANT_READ = -10, ESP_TLS_ERR_SSL_WANT_WRITE = -11;

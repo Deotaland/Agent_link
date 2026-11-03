@@ -90,7 +90,7 @@ static bool channel_hint_valid(uint8_t channel) {
 }
 
 static void reconnect_timer_cb(TimerHandle_t t) {
-    ESP_LOGI(TAG, "reconnect attempt (post-association)");
+    ESP_LOGD(TAG, "reconnect attempt (post-association)");
     atomic_store(&s_sta_idle, false);
     esp_wifi_connect();
 }
@@ -107,7 +107,7 @@ static void schedule_reconnect(void) {
                            pdMS_TO_TICKS(s_reconnect_backoff_ms), 0);
     }
     xTimerStart(s_reconnect_timer, 0);
-    ESP_LOGI(TAG, "reconnect scheduled in %dms", s_reconnect_backoff_ms);
+    ESP_LOGD(TAG, "reconnect scheduled in %dms", s_reconnect_backoff_ms);
 
     // Exponential backoff, capped.
     s_reconnect_backoff_ms *= 2;
@@ -173,7 +173,7 @@ static void event_handler(void *arg, esp_event_base_t base,
                 esp_wifi_connect();
             } else if (s_retry < MAX_INITIAL_RETRY) {
                 s_retry++;
-                ESP_LOGI(TAG, "retry connect (%d/%d)", s_retry, MAX_INITIAL_RETRY);
+                ESP_LOGD(TAG, "retry connect (%d/%d)", s_retry, MAX_INITIAL_RETRY);
                 atomic_store(&s_sta_idle, false);
                 esp_wifi_connect();
             } else {
@@ -228,7 +228,7 @@ void wifi_mgr_init(void) {
 
     uint8_t mac[6] = {0};
     if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
-        ESP_LOGI(TAG, "WIFI STA MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+        ESP_LOGD(TAG, "WIFI STA MAC: %02X:%02X:%02X:%02X:%02X:%02X",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     } else {
         ESP_LOGW(TAG, "esp_wifi_get_mac failed");
@@ -252,7 +252,7 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
     while (xSemaphoreTake(s_scan_mutex, 0) != pdTRUE) {
         esp_err_t stop_err = esp_wifi_scan_stop();
         if (stop_err == ESP_OK && !scan_cancelled) {
-            ESP_LOGI(TAG, "cancelled background scan for wifi connect");
+            ESP_LOGD(TAG, "cancelled background scan for wifi connect");
             scan_cancelled = true;
         }
         if (xTaskGetTickCount() - started >= timeout_ticks) {
@@ -290,7 +290,7 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
             wc.sta.bssid_set = true;
             wc.sta.channel = s_bssid_cache[i].channel;
             have_bssid = true;
-            ESP_LOGI(TAG, "using cached BSSID %02x:%02x:%02x:%02x:%02x:%02x ch%d (rssi %d)",
+            ESP_LOGD(TAG, "using cached BSSID %02x:%02x:%02x:%02x:%02x:%02x ch%d (rssi %d)",
                      wc.sta.bssid[0], wc.sta.bssid[1], wc.sta.bssid[2],
                      wc.sta.bssid[3], wc.sta.bssid[4], wc.sta.bssid[5],
                      wc.sta.channel, s_bssid_cache[i].rssi);
@@ -305,7 +305,7 @@ bool wifi_mgr_connect(const char *ssid, const char *password, int timeout_ms) {
 #if CONFIG_MUSE_ENABLED
         wc.sta.threshold.rssi = FAST_SCAN_MIN_RSSI;
 #endif
-        ESP_LOGI(TAG, "starting fast scan on saved channel %u",
+        ESP_LOGD(TAG, "starting fast scan on saved channel %u",
                  wc.sta.channel);
     }
 
@@ -435,11 +435,11 @@ int wifi_mgr_scan(wifi_scan_entry_t *out, int max_entries, uint8_t channel,
     }
 
     if (xSemaphoreTake(s_scan_mutex, 0) != pdTRUE) {
-        ESP_LOGI(TAG, "scan already in progress, skipping");
+        ESP_LOGD(TAG, "scan already in progress, skipping");
         return -1;
     }
     if (atomic_load_explicit(&s_connect_pending, memory_order_acquire)) {
-        ESP_LOGI(TAG, "wifi connect pending, skipping scan");
+        ESP_LOGD(TAG, "wifi connect pending, skipping scan");
         xSemaphoreGive(s_scan_mutex);
         return -1;
     }
@@ -453,16 +453,16 @@ int wifi_mgr_scan(wifi_scan_entry_t *out, int max_entries, uint8_t channel,
     };
     const char *which = target_ssid ? ", one network" : "";
     if (channel) {
-        ESP_LOGI(TAG, "starting wifi scan (ch=%u%s)...", channel, which);
+        ESP_LOGD(TAG, "starting wifi scan (ch=%u%s)...", channel, which);
     } else {
         wifi_country_t cc;
         esp_wifi_get_country(&cc);
-        ESP_LOGI(TAG, "starting wifi scan (country=%s ch=%d-%d%s)...",
+        ESP_LOGD(TAG, "starting wifi scan (country=%s ch=%d-%d%s)...",
                  cc.cc, cc.schan, cc.schan + cc.nchan - 1, which);
     }
     esp_err_t err = esp_wifi_scan_start(&sc, true);
     if (atomic_load_explicit(&s_connect_pending, memory_order_acquire)) {
-        ESP_LOGI(TAG, "scan cancelled for pending wifi connect");
+        ESP_LOGD(TAG, "scan cancelled for pending wifi connect");
         esp_wifi_clear_ap_list();
         xSemaphoreGive(s_scan_mutex);
         return -1;
@@ -475,7 +475,7 @@ int wifi_mgr_scan(wifi_scan_entry_t *out, int max_entries, uint8_t channel,
 
     uint16_t total = 0;
     esp_wifi_scan_get_ap_num(&total);
-    ESP_LOGI(TAG, "scan complete, %d APs found", total);
+    ESP_LOGD(TAG, "scan complete, %d APs found", total);
     if (total == 0) {
         xSemaphoreGive(s_scan_mutex);
         return 0;
@@ -543,7 +543,7 @@ int wifi_mgr_scan(wifi_scan_entry_t *out, int max_entries, uint8_t channel,
     free(recs);
     xSemaphoreGive(s_scan_mutex);
 
-    ESP_LOGI(TAG, "scan: %d records -> %d unique SSIDs", (int)want, n);
+    ESP_LOGD(TAG, "scan: %d records -> %d unique SSIDs", (int)want, n);
     return n;
 }
 
@@ -556,7 +556,7 @@ int wifi_mgr_scan_and_cache(void) {
     memcpy(s_cache, fresh, sizeof(*fresh) * n);
     s_cache_count = n;
     xSemaphoreGive(s_cache_mutex);
-    ESP_LOGI(TAG, "cached %d networks", n);
+    ESP_LOGD(TAG, "cached %d networks", n);
     return n;
 }
 
@@ -610,6 +610,6 @@ int wifi_mgr_scan_and_merge_cache(void) {
     }
     int total = s_cache_count;
     xSemaphoreGive(s_cache_mutex);
-    ESP_LOGI(TAG, "merged scan: %d fresh, %d cached total", n, total);
+    ESP_LOGD(TAG, "merged scan: %d fresh, %d cached total", n, total);
     return total;
 }

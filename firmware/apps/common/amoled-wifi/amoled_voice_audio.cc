@@ -27,7 +27,7 @@ esp_err_t AmoledVoiceAudio::Init(AmoledHardware* hardware) {
     }
     agent_link_playback_set_buffer_ms(AUDIO_PLAY_BUF_BYTES / 32);
     ready_ = true;
-    ESP_LOGI(TAG, "PCM diagnostics enabled: microphone stack=%luB, interval=5s, hardware=%s -> PCM16 mono %dHz, Opus transport unchanged",
+    ESP_LOGD(TAG, "PCM diagnostics enabled: microphone stack=%luB, interval=5s, hardware=%s -> PCM16 mono %dHz, Opus transport unchanged",
              static_cast<unsigned long>(kMicStackBytes), AMOLED_AUDIO_DESCRIPTION, AUDIO_SAMPLE_RATE);
     agent_link_playback_set_buffer_level_callback([](void* ctx) -> size_t {
         return static_cast<AmoledVoiceAudio*>(ctx)->queued_.load();
@@ -89,15 +89,21 @@ void AmoledVoiceAudio::ReportDiagnostics() {
     diagnostic_reported_ = snapshot.sequence;
     const auto& raw = snapshot.raw;
     const auto& up = snapshot.uplink;
+    if (snapshot.read_errors || snapshot.write_errors || snapshot.voice_drops) {
+        ESP_LOGW(TAG, "audio faults: read=%lu write=%lu voice_drop=%lu last_read=%ld last_write=%ld",
+                 static_cast<unsigned long>(snapshot.read_errors), static_cast<unsigned long>(snapshot.write_errors),
+                 static_cast<unsigned long>(snapshot.voice_drops), static_cast<long>(snapshot.last_read_error),
+                 static_cast<long>(snapshot.last_write_error));
+    }
     for (size_t channel = 0; channel < snapshot.channels.size(); ++channel) {
         const auto& levels = snapshot.channels[channel];
-        ESP_LOGI(TAG, "PCM mic%u #%lu 16kHz: samples=%lu peak=%lu rms=%lu dc=%ld zero=%lu/%lu",
+        ESP_LOGD(TAG, "PCM mic%u #%lu 16kHz: samples=%lu peak=%lu rms=%lu dc=%ld zero=%lu/%lu",
                  static_cast<unsigned>(channel + 1), static_cast<unsigned long>(snapshot.sequence),
                  static_cast<unsigned long>(levels.samples), static_cast<unsigned long>(levels.peak),
                  static_cast<unsigned long>(levels.Rms()), static_cast<long>(levels.Mean()),
                  static_cast<unsigned long>(levels.zero_frames), static_cast<unsigned long>(levels.frames));
     }
-    ESP_LOGI(TAG, "PCM raw #%lu capture=%lu %lums: frames=%lu samples=%lu min=%ld max=%ld peak=%lu rms=%lu dc=%ld zero=%lu quiet=%lu clip=%lu",
+    ESP_LOGD(TAG, "PCM raw #%lu capture=%lu %lums: frames=%lu samples=%lu min=%ld max=%ld peak=%lu rms=%lu dc=%ld zero=%lu quiet=%lu clip=%lu",
              static_cast<unsigned long>(snapshot.sequence), static_cast<unsigned long>(snapshot.capture),
              static_cast<unsigned long>((snapshot.ended_us - snapshot.started_us) / 1000),
              static_cast<unsigned long>(raw.frames), static_cast<unsigned long>(raw.samples),
@@ -105,13 +111,13 @@ void AmoledVoiceAudio::ReportDiagnostics() {
              static_cast<unsigned long>(raw.Rms()), static_cast<long>(raw.Mean()),
              static_cast<unsigned long>(raw.zero_frames), static_cast<unsigned long>(raw.quiet_frames),
              static_cast<unsigned long>(raw.clipped_samples));
-    ESP_LOGI(TAG, "PCM uplink #%lu: frames=%lu samples=%lu min=%ld max=%ld peak=%lu rms=%lu dc=%ld zero=%lu quiet=%lu clip=%lu",
+    ESP_LOGD(TAG, "PCM uplink #%lu: frames=%lu samples=%lu min=%ld max=%ld peak=%lu rms=%lu dc=%ld zero=%lu quiet=%lu clip=%lu",
              static_cast<unsigned long>(snapshot.sequence), static_cast<unsigned long>(up.frames), static_cast<unsigned long>(up.samples),
              static_cast<long>(up.minimum), static_cast<long>(up.maximum), static_cast<unsigned long>(up.peak),
              static_cast<unsigned long>(up.Rms()), static_cast<long>(up.Mean()),
              static_cast<unsigned long>(up.zero_frames), static_cast<unsigned long>(up.quiet_frames),
              static_cast<unsigned long>(up.clipped_samples));
-    ESP_LOGI(TAG, "PCM path #%lu: voice=%lu asr=%lu echo_muted=%lu voice_drop=%lu write_err=%lu read_err=%lu last_read=%ld last_write=%ld stack_mic=%luB stack_play=%luB final=%d skipped=%lu",
+    ESP_LOGD(TAG, "PCM path #%lu: voice=%lu asr=%lu echo_muted=%lu voice_drop=%lu write_err=%lu read_err=%lu last_read=%ld last_write=%ld stack_mic=%luB stack_play=%luB final=%d skipped=%lu",
              static_cast<unsigned long>(snapshot.sequence), static_cast<unsigned long>(snapshot.voice_frames),
              static_cast<unsigned long>(snapshot.asr_frames), static_cast<unsigned long>(snapshot.echo_muted_frames),
              static_cast<unsigned long>(snapshot.voice_drops), static_cast<unsigned long>(snapshot.write_errors),

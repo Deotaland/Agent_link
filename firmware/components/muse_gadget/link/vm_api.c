@@ -196,7 +196,7 @@ static int http_json_with_retries(const char *url, esp_http_client_method_t meth
         int rc = http_json(url, method, auth_header, body, resp, &status);
         if (status_out) *status_out = status;
         if (rc == 0) {
-            ESP_LOGI(TAG, "HTTP %d, %d bytes (attempt %d)",
+            ESP_LOGD(TAG, "HTTP %d, %d bytes (attempt %d)",
                      status, (int)resp->len, attempt);
             return 0;
         }

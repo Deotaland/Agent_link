@@ -50,7 +50,7 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "board = %s, model = %s, fw = %s, caps = 0x%04x", board.Name(), board.Model(),
              agent_link_ota_running_version(), static_cast<unsigned>(board.Capabilities()));
 
-    //Callback function registration
+    // Register the outputs supported by this application.
     agent_output_cb_t out = {};
     out.on_audio_out = (board.Capabilities() & AGENT_CAP_SPEAKER) ? on_audio_out : nullptr;
     out.on_audio_end = on_audio_end;
@@ -87,7 +87,7 @@ extern "C" void app_main(void) {
     cfg.transport   = AGENT_TRANSPORT_BLE;
 #endif
 
-    ESP_ERROR_CHECK(agent_link_init(&cfg));     //agent_link initialization
+    ESP_ERROR_CHECK(agent_link_init(&cfg));
     ESP_ERROR_CHECK(agent_link_start());
 
     while (true) {

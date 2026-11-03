@@ -178,7 +178,7 @@ void OnGadgetTitle(const char* name, void* /*ctx*/) {
     taskENTER_CRITICAL(&s_name_lock);
     snprintf(s_agent_name, sizeof s_agent_name, "%s", name ? name : "");
     taskEXIT_CRITICAL(&s_name_lock);
-    ESP_LOGI(TAG, "the Muse is called \"%s\"", name ? name : "");
+    ESP_LOGI(TAG, "Muse name updated");
     if (s_gadget.load() == MUSE_GADGET_ONLINE) Report(MUSE_GADGET_ONLINE);
 }
 

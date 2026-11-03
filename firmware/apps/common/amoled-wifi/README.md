@@ -24,7 +24,7 @@ opacity animation invalidates almost the entire 466x466 screen, delaying touch
 polls on the same task; unchanged calls therefore perform no background redraws.
 Pointer releases retain LVGL's last valid position because CST9217 release/error
 reports do not carry coordinates. This prevents a volume drag from jumping to
-zero when the finger is lifted. Five-second UI diagnostics report input poll
+zero when the finger is lifted. At Debug verbosity, five-second UI diagnostics report input poll
 counts, errors, maximum poll gap, volume events and commits.
 
 Host controller/audio checks: `python firmware/tests/test_amoled_voice.py`.

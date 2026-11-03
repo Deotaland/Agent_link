@@ -72,6 +72,7 @@ using portMUX_TYPE=int;
 #define ESP_LOGE(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
+#define ESP_LOGD(...) ((void)0)
 unsigned uxTaskGetStackHighWaterMark(void*) { return 4000; }
 unsigned pdMS_TO_TICKS(unsigned value) { return value; }
 void vTaskDelay(unsigned value) { clock_us += value * 1000; }
@@ -310,7 +311,7 @@ prefix = prefix.replace('DISPLAY_ROTATION_CW=0;', f'DISPLAY_ROTATION_CW={args.ro
 generated.write_text(prefix+header+fonts+source+post,encoding='utf-8')
 with log.open('a',encoding='utf-8') as output:
     subprocess.run([cl,*flags,'/std:c++17','/EHsc',str(generated),str(build/'lvgl.lib'),'/Fo'+str(build/'preview.obj'),'/Fe'+str(build/'preview.exe')],env=env,cwd=build,stdout=output,stderr=subprocess.STDOUT,check=True)
-font = root/'build/flash_assets/anim_pack.bin'
+font = root/'boards/common/fonts/cjk_font.bin'
 subprocess.run([str(build/'preview.exe'),str(font)],cwd=build,check=True,timeout=45)
 from PIL import Image
 for ppm in build.glob('*.ppm'):

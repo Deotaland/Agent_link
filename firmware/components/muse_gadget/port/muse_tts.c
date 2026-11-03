@@ -194,7 +194,7 @@ out:
         ESP_LOGI(TAG, "spoke %.1f s (%u bytes of MP3 at %d Hz)", s_dec->frames / (double)TTS_PCM_RATE,
                  (unsigned)s_dec->mp3_bytes, s_dec->src_hz);
     } else {
-        ESP_LOGW(TAG, "no speech: HTTP %d, %s", status, tts_decoder_head(s_dec));
+        ESP_LOGW(TAG, "no speech: HTTP %d, MP3 bytes=%u", status, (unsigned)s_dec->mp3_bytes);
     }
     if (c) esp_http_client_cleanup(c);
     cJSON_free(body);

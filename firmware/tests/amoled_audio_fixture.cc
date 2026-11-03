@@ -11,6 +11,7 @@ constexpr int ESP_OK = 0, ESP_FAIL = -1, ESP_ERR_INVALID_STATE = -2, ESP_ERR_INV
 constexpr size_t kPlayFrames = 256;
 constexpr int AUDIO_HARDWARE_SAMPLE_RATE = 16000;
 #define ESP_LOGE(...) ((void)0)
+#define ESP_LOGD(...) ((void)0)
 struct esp_codec_dev_sample_info_t { int sample_rate = 0, bits_per_sample = 0; uint8_t channel = 0; uint16_t channel_mask = 0; };
 using esp_codec_dev_handle_t = void*;
 enum esp_codec_dev_type_t { ESP_CODEC_DEV_TYPE_IN = 1, ESP_CODEC_DEV_TYPE_OUT = 2 };

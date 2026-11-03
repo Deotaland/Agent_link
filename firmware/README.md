@@ -92,6 +92,9 @@ ESP-IDF integration, see the [SDK guide](components/agent_link/README.md).
 
 ## Troubleshooting
 
+Log levels, safe diagnostic capture and code conventions are covered in the
+[logging guide](../guides/logging.md).
+
 Host regression sources in `tests/` verify production protocol, audio, storage
 and device-control behavior without flashing a board. They are maintenance
 source, not firmware payloads. Keep useful tests in Git; generated executables,

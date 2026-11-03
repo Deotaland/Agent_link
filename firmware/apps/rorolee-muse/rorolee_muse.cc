@@ -104,7 +104,6 @@ public:
 
     // The agent's answer (and anything else it puts on the screen).
     void ShowText(const char* utf8) override {
-        ESP_LOGI(TAG, "screen: %.80s", utf8 ? utf8 : "");
         voice::Ui::Instance().SetAnswer(utf8);
     }
 

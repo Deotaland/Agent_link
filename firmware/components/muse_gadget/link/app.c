@@ -423,11 +423,11 @@ static bool join_saved_network(const wifi_known_list_t *list, int k,
                                int timeout_ms, bool led, int hidden,
                                char *joined) {
     const wifi_known_net_t *net = &list->nets[k];
-    ESP_LOGI(TAG, "joining saved network %s", net->ssid);
+    ESP_LOGI(TAG, "joining saved WiFi network");
     ui_set_status("wifi_connecting");
     if (led) led_status_set_state(LED_STATE_WIFI_CONNECTING);
     if (!wifi_mgr_connect(net->ssid, net->password, timeout_ms)) {
-        ESP_LOGW(TAG, "couldn't join %s", net->ssid);
+        ESP_LOGW(TAG, "saved WiFi network join failed");
         return false;
     }
     bool now_hidden = hidden < 0 ? net->hidden : hidden != 0;
@@ -1004,10 +1004,10 @@ static bool connect_vm_target(const vm_info_t *target) {
     const char *network_ssid = strcmp(s_ui_wifi, "down") == 0 ? NULL : s_ui_wifi;
     bool ctrl_started = noise_ctrl_connect(vm_id, auth_token, network_ssid);
     if (!ctrl_started) {
-        ESP_LOGE(TAG, "noise control start failed for %s", target->vm_url);
+        ESP_LOGE(TAG, "noise control start failed");
         return false;
     }
-    ESP_LOGI(TAG, "connecting to VM %s", vm_id);
+    ESP_LOGI(TAG, "connecting to VM");
     // The data-plane tunnel is multiplexed on the control session (stream 2);
     // no separate connection to start here.
     return true;
@@ -1037,7 +1037,7 @@ static bool connect_preferred_vm_with_gate_held(uint32_t session_generation) {
     }
     const char *name = (target->vm_name && *target->vm_name)
                        ? target->vm_name : target->vm_url;
-    ESP_LOGI(TAG, "connecting to VM %s", name);
+    ESP_LOGI(TAG, "connecting to selected VM");
     ui_set_vm(name);
     bool ok = connect_vm_target(target);
     vm_list_free(vms, count);
@@ -1343,7 +1343,7 @@ static void set_vm_with_gate_held(const char *url) {
     }
     const vm_info_t *target = vm_find_by_url(vms, count, url);
     if (!target) {
-        ESP_LOGE(TAG, "VM not found: %s", url);
+        ESP_LOGE(TAG, "requested VM not found");
         vm_list_free(vms, count);
         ble_server_send_status("vm_failed");
         ui_set_status("vm_failed");
@@ -2443,7 +2443,7 @@ static void heap_snapshot(const char *label) {
     size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
     size_t largest_dma = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
     size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "HEAP %-20s  int=%5uK/%5uK  dma=%5uK/%5uK  psram=%5uK",
+    ESP_LOGD(TAG, "HEAP %-20s  int=%5uK/%5uK  dma=%5uK/%5uK  psram=%5uK",
              label,
              (unsigned)(free_int / 1024), (unsigned)(largest_int / 1024),
              (unsigned)(free_dma / 1024), (unsigned)(largest_dma / 1024),
@@ -2698,14 +2698,14 @@ void app_run(void) {
         // Menuconfig override takes priority.
         wifi_ssid = ovr_ssid;
         wifi_pwd = ovr_pwd;
-        ESP_LOGI(TAG, "wifi override active, connecting to %s", wifi_ssid);
+        ESP_LOGI(TAG, "WiFi override active; connecting");
     } else if (config_get_str("ssid", nvs_ssid, sizeof(nvs_ssid))
                && config_get_str("password", nvs_pwd, sizeof(nvs_pwd))) {
         // Previously provisioned via BLE — auto-reconnect, to whichever saved
         // network is in range.
         memset(nvs_pwd, 0, sizeof(nvs_pwd));
         wifi_ssid = nvs_ssid;
-        ESP_LOGI(TAG, "found provisioned creds in NVS, reconnecting (first: %s)", wifi_ssid);
+        ESP_LOGI(TAG, "saved WiFi credentials found; reconnecting");
     }
 
     if (wifi_ssid) {

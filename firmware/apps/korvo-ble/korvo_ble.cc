@@ -50,7 +50,7 @@ public:
         if (audio_ok_) audio_.PlayPcm(pcm16, bytes);
     }
     void AudioEnd() override {
-        ESP_LOGI(TAG, "AudioEnd (buffer plays out, then silence)");
+        ESP_LOGD(TAG, "AudioEnd (buffer plays out, then silence)");
     }
 
     // Agent -> device: "start/stop listening" (commands 0x3C/0x3D). Drives the same ASR uplink the

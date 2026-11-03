@@ -213,7 +213,7 @@ and worst-case scheduling still require physical acceptance. Do not reduce the
 40 KB stack based only on its pre-encoding watermark: vendor codec stack depth
 and TLS handshake depth differ.
 
-`voice memory` logs report free heap, largest block and lifetime minimum every
+At Debug verbosity, `voice memory` logs report free heap, largest block and lifetime minimum every
 five seconds, plus stack watermark and workspace allocation count/peak at
 reply/listening transitions. Keep these
 alongside uplink drop, encoding time and pacing diagnostics when testing long

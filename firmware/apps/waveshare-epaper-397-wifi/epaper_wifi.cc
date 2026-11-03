@@ -146,7 +146,7 @@ private:
             (void)requests_.Complete(id); Message("请求队列忙，请重试"); return;
         }
         pending_job_ = kind; message_[0] = 0; ++view_;
-        ESP_LOGI(TAG, "HTTP queued id=%u", unsigned(id));
+        ESP_LOGD(TAG, "HTTP queued id=%u", unsigned(id));
     }
     void Sessions(size_t offset = 0) {
         EndCall(); if (!SyncAgent(true)) return;
@@ -171,7 +171,7 @@ private:
             } else {
                 result.error = agent_link_platform_create_conversation(job.agent, result.created, sizeof result.created);
             }
-            ESP_LOGI(TAG, "HTTP finished id=%u time=%ums result=%s", unsigned(job.id),
+            ESP_LOGD(TAG, "HTTP finished id=%u time=%ums result=%s", unsigned(job.id),
                      unsigned((esp_timer_get_time() - started) / 1000), esp_err_to_name(result.error));
             (void)xQueueSend(results_, &result, portMAX_DELAY);
         }
@@ -180,7 +180,7 @@ private:
         JobResult result{};
         if (xQueueReceive(results_, &result, 0) != pdTRUE) return;
         if (!requests_.Complete(result.job.id)) {
-            ESP_LOGI(TAG, "HTTP result discarded id=%u", unsigned(result.job.id)); return;
+            ESP_LOGD(TAG, "HTTP result discarded id=%u", unsigned(result.job.id)); return;
         }
         if (!SyncAgent(true) || result.job.agent != agent_) { Message("助手已变更，请重新打开会话"); return; }
         if (Error(result.error)) return;
@@ -297,7 +297,7 @@ private:
     void HandleInput(const Input& input) {
         if (!epaper::InputAllowed(input.setup_at_press || ui_.DisplayingSetup() ||
                                   phase_.load() == AGENT_LINK_PHASE_SETUP, input.action)) return;
-        ESP_LOGI(TAG, "key=%d view=%u current=%u", int(input.action), unsigned(input.view), unsigned(view_));
+        ESP_LOGD(TAG, "key=%d view=%u current=%u", int(input.action), unsigned(input.view), unsigned(view_));
         if (input.action == Action::kBack) {
             confirm_.Cancel();
             if (requests_.Busy()) { requests_.Cancel(); ++view_; Message("已取消等待"); }
@@ -327,7 +327,7 @@ private:
             // Freeze this target until its highlight has appeared, then execute
             // exactly once. A quick confirm during refresh is queued, not lost.
             confirm_.Request(view_);
-            ESP_LOGI(TAG, "confirm queued view=%u row=%u", unsigned(view_), unsigned(cursor_));
+            ESP_LOGD(TAG, "confirm queued view=%u row=%u", unsigned(view_), unsigned(cursor_));
         }
     }
     void ControlLoop() {
@@ -344,7 +344,7 @@ private:
             if (xQueueReceive(events_, &input, pdMS_TO_TICKS(20)) == pdTRUE) HandleInput(input);
             if (!ui_.DisplayingSetup() && phase_.load() != AGENT_LINK_PHASE_SETUP && confirm_.Take(ui_.Displayed(), view_)) {
                 message_[0] = 0; ++view_;
-                ESP_LOGI(TAG, "confirm executed row=%u", unsigned(cursor_));
+                ESP_LOGD(TAG, "confirm executed row=%u", unsigned(cursor_));
                 Choose();
             }
             const int64_t now = esp_timer_get_time();

@@ -108,7 +108,6 @@ public:
     // The Agent's generic "show this text": a short note under the card (shift, meeting room,
     // visitor escort...). The card fields themselves have their own endpoints.
     void ShowText(const char* utf8) override {
-        ESP_LOGI(TAG, "note: \"%s\"", utf8 ? utf8 : "");
         badge::Ui::Instance().SetNote(utf8);
     }
 
