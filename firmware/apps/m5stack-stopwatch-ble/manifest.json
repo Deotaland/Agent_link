@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "m5stack-stopwatch-ble",
+  "name": "m5stack-stopwatch-ble",
+  "backend": "BLE",
+  "ui": "lvgl",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

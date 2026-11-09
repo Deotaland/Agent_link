@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "work-badge",
+  "name": "work-badge",
+  "backend": "BLE",
+  "ui": "lvgl",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

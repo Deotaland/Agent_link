@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "rorolee-s3",
+  "name": "rorolee-s3",
+  "backend": "BLE",
+  "ui": "lvgl",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

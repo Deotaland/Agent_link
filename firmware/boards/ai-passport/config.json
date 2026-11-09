@@ -1,72 +1,108 @@
 {
-    "manufacturer": "folotoy",
-    "type": "ai-passport",
-    "target": "esp32c3",
-    "boards": [
-        {
-            "board_type": "FOLOTOY_AI_PASSPORT",
-            "model": "AI-PASSPORT",
-            "product": "FoloToy AI Passport",
-            "vendor": "FoloToy",
-            "buy": ["https://ai-passport.folotoy.cn"],
-            "docs": ["https://github.com/FoloToy/ai-passport", "https://ai-passport.folotoy.cn"],
-            "aliases": [
-              "AI Passport",
-              "AIPassport",
-              "FoloPassport",
-              "FoloToy",
-              "folotoy",
-              "ai-passport",
-              "Passport",
-              "AI护照",
-              "AI 护照",
-              "护照",
-              "FoloToy护照"
-            ],
-            "hardware": "ESP32-C3, 8 MB flash, no PSRAM; ST7789P3 240x320 SPI LCD; ES8311 codec (mic + speaker); three ADC keys (UP/DOWN/OK); CW2017 fuel gauge",
-            "identify": "Wearable badge with a 240x320 colour screen and three physical keys; USB-C (ESP32-C3 native USB Serial/JTAG on GPIO18/19)",
-            "flash_port": "USB-C (native USB Serial/JTAG). Download mode: hold the OK/BOOT-side key path if needed, or use esptool auto-reset.",
-            "use": "Push-to-talk with the agent through the Deotaland App over BLE: hold OK to speak, release to send; replies play on the speaker; screen colour shows link status",
-            "transport": "BLE",
-            "ble_name": "AIPassport",
-            "fw_model": "AI-PASSPORT",
-            "status": "supported",
-            "notes": "ESP32-C3 profile: ai-passport-ble; build with tools/build_firmware.py. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h."
-        },
-        {
-            "board_type": "FOLOTOY_AI_PASSPORT_WIFI",
-            "model": "AI-PASSPORT",
-            "product": "FoloToy AI Passport",
-            "vendor": "FoloToy",
-            "buy": [
-                "https://ai-passport.folotoy.cn"
-            ],
-            "docs": [
-                "https://github.com/FoloToy/ai-passport",
-                "https://ai-passport.folotoy.cn"
-            ],
-            "aliases": [
-              "AI Passport",
-              "AIPassport",
-              "FoloPassport",
-              "FoloToy",
-              "folotoy",
-              "ai-passport",
-              "Passport",
-              "AI护照",
-              "AI 护照",
-              "护照",
-              "FoloToy护照"
-            ],
-            "hardware": "ESP32-C3, 8 MB flash, no PSRAM; ST7789P3 240x320 SPI LCD; ES8311 codec (mic + speaker); three ADC keys (UP/DOWN/OK); CW2017 fuel gauge",
-            "identify": "Wearable badge with a 240x320 colour screen and three physical keys; USB-C (ESP32-C3 native USB Serial/JTAG on GPIO18/19)",
-            "flash_port": "USB-C (native USB Serial/JTAG). Download mode: hold the OK/BOOT-side key path if needed, or use esptool auto-reset.",
-            "use": "Direct WiFi Agent voice: configure the hotspot, activate in the platform console, then press OK to start/end a call; UP/DOWN adjust volume; hold OK for conversations.",
-            "transport": "WIFI",
-            "ble_name": "",
-            "fw_model": "AI-PASSPORT",
-            "status": "supported",
-            "notes": "Profile ai-passport-wifi; platform product 1, chip_type esp32-c3. Bidirectional Opus realtime voice with a shared codec worker, MQTT disabled, lightweight raster UI, no BLE or PSRAM. HTTP heartbeat and configuration polling remain enabled. Reuses the 8 MB dual-OTA layout. Device audio and reconnect behavior require hardware acceptance."
-        }
-    ]
+  "manufacturer": "folotoy",
+  "type": "ai-passport",
+  "target": "esp32c3",
+  "boards": [
+    {
+      "board_type": "FOLOTOY_AI_PASSPORT",
+      "model": "AI-PASSPORT",
+      "product": "FoloToy AI Passport",
+      "vendor": "FoloToy",
+      "buy": [
+        "https://ai-passport.folotoy.cn"
+      ],
+      "docs": [
+        "https://github.com/FoloToy/ai-passport",
+        "https://ai-passport.folotoy.cn"
+      ],
+      "aliases": [
+        "AI Passport",
+        "AIPassport",
+        "FoloPassport",
+        "FoloToy",
+        "folotoy",
+        "ai-passport",
+        "Passport",
+        "AI护照",
+        "AI 护照",
+        "护照",
+        "FoloToy护照"
+      ],
+      "hardware": "ESP32-C3, 8 MB flash, no PSRAM; ST7789P3 240x320 SPI LCD; ES8311 codec (mic + speaker); three ADC keys (UP/DOWN/OK); CW2017 fuel gauge",
+      "identify": "Wearable badge with a 240x320 colour screen and three physical keys; USB-C (ESP32-C3 native USB Serial/JTAG on GPIO18/19)",
+      "flash_port": "USB-C (native USB Serial/JTAG). Download mode: hold the OK/BOOT-side key path if needed, or use esptool auto-reset.",
+      "use": "Push-to-talk with the agent through the Deotaland App over BLE: hold OK to speak, release to send; replies play on the speaker; screen colour shows link status",
+      "transport": "BLE",
+      "ble_name": "AIPassport",
+      "fw_model": "AI-PASSPORT",
+      "status": "supported",
+      "notes": "ESP32-C3 profile: ai-passport-ble; build with tools/build_firmware.py. Uses partitions/passport-8m-v1.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
+      "build": {
+        "hardware": "ai-passport",
+        "drivers": [
+          "es8311_audio.cc",
+          "raster_montserrat_14.c",
+          "raster_montserrat_20.c",
+          "raster_montserrat_28.c",
+          "st7789_lcd.cc",
+          "stripe_canvas.cc"
+        ],
+        "hardware_sources": [],
+        "defaults": "boards/ai-passport/hardware.defaults",
+        "layout": "passport-8m-v1"
+      }
+    },
+    {
+      "board_type": "FOLOTOY_AI_PASSPORT_WIFI",
+      "model": "AI-PASSPORT",
+      "product": "FoloToy AI Passport",
+      "vendor": "FoloToy",
+      "buy": [
+        "https://ai-passport.folotoy.cn"
+      ],
+      "docs": [
+        "https://github.com/FoloToy/ai-passport",
+        "https://ai-passport.folotoy.cn"
+      ],
+      "aliases": [
+        "AI Passport",
+        "AIPassport",
+        "FoloPassport",
+        "FoloToy",
+        "folotoy",
+        "ai-passport",
+        "Passport",
+        "AI护照",
+        "AI 护照",
+        "护照",
+        "FoloToy护照"
+      ],
+      "hardware": "ESP32-C3, 8 MB flash, no PSRAM; ST7789P3 240x320 SPI LCD; ES8311 codec (mic + speaker); three ADC keys (UP/DOWN/OK); CW2017 fuel gauge",
+      "identify": "Wearable badge with a 240x320 colour screen and three physical keys; USB-C (ESP32-C3 native USB Serial/JTAG on GPIO18/19)",
+      "flash_port": "USB-C (native USB Serial/JTAG). Download mode: hold the OK/BOOT-side key path if needed, or use esptool auto-reset.",
+      "use": "Direct WiFi Agent voice: configure the hotspot, activate in the platform console, then press OK to start/end a call; UP/DOWN adjust volume; hold OK for conversations.",
+      "transport": "WIFI",
+      "ble_name": "",
+      "fw_model": "AI-PASSPORT",
+      "status": "supported",
+      "notes": "Profile ai-passport-wifi; platform product 1, chip_type esp32-c3. Bidirectional Opus realtime voice with a shared codec worker, MQTT disabled, lightweight raster UI, no BLE or PSRAM. HTTP heartbeat and configuration polling remain enabled. Reuses the 8 MB dual-OTA layout. Device audio and reconnect behavior require hardware acceptance.",
+      "build": {
+        "hardware": "ai-passport",
+        "drivers": [
+          "es8311_audio.cc",
+          "raster_cjk_14.c",
+          "raster_montserrat_14.c",
+          "raster_montserrat_20.c",
+          "raster_montserrat_28.c",
+          "st7789_lcd.cc",
+          "stripe_canvas.cc"
+        ],
+        "hardware_sources": [
+          "ai_passport_hardware.cc"
+        ],
+        "defaults": "boards/ai-passport/hardware-wifi.defaults",
+        "layout": "passport-8m-v1"
+      }
+    }
+  ]
 }

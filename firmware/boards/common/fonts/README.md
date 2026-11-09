@@ -22,18 +22,29 @@ python firmware/boards/common/fonts/make_cjk_font.py "NotoSansSC[wght].ttf" firm
 python firmware/tests/test_cjk_font.py
 ```
 
-Waveshare's profile flash_assets entry copies this image into build/flash_assets and
-registers it in flash_args, flasher_args.json and merged.bin. The existing
-anim_pack data partition starts at 0x412000; partition offsets and NVS are not
-changed. A segmented USB flash includes the font and retains NVS. A merged USB
-image spans the intervening settings areas and can overwrite them. An app-only
-OTA does not install the font: install both app and font for the first upgrade.
-The font remains in flash across later app-only updates.
+A board's `build.flash_assets` entry copies this image to
+`build/flash_assets/font_cjk.bin` and registers it in `flash_args`,
+`flasher_args.json` and the board's USB package. Every consumer reads the
+`font_cjk` data partition. Its address and reserved capacity come from the
+selected layout:
+
+| Layout CSV | Address | Capacity | Use |
+| --- | --- | --- | --- |
+| `partitions/amoled-175-v1.csv` | `0xC22000` | `0x230000` | Shared by the non-C AMOLED Factory and installed apps |
+| `partitions/standard-v1.csv` | `0x412000` | `0xB72000` | Shared font for the display profiles using this layout |
+| `partitions/paper-s31-v1.csv` | `0x812000` | `0x772000` | Reserved; the current S31 app embeds its raster font |
+
+A segmented USB flash includes the declared font asset and retains NVS. A merged
+USB image spans the intervening settings areas and can overwrite them. An
+app-only OTA does not install the font: install the partition table, app and
+font together for the first installation. The font remains in flash across
+later app-only updates. Factory and installed apps use the same partition name;
+there is no legacy-label lookup or separate layout compatibility version change.
 
 Only the display worker accesses TinyTTF, using a 32-glyph cache and memory-mapped
 font data. A missing or damaged font image is logged and the old built-in subset
 remains as a fallback. Successful loading logs cjk_font: CJK font: 2184 KB from
-'anim_pack', 28 px. Check actual Chinese replies and punctuation on the device.
+'font_cjk', 28 px. Check actual Chinese replies and punctuation on the device.
 
 ## Reuse across profiles
 
@@ -44,11 +55,12 @@ image supports all sizes. The legacy Muse generator path forwards to this tool.
 The old ignored Muse font binary is not modified.
 
 An LVGL profile can reuse the asset by selecting cjk_font.cc, enabling
-CONFIG_LV_USE_TINY_TTF and declaring the resource once in profiles.json:
+CONFIG_LV_USE_TINY_TTF and declaring the resource once in the board's
+`config.json` under `build`:
 
 ```json
 "flash_assets": [
-  {"partition": "anim_pack", "file": "boards/common/fonts/cjk_font.bin"}
+  {"partition": "font_cjk", "file": "boards/common/fonts/cjk_font.bin"}
 ]
 ```
 
@@ -100,7 +112,7 @@ or glyph caching. Rare symbols larger than the line box are scaled to fit while
 retaining their entire outlines. UTF-8 clipping keeps complete codepoints.
 
 The selected profile includes that font in `agent_link.bin`; no independent
-font write command or partition change is needed. Do not use the S3 `anim_pack`
+font write command or partition change is needed. Do not use the S3 `font_cjk`
 offset on the C3: the C3 address range belongs to its OTA slots. The build copies
 this folder's OFL license to `build/fonts-OFL.txt` alongside the images. Generation
 uses Pillow and fontTools offline; ordinary firmware builds use the checked-in C

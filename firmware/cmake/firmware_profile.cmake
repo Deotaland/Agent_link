@@ -39,10 +39,18 @@ if(NOT _product_result EQUAL 0)
 endif()
 message(STATUS "${_product_output}")
 
-file(READ "${_profile_root}/profiles/profiles.json" _profile_catalog)
+set(_resolved_profiles "${CMAKE_BINARY_DIR}/generated/firmware_profiles.json")
+execute_process(COMMAND "${_profile_python}" "${_profile_root}/tools/build_firmware.py"
+        --export-profiles "${_resolved_profiles}"
+    RESULT_VARIABLE _manifest_result ERROR_VARIABLE _manifest_error)
+if(NOT _manifest_result EQUAL 0)
+    message(FATAL_ERROR "${_manifest_error}")
+endif()
+file(READ "${_resolved_profiles}" _profile_catalog)
 string(JSON _profile GET "${_profile_catalog}" "${AGENT_LINK_PROFILE}")
 string(JSON _profile_target GET "${_profile}" target)
-set(ENV{AGENT_LINK_PROFILE_FILE} "${_profile_root}/profiles/profiles.json")
+set(ENV{AGENT_LINK_PROFILE_FILE} "${_resolved_profiles}")
+set(ENV{AGENT_LINK_FIRMWARE_ROOT} "${_profile_root}")
 set(ENV{AGENT_LINK_BUILD_PROFILE} "${AGENT_LINK_PROFILE}")
 string(JSON _profile_backend GET "${_profile}" backend)
 set(ENV{AGENT_LINK_BUILD_BACKEND} "${_profile_backend}")
@@ -63,6 +71,38 @@ if(_output)
     message(STATUS "${_output}")
 endif()
 
+execute_process(COMMAND "${_profile_python}" "${_profile_root}/tools/build_firmware.py"
+        --menu-cache "${CMAKE_BINARY_DIR}/generated/Kconfig.application_selection" "--sdkconfig=${SDKCONFIG}"
+    RESULT_VARIABLE _cache_result ERROR_VARIABLE _cache_error)
+if(NOT _cache_result EQUAL 0)
+    message(FATAL_ERROR "${_cache_error}")
+endif()
+
+# Resolve before IDF expands component dependencies. sdkconfig, rather than a
+# previous CMake cache entry, owns the application/factory selection.
+execute_process(
+    COMMAND "${_profile_python}" "${_profile_root}/tools/build_firmware.py"
+            "${AGENT_LINK_PROFILE}" --resolve-image-role "--sdkconfig=${SDKCONFIG}"
+    RESULT_VARIABLE _image_result OUTPUT_VARIABLE _image_role ERROR_VARIABLE _image_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _image_result EQUAL 0)
+    message(FATAL_ERROR "${_image_error}")
+endif()
+set(AGENT_LINK_IMAGE_ROLE "${_image_role}" CACHE STRING "Derived from Menuconfig firmware build target" FORCE)
+set(ENV{AGENT_LINK_IMAGE_ROLE} "${AGENT_LINK_IMAGE_ROLE}")
+message(STATUS "Agent Link firmware image: ${AGENT_LINK_IMAGE_ROLE}")
+
+execute_process(COMMAND "${_profile_python}" "${_profile_root}/tools/build_firmware.py"
+        "${AGENT_LINK_PROFILE}" --flash-plan "${CMAKE_BINARY_DIR}/flash-plan.json" "--sdkconfig=${SDKCONFIG}"
+    RESULT_VARIABLE _plan_result ERROR_VARIABLE _plan_error)
+if(NOT _plan_result EQUAL 0)
+    message(FATAL_ERROR "${_plan_error}")
+endif()
+file(GLOB _board_manifests "${_profile_root}/boards/*/config.json")
+file(GLOB _app_manifests "${_profile_root}/apps/*/manifest.json" "${_profile_root}/factory/*/manifest.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_board_manifests} ${_app_manifests}
+    "${_profile_root}/partitions/layouts.json" "${_profile_root}/tools/firmware_manifest.py"
+    "${_profile_root}/tools/firmware_menu.py")
 set(SDKCONFIG_DEFAULTS "${_profile_root}/sdkconfig.defaults")
 string(JSON _profile_defaults_count LENGTH "${_profile}" defaults)
 math(EXPR _profile_defaults_last "${_profile_defaults_count} - 1")
@@ -76,6 +116,7 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_profile_root}/profiles/profiles.json"
     "${_profile_root}/profiles/products.json"
+    "${SDKCONFIG}"
     "${_profile_root}/boards/common/platform_config.h"
     "${_profile_root}/tools/build_firmware.py" ${SDKCONFIG_DEFAULTS})
 message(STATUS "Agent Link firmware profile: ${AGENT_LINK_PROFILE} (${_profile_target})")
@@ -85,6 +126,7 @@ function(agent_link_validate_profile)
     execute_process(
         COMMAND "${_python}" "${_profile_root}/tools/build_firmware.py"
                 "${AGENT_LINK_PROFILE}" --validate "--sdkconfig=${SDKCONFIG}"
+                --image-role "${AGENT_LINK_IMAGE_ROLE}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
     if(NOT _result EQUAL 0)
         message(FATAL_ERROR "${_output}${_error}")

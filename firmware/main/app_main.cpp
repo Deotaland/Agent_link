@@ -7,6 +7,9 @@
 #include "application.h"
 #include "platform_config.h"
 #include "platform_product.h"
+#if defined(AGENT_SYSTEM_ENABLED)
+#include "agent_system.h"
+#endif
 
 namespace {
 constexpr const char* TAG = "agent_link.app";
@@ -46,6 +49,9 @@ void on_state(agent_state_t state, void*) {
 }  // namespace
 
 extern "C" void app_main(void) {
+#if defined(AGENT_SYSTEM_ENABLED)
+    ESP_ERROR_CHECK(agent_system::Init());
+#endif
     Application& board = Application::GetInstance();
     ESP_LOGI(TAG, "board = %s, model = %s, fw = %s, caps = 0x%04x", board.Name(), board.Model(),
              agent_link_ota_running_version(), static_cast<unsigned>(board.Capabilities()));
@@ -70,12 +76,13 @@ extern "C" void app_main(void) {
     cfg.on_state    = on_state;
     cfg.on_status   = on_status;       // link progress, same shape on BLE and WiFi
     cfg.model       = board.Model();   // OTA model check + DIS 0x2A24 (firmware_rev: SDK reads PROJECT_VER)
-    cfg.platform    = board.Platform();   // WiFi needs it; BLE ignores it — set it either way
+    cfg.platform    = board.Platform();   // nullptr gives WiFi-only networking without an Agent session.
 
-    ESP_LOGI(TAG, "platform = %s, model = %s, product_id = %d, product_key = %s",
-             cfg.platform ? cfg.platform->base_url : DEOTALAND_PLATFORM_BASE_URL, board.Model(),
-             cfg.platform ? cfg.platform->product_id : AGENT_LINK_PRODUCT_ID,
-             AGENT_LINK_PRODUCT_KEY[0] ? AGENT_LINK_PRODUCT_KEY : "unregistered");
+    if (cfg.platform) {
+        ESP_LOGI(TAG, "platform = %s, model = %s, product_id = %d, product_key = %s",
+                 cfg.platform->base_url, board.Model(), cfg.platform->product_id,
+                 AGENT_LINK_PRODUCT_KEY[0] ? AGENT_LINK_PRODUCT_KEY : "unregistered");
+    } else ESP_LOGI(TAG, "Agent platform disabled for this application");
 
     // The single transport-aware line in the application: which backend to run. Everything above
     // is set unconditionally and each backend takes what it needs, so a board never branches on it.
@@ -89,6 +96,13 @@ extern "C" void app_main(void) {
 
     ESP_ERROR_CHECK(agent_link_init(&cfg));
     ESP_ERROR_CHECK(agent_link_start());
+#if defined(AGENT_SYSTEM_ENABLED)
+    // Confirm local readiness in either standalone USB or launcher-installed mode.
+    // OTA-slot apps only arm a compatible, verified launcher; USB apps stay standalone.
+    ESP_ERROR_CHECK(agent_system::Ready());
+    const esp_err_t settings = agent_system::StartSettingsServer();
+    if (settings != ESP_OK) ESP_LOGW(TAG, "system settings unavailable: %s", esp_err_to_name(settings));
+#endif
 
     while (true) {
         if (agent_link_state() == AGENT_STATE_READY) {

@@ -3,8 +3,8 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
-#include "amoled_voice_layout.h"
-#include "amoled_voice_controls.h"
+#include "amoled_ui_layout.h"
+#include "amoled_ui_controls.h"
 #include "amoled_pcm_diagnostics.h"
 #include "cst9217_frame.h"
 #include "voice_playback.h"
@@ -14,7 +14,7 @@ enum phase_t { AGENT_LINK_PHASE_IDLE, AGENT_LINK_PHASE_SETUP, AGENT_LINK_PHASE_P
                AGENT_LINK_PHASE_BLOCKED, AGENT_LINK_PHASE_CONNECTED, AGENT_LINK_PHASE_READY,
                AGENT_LINK_PHASE_CONNECTING };
 struct agent_link_status_t { phase_t phase; };
-namespace amoled_voice {
+namespace amoled_ui {
 struct Screen { Activity activity = Activity::kIdle; bool calling = false, busy = false, local_mode = false; };
 void Toast(const char*, unsigned = 2500) {}
 void Wake() {}
@@ -22,7 +22,7 @@ void SetAnswer(const char*) {}
 // INSERT_RESOLVE
 }
 using esp_err_t = int;
-using amoled_voice::Tr;
+using amoled_ui::Tr;
 constexpr int ESP_OK = 0, ESP_FAIL = -1, ESP_ERR_INVALID_STATE = -2, ESP_ERR_INVALID_ARG = -3,
     ESP_ERR_NO_MEM = -4, ESP_ERR_INVALID_SIZE = -5;
 agent_state_t fixture_state = AGENT_STATE_CONNECTED;
@@ -94,9 +94,9 @@ struct SessionController {
     int64_t last_attempt_ = 0;
     uint32_t view_ = 1, navigation_ = 1;
     char session_[80]{}, session_name_[96]{}, error_message_[96]{};
-    Item items_[amoled_voice::kListRows]{};
+    Item items_[amoled_ui::kListRows]{};
     size_t count_ = 0, session_offset_ = 0, session_total_ = 0, session_count_ = 0;
-    agent_link_platform_conversation_t sessions_[amoled_voice::kListRows]{}, fetched_[amoled_voice::kListRows]{};
+    agent_link_platform_conversation_t sessions_[amoled_ui::kListRows]{}, fetched_[amoled_ui::kListRows]{};
     bool SyncBoundAgent(bool) { return agent_ != 0; }
     bool Error(int error) { return error != ESP_OK; }
     void EndCall() { call_ = false; }
@@ -198,7 +198,7 @@ struct CaptureHarness {
     std::atomic<int64_t> asr_until_{0};
     std::atomic<bool> asr_{false}, continuous_{true}, fault_{false};
     kc_audio::SpeakerEchoGuard echo_;
-    amoled_voice::MicDiagnosticWindow mic_window_, diagnostic_snapshot_;
+    amoled_ui::MicDiagnosticWindow mic_window_, diagnostic_snapshot_;
     uint32_t diagnostic_sequence_ = 0, diagnostic_capture_ = 0;
     void* play_task_ = reinterpret_cast<void*>(1);
     bool diagnostic_active_ = false;
@@ -213,7 +213,7 @@ struct CaptureHarness {
 
 int main() {
     CheckSessionCreationEntry();
-    using namespace amoled_voice;
+    using namespace amoled_ui;
     // Invalid and release reports cannot retain a stale pressed pointer.
     uint8_t frame[10] = {0x06, 14, 13, 0x92, 70, 1, 0xAB};
     cst9217::Point point;

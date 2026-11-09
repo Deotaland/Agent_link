@@ -48,7 +48,7 @@ private:
     std::atomic<int64_t> asr_until_{0};
     kc_audio::SpeakerEchoGuard echo_;
     // Capture owns the accumulator. Only the copied snapshot crosses tasks.
-    amoled_voice::MicDiagnosticWindow mic_window_, diagnostic_snapshot_;
+    amoled_ui::MicDiagnosticWindow mic_window_, diagnostic_snapshot_;
     portMUX_TYPE diagnostic_lock_ = portMUX_INITIALIZER_UNLOCKED;
     uint32_t diagnostic_sequence_ = 0, diagnostic_capture_ = 0;
     uint32_t diagnostic_reported_ = 0;  // Controller worker only.

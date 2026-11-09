@@ -182,6 +182,10 @@ def inspect(args):
     add("project-path", "FAIL" if re.search(r"\s|[^\x00-\x7f]", str(ROOT)) else "OK", str(ROOT),
         "Use a short ASCII path without spaces. See the environment guide before relocating existing work.")
     profiles = json.loads((ROOT / "firmware/profiles/profiles.json").read_text(encoding="utf-8"))
+    for profile in profiles.values():
+        if "target" not in profile:
+            board = ROOT / "firmware/boards" / profile["board"] / "config.json"
+            profile["target"] = json.loads(board.read_text(encoding="utf-8"))["target"]
     target = profiles[args.profile]["target"] if args.profile else None
     if args.mode == "build":
         add("profile", "OK" if target else "FAIL", args.profile or "not selected",
@@ -265,6 +269,10 @@ def main(argv=None):
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args(argv)
     profiles = json.loads((ROOT / "firmware/profiles/profiles.json").read_text(encoding="utf-8"))
+    for profile in profiles.values():
+        if "target" not in profile:
+            board = ROOT / "firmware/boards" / profile["board"] / "config.json"
+            profile["target"] = json.loads(board.read_text(encoding="utf-8"))["target"]
     if args.list:
         print("\n".join(profiles))
         return 0

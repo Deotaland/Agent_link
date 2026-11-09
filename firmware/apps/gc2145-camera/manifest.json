@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "gc2145-camera",
+  "name": "gc2145-camera",
+  "backend": "BLE",
+  "ui": "none",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

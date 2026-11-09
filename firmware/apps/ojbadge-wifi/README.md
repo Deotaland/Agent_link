@@ -37,7 +37,7 @@ failures without printing keys or pairing codes.
 
 This version deliberately has no Agent Link platform integration, hotspot,
 voice service or audio initialization. The product identity is stored only in
-build metadata. Include the `anim_pack` Chinese font asset in a USB package;
+build metadata. Include the `font_cjk` Chinese font asset in a USB package;
 updating the application alone does not install a missing font partition.
 
 Hardware acceptance is pending: LCD colors/inversion/orientation, all touch

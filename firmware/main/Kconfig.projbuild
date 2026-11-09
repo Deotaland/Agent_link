@@ -1,5 +1,6 @@
 menu "Agent Link Device"
 
+rsource "Kconfig.build_target"
 rsource "Kconfig.profiles"
 
 config BOARD_TYPE_WAVESHARE_EPAPER_397_WIFI

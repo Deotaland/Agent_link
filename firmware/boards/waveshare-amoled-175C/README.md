@@ -8,9 +8,10 @@ this as the non-C PCB. Platform product ID is 12 (enterprise 0), with product ke
 `esp32-s3-touch-amoled-175c` and chip `esp32-s3`, as supplied by the developer.
 Use these profiles only on the ESP32-S3-Touch-AMOLED-1.75C (SKU 33691/33692).
 
-The application entrypoint stays in `apps/waveshare-amoled-175C-wifi`. UI,
-controller, playback/capture workers and resident fonts are shared through
-`apps/common/amoled-wifi`; C-board audio and pins remain in this board directory.
+The application entrypoint stays in `apps/waveshare-amoled-175C-wifi`. Voice
+controller and playback/capture workers are shared through `apps/common/amoled-wifi`;
+rendering, input and fonts use `components/amoled_ui`.
+C-board audio and pins remain in this board directory.
 The non-C 16 MB board has its own profile and must use its own image.
 
 ## Hardware
@@ -134,7 +135,7 @@ launcher and Settings alone does not end the call.
 ## Validation and device acceptance
 
 Both profiles include the repository's [shared Noto Sans SC font](../common/fonts/README.md),
-with all 6763 GB2312 Hanzi and Chinese punctuation. The existing `anim_pack`
+with all 6763 GB2312 Hanzi and Chinese punctuation. The existing `font_cjk`
 partition stores the font. No partition offsets are changed. USB split flash
 and the merged image include the font automatically; app-only OTA requires the
 font to have been installed already. Keep `fonts-OFL.txt` with the firmware.

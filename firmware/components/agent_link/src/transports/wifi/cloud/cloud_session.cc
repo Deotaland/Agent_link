@@ -490,7 +490,6 @@ esp_err_t cloud_session_start(const cloud_session_config_t* cfg) {
     if (r != ESP_OK) return r;
     r = cloud_api_init(cfg->base_url);
     if (r != ESP_OK) return r;
-    cloud_clock_start();   // every MQTT message carries a timestamp
 
     if (!s_agent_json) {
         s_agent_json = static_cast<char*>(heap_caps_calloc(1, kAgentJsonCap,

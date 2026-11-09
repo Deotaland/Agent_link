@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "waveshare-amoled-175C-wifi",
+  "name": "waveshare-amoled-175C-wifi",
+  "backend": "WIFI",
+  "ui": "lvgl",
+  "shared_app": "amoled-wifi",
+  "ui_component": "amoled_ui",
+  "sources": [],
+  "include_dirs": []
+}

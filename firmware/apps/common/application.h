@@ -76,7 +76,7 @@ public:
     // Which Deotaland platform product this hardware is. Used when the device reaches the platform
     // itself (WiFi) and ignored when the App does it for us (BLE) — so return it regardless, and
     // the same board builds for both. Point at a static; the SDK keeps the pointer. The default
-    // NULL is right for a board that will only ever ship on BLE.
+    // NULL also selects WiFi-only networking for applications such as factory.
     virtual const agent_platform_t* Platform() const { return nullptr; }
 
     // Device → Agent: Status Query & Reporting
@@ -90,6 +90,6 @@ public:
     }
 };
 
-// Each board implementation must register itself with the framework by placing the following macro at the end of its .cc file:
+// Each selected application or board factory registers one entrypoint:
 #define DECLARE_APPLICATION(BOARD_CLASS) \
     void* create_application() { return new BOARD_CLASS(); }

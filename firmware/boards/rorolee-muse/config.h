@@ -53,9 +53,9 @@
 
 // ── Chinese text ─────────────────────────────────────────────────────────────
 // Montserrat has no CJK glyphs. A TrueType font (make_cjk_font.py in font/ builds the image)
-// sits in this flash partition - the production animation pack's, unused by this firmware - and
-// TinyTTF draws it straight from flash. Without the image the board shows Latin text only.
-#define CJK_FONT_PARTITION      "anim_pack"
+// sits in the shared font_cjk partition and TinyTTF draws it straight from flash.
+// Without the image the board shows Latin text only.
+#define CJK_FONT_PARTITION      "font_cjk"
 #define CJK_FONT_PX             16
 #define CJK_FONT_CACHE_GLYPHS   128           // rendered glyphs kept (LVGL heap, PSRAM here)
 

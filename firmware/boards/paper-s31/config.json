@@ -29,7 +29,24 @@
       "ble_name": null,
       "fw_model": "PAPER-S31",
       "status": "supported",
-      "notes": "Product ID 8, chip_type esp32-s31. ESP-IDF 6.1. Build/host verification only; hardware and live platform acceptance pending. PCM16 voice; no Opus library for S31. Chinese/English UI. MQTT disabled; BLE discovery toggle; phone hotspot WiFi setup."
+      "notes": "Product ID 8, chip_type esp32-s31. ESP-IDF 6.1. Build/host verification only; hardware and live platform acceptance pending. PCM16 voice; no Opus library for S31. Chinese/English UI. MQTT disabled; BLE discovery toggle; phone hotspot WiFi setup.",
+      "build": {
+        "hardware": "paper-s31",
+        "drivers": [
+          "raster_cjk_14.c",
+          "stripe_canvas.cc"
+        ],
+        "hardware_sources": [
+          "epd.c",
+          "i2c_bus.c",
+          "paper_audio.c",
+          "paper_hardware.c",
+          "paper_storage.c",
+          "paper_display.cc"
+        ],
+        "defaults": "boards/paper-s31/hardware.defaults",
+        "layout": "paper-s31-v1"
+      }
     }
   ]
 }

@@ -24,6 +24,7 @@
 #include "agent_link_network.h"
 #include "wifi_local_radio.h"
 #include "cloud_json.h"
+#include "cloud_clock.h"
 #include "cloud_mqtt.h"
 #include "cloud_platform.h"
 #include "cloud_realtime.h"
@@ -512,12 +513,6 @@ void Compose(const agent_cloud_status_t& c, agent_link_status_t* out) {
         return;
     }
 
-    if (!s_platform) {
-        say(AGENT_LINK_PHASE_BLOCKED, "Not configured",
-            "This firmware has no platform set (Board::Platform), so it cannot reach the platform");
-        return;
-    }
-
     if (s_phase != Phase::kStaConnected) {
         const unsigned left = s_join_left;
         const char* reason = JoinMessage(s_join_failure);
@@ -538,7 +533,13 @@ void Compose(const agent_cloud_status_t& c, agent_link_status_t* out) {
         return;
     }
     if (al_wifi_prov_active()) {
-        say(AGENT_LINK_PHASE_CONNECTING, "WiFi connected", "Closing setup and connecting to the platform");
+        say(AGENT_LINK_PHASE_CONNECTING, "WiFi connected", s_platform
+            ? "Closing setup and connecting to the platform" : "Closing WiFi setup");
+        return;
+    }
+    if (!s_platform) {
+        out->detail = 0;
+        say(AGENT_LINK_PHASE_CONNECTED, "WiFi connected", "Network available for this application");
         return;
     }
 
@@ -700,9 +701,9 @@ void StartCloudSession() {
     if (s_cloud_started) return;
     if (!s_platform || !s_platform->base_url || !s_platform->base_url[0]) {
         // Not fatal: the station still comes up, but there is nothing to connect to.
+        if (s_platform) ESP_LOGW(TAG, "incomplete Agent platform configuration; using WiFi only");
         s_platform = nullptr;   // treat a half-filled platform as none
-        ESP_LOGW(TAG, "no platform configured (Board::Platform / agent_link_config_t::platform) — "
-                      "station only; this device will never reach the Agent platform");
+        ESP_LOGI(TAG, "WiFi-only application; Agent cloud session disabled");
         ReportStatus();
         return;
     }
@@ -757,6 +758,8 @@ esp_err_t wifi_start(void* /*impl*/) {
         if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) return r;
     }
 
+    // Catalogs and cover downloads also need a valid HTTPS clock, without claim/auth.
+    cloud_clock_start();
     StartCloudSession();
     ReportStatus();
     return ESP_OK;

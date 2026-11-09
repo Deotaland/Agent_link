@@ -59,6 +59,12 @@ repository reformat during a behavior change. Comments should explain a hardware
 constraint, lifetime or protocol decision instead of narrating an obvious call.
 Preserve third-party copyright/license headers and the vendored upstream revision.
 
+[firmware/.clang-format](../firmware/.clang-format) records the shared C/C++ style:
+four-space indentation, 100-column wrapping and expanded control flow. Format
+only files within the reviewed change; do not reformat vendored dependencies or
+unrelated legacy sources. Directory responsibilities are listed in the
+[firmware guide](../firmware/README.md#source-layout).
+
 Before merging, run the checks in [AGENTS.md](../AGENTS.md#checks-before-merge),
 relevant host regression checks and the selected profile build. Keep meaningful
 test sources in Git; generated binaries, build/serial logs and local caches stay

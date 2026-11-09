@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "ai-passport",
+  "name": "ai-passport",
+  "backend": "BLE",
+  "ui": "raster",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

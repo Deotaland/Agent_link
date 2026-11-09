@@ -1,0 +1,56 @@
+{
+  "standard-v1": {
+    "version": 1,
+    "mode": "single",
+    "csv": "partitions/standard-v1.csv",
+    "targets": [
+      "esp32s3"
+    ],
+    "app_slots": [
+      "ota_0",
+      "ota_1"
+    ],
+    "defaults": "partitions/standard-v1.defaults"
+  },
+  "passport-8m-v1": {
+    "version": 1,
+    "mode": "single",
+    "csv": "partitions/passport-8m-v1.csv",
+    "targets": [
+      "esp32c3"
+    ],
+    "app_slots": [
+      "ota_0",
+      "ota_1"
+    ],
+    "defaults": "partitions/passport-8m-v1.defaults"
+  },
+  "paper-s31-v1": {
+    "version": 1,
+    "mode": "single",
+    "csv": "partitions/paper-s31-v1.csv",
+    "targets": [
+      "esp32s31"
+    ],
+    "app_slots": [
+      "ota_0",
+      "ota_1"
+    ],
+    "defaults": "partitions/paper-s31-v1.defaults"
+  },
+  "amoled-175-v1": {
+    "version": 1,
+    "mode": "managed",
+    "csv": "partitions/amoled-175-v1.csv",
+    "targets": [
+      "esp32s3"
+    ],
+    "app_slots": [
+      "ota_0",
+      "ota_1",
+      "ota_2"
+    ],
+    "cover_reserve": 57344,
+    "defaults": "partitions/amoled-175-v1.defaults"
+  }
+}

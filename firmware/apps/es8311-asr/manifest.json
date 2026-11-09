@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "es8311-asr",
+  "name": "es8311-asr",
+  "backend": "BLE",
+  "ui": "none",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

@@ -1,7 +1,11 @@
 menu "agent_link SDK"
 
+config AGENT_LINK_MANAGED_APPS
+    bool
+
 config AGENT_LINK_OTA_ENABLE
     bool "Enable OTA firmware upgrade over the App link"
+    depends on !AGENT_LINK_MANAGED_APPS
     default y
     help
         Handle 0x37 StartOtaUpgrade / 0x56 AbortOtaUpgrade and stream the new firmware

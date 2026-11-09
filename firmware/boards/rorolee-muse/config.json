@@ -1,32 +1,47 @@
 {
-    "manufacturer": "deotaland",
-    "type": "rorolee-muse",
-    "target": "esp32s3",
-    "boards": [
-        {
-            "board_type": "ROROLEE_MUSE",
-            "model": "RRL-01",
-            "product": "RoRoLee",
-            "vendor": "Deotaland",
-            "buy": ["https://www.rorolee.com"],
-            "docs": [],
-            "aliases": [
-              "RoRoLee",
-              "rorolee-muse",
-              "Deotaland",
-              "rorolee.com",
-              "若若丽",
-              "RoRoLee徽章"
-            ],
-            "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; ES8311 + ES7210 audio; BQ27220 fuel gauge",
-            "identify": "Small rectangular AMOLED screen (120x240); three buttons: BOOT, VOL+, VOL-",
-            "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
-            "use": "Muse voice assistant: hold BOOT to talk, the answer is shown as text",
-            "transport": "MUSE",
-            "ble_name": "MuseGadget-XXXXXX",
-            "fw_model": "RRL-01",
-            "status": "supported",
-            "notes": "Hold VOL- for 6 s to forget the Muse pairing. Chinese text needs a font image in anim_pack (boards/rorolee-muse/font/README.md)."
-        }
-    ]
+  "manufacturer": "deotaland",
+  "type": "rorolee-muse",
+  "target": "esp32s3",
+  "boards": [
+    {
+      "board_type": "ROROLEE_MUSE",
+      "model": "RRL-01",
+      "product": "RoRoLee",
+      "vendor": "Deotaland",
+      "buy": [
+        "https://www.rorolee.com"
+      ],
+      "docs": [],
+      "aliases": [
+        "RoRoLee",
+        "rorolee-muse",
+        "Deotaland",
+        "rorolee.com",
+        "若若丽",
+        "RoRoLee徽章"
+      ],
+      "hardware": "ESP32-S3, 16 MB flash, 8 MB PSRAM; SH8501 120x240 AMOLED; ES8311 + ES7210 audio; BQ27220 fuel gauge",
+      "identify": "Small rectangular AMOLED screen (120x240); three buttons: BOOT, VOL+, VOL-",
+      "flash_port": "USB-C. Download mode: hold BOOT while plugging in.",
+      "use": "Muse voice assistant: hold BOOT to talk, the answer is shown as text",
+      "transport": "MUSE",
+      "ble_name": "MuseGadget-XXXXXX",
+      "fw_model": "RRL-01",
+      "status": "supported",
+      "notes": "Hold VOL- for 6 s to forget the Muse pairing. Chinese text needs a font image in font_cjk (boards/rorolee-muse/font/README.md).",
+      "build": {
+        "hardware": "rorolee-muse",
+        "drivers": [
+          "bq27220.cc",
+          "cjk_font.cc",
+          "es_codec.cc",
+          "sh8501_lk_panel.cc",
+          "sh8501_panel.cc"
+        ],
+        "hardware_sources": [],
+        "defaults": "boards/rorolee-muse/hardware.defaults",
+        "layout": "standard-v1"
+      }
+    }
+  ]
 }

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "wownny-muse",
+  "name": "wownny-muse",
+  "backend": "MUSE",
+  "ui": "lvgl",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

@@ -1,0 +1,15 @@
+# Non-C AMOLED 1.75 only: factory launcher and three unique-app slots.
+# Last 0xE000 bytes of each OTA slot are reserved for its raw cover, outside app.bin.
+# Shared settings keep their existing offsets. Font is shared by every image.
+# Name,     Type, SubType, Offset,    Size,     Flags
+nvs,        data, nvs,     0x9000,    0x5000,
+otadata,    data, ota,     0xE000,    0x2000,
+factory,    app,  factory, 0x10000,   0x300000,
+ota_0,      app,  ota_0,   0x310000,  0x300000,
+ota_1,      app,  ota_1,   0x610000,  0x300000,
+ota_2,      app,  ota_2,   0x910000,  0x300000,
+nvs_keys,   data, nvs_keys,0xC10000,  0x1000,
+phy_init,   data, phy,    0xC11000,  0x1000,
+app_nvs,    data, nvs,    0xC12000,  0x10000,
+font_cjk,   data, 0x99,   0xC22000,  0x230000,
+# 0xE52000..0x1000000 remains available for a future layout; covers use slot tails.

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "waveshare-epaper-397-wifi",
+  "name": "waveshare-epaper-397-wifi",
+  "backend": "WIFI",
+  "ui": "lvgl",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

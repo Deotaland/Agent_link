@@ -171,8 +171,9 @@ Read [the board guide](firmware/boards/README.md), the
 [SDK guide](firmware/components/agent_link/README.md). The
 [porting skill](skills/agent-link-port/SKILL.md) covers the same workflow for AI assistants.
 
-- Keep pins and hardware initialization in `boards/`, UI and sessions in `apps/`,
-  and connectivity in `components/agent_link/`. Shared drivers take pin settings;
+- Keep pins and hardware initialization in `boards/`, app UI and sessions in `apps/`,
+  board factory entrypoints/pages in `factory/<board>/`, reusable AMOLED presentation
+  in `components/amoled_ui/`, and connectivity in `components/agent_link/`. Shared drivers take pin settings;
   they do not depend on the transport.
 - Register one `Application` with `DECLARE_APPLICATION`. Preserve existing
   `Model()` strings for OTA compatibility and advertise only working capabilities.
@@ -183,8 +184,12 @@ Read [the board guide](firmware/boards/README.md), the
   6 KB NimBLE host stack. Do not perform display, storage or blocking audio work there.
 - Public SDK calls must tolerate use before `agent_link_init()`; applications are
   constructed first. Use `agent_link_status_t` to display link progress.
-- Add a profile, Kconfig mappings, defaults and catalog entry together. Select
-  driver dependencies from the profile manifest before IDF dependency expansion;
+- Board catalog entries own hardware/defaults, layout and Factory binding;
+  application manifests own business/UI/dependencies; profiles select the combination.
+  Partition offsets come from the versioned layout CSV. Keep existing profile names
+  and OTA models compatible. Regenerate Factory Kconfig with
+  `python firmware/tools/build_firmware.py --generate-kconfig` after binding changes.
+  Select driver dependencies from resolved manifests before IDF dependency expansion;
   do not decide component `REQUIRES` using Kconfig values.
 - Build the requested profile before handing back firmware code changes. Hardware
   acceptance requires a device; a successful build is not a device test.

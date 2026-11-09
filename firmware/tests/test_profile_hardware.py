@@ -34,7 +34,7 @@ class ProfileHardwareTests(unittest.TestCase):
                     self.assertNotIn('CONFIG_ESPTOOLPY_FLASHSIZE_16MB', values)
                     self.assertNotEqual(values.get('CONFIG_SPIRAM'), 'y')
                     self.assertEqual(values['CONFIG_PARTITION_TABLE_CUSTOM_FILENAME'],
-                                     '"partitions_esp32c3.csv"')
+                                     '"partitions/passport-8m-v1.csv"')
                     self.assertEqual(values['CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG'], 'y')
                 else:
                     # The AMOLED C revision has 32 MB; OJBadge and the other
@@ -43,7 +43,8 @@ class ProfileHardwareTests(unittest.TestCase):
                     self.assertEqual(values[f'CONFIG_ESPTOOLPY_FLASHSIZE_{flash_mb}MB'], 'y')
                     self.assertEqual(values['CONFIG_SPIRAM'], 'y')
                     self.assertEqual(values['CONFIG_SPIRAM_IGNORE_NOTFOUND'], 'n')
-                    expected_partition = 'partitions_paper_s31.csv' if name == 'paper-s31-wifi' else 'partitions.csv'
+                    expected_partition = {'paper-s31-wifi': 'partitions/paper-s31-v1.csv',
+                                          'waveshare-amoled-175-wifi': 'partitions/amoled-175-v1.csv'}.get(name, 'partitions/standard-v1.csv')
                     self.assertEqual(values['CONFIG_PARTITION_TABLE_CUSTOM_FILENAME'], '"' + expected_partition + '"')
                     if profile['target'] == 'esp32s3':
                         self.assertEqual(values['CONFIG_SPIRAM_MODE_OCT'], 'y')

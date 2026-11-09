@@ -108,7 +108,7 @@ def table_rows(entries):
         rows.append([
             e["model"] or "—",
             e["product"],
-            f"`{e['profile']}`" if e.get("profile") else "—",
+            ", ".join(f"`{name}`" for name in e.get("profiles", [e["profile"]])) if e.get("profile") else "—",
             CHIP.get(e["target"], e["target"]),
             LINK[e["transport"]],
             STATUS[e["status"]],

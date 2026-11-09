@@ -53,8 +53,8 @@ public:
         lv_indev_set_user_data(pointer, this);
         lv_indev_set_read_cb(pointer, ReadTouch);
         body_ = lv_font_montserrat_14; title_ = lv_font_montserrat_20;
-        body_.fallback = LoadCjkFont("anim_pack", 14, 96);
-        title_.fallback = LoadCjkFont("anim_pack", 20, 48);
+        body_.fallback = LoadCjkFont("font_cjk", 14, 96);
+        title_.fallback = LoadCjkFont("font_cjk", 20, 48);
         if (!body_.fallback) body_.fallback = &lv_font_simsun_14_cjk;
         if (!title_.fallback) title_.fallback = &lv_font_simsun_14_cjk;
         view_.touch_ok = hardware_.touch.Ready();

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "ai-passport-wifi",
+  "name": "ai-passport-wifi",
+  "backend": "WIFI",
+  "ui": "raster",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

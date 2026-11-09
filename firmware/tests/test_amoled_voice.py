@@ -7,7 +7,7 @@ import subprocess
 root = Path(__file__).resolve().parents[1]
 app = root / "apps/common/amoled-wifi"
 source = (app / "amoled_wifi_application.h").read_text(encoding="utf-8")
-ui = (app / "amoled_voice_ui.cc").read_text(encoding="utf-8")
+ui = (root / "components/amoled_ui/amoled_ui.cc").read_text(encoding="utf-8")
 fixture = (root / "tests/amoled_voice_fixture.cc").read_text(encoding="utf-8")
 fixture = fixture.replace("// INSERT_RESOLVE", ui[ui.index("Activity Resolve("):ui.index("void Render(")])
 fixture = fixture.replace("// INSERT_END_CALL", source[source.index("    void EndCall()"):source.index("    bool Error(")])
@@ -25,7 +25,7 @@ build = root / "build/amoled-voice-tests"
 build.mkdir(parents=True, exist_ok=True)
 generated = build / "amoled_voice_test.cc"
 generated.write_text(fixture, encoding="utf-8")
-includes = [app, root / "boards/common"]
+includes = [app, root / "components/amoled_ui/include", root / "boards/common"]
 environment = os.environ.copy()
 if os.name == "nt":
     vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"

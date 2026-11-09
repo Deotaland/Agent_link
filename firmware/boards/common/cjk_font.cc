@@ -39,8 +39,7 @@ lv_font_t* LoadCjkFont(const char* label, int32_t px, uint32_t cache_glyphs) {
     if (esp_partition_read(part, 0, &h, sizeof h) != ESP_OK) return nullptr;
     if (memcmp(h.magic, kMagic, sizeof kMagic) != 0 || h.version != kVersion || h.length == 0 ||
         h.length > part->size - sizeof h) {
-        // The partition still holds whatever was there before (on the rorolee PCBs, the
-        // production animation pack), not a font image.
+        // Reject missing or invalid font data before passing it to TinyTTF.
         ESP_LOGW(TAG, "no CJK font image in '%s': Latin text only (flash cjk_font.bin there)", label);
         return nullptr;
     }

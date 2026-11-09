@@ -78,7 +78,7 @@ the console before activating again. PWR keeps its independent hardware action.
 A dedicated worker renders English and common Chinese glyphs, activation codes,
 session names, voice state and up to 1 KB of reply text. The profile includes a
 [Noto Sans SC font](../common/fonts/README.md) with all 6763 GB2312 Hanzi and common punctuation,
-loaded from the existing anim_pack partition at 0x412000 with TinyTTF. Its data is
+loaded from the existing font_cjk partition at 0x412000 with TinyTTF. Its data is
 memory-mapped and a 32-glyph cache bounds bitmap memory. Unsupported characters
 still use `?`; a missing/damaged image logs a warning and uses the old subset.
 Both the app and font must be installed for the first upgrade; an app-only OTA

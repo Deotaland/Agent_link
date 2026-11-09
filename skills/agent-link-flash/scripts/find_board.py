@@ -86,7 +86,7 @@ def describe(entries):
         if first[k]:
             lines.append(f"  {label:<9}: {' '.join(first[k])}")
     lines.append(f"  flash via: {first['flash_port']}")
-    if len(entries) > 1:
+    if len(entries) > 1 or any(len(e.get("profiles", [])) > 1 for e in entries):
         lines.append("  Several firmware builds fit this hardware. Ask the user what the device should do:")
     for e in entries:
         lines.append(f"  - {e['board_type']} [{e['status']}] {e['use']}")
@@ -95,7 +95,8 @@ def describe(entries):
         lines.append(f"      firmware/boards/{e['dir']}, target {e['target']}, link {e['transport']},"
                      f" boot log model = {e['fw_model']}")
         if e.get("profile"):
-            lines.append(f"      build from firmware/: python tools/build_firmware.py {e['profile']} --jobs 2")
+            for profile in e.get("profiles", [e["profile"]]):
+                lines.append(f"      build from firmware/: python tools/build_firmware.py {profile} --jobs 2")
             lines.append(f"      environment from root/: python tools/check_env.py --profile {e['profile']}")
         if e.get("ble_name"):
             lines.append(f"      shows up as: {e['ble_name']}")

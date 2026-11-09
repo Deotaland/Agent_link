@@ -25,7 +25,27 @@
       "ble_name": null,
       "fw_model": "OJBadge",
       "status": "supported",
-      "notes": "Profile ojbadge-wifi is currently local-only: NONE denotes no Agent Link platform backend, not absence of the ESP-NOW WiFi radio. Product ojbadge (id 11, enterprise_id 0, esp32-s3) supplied by the developer; platform lookup requires an account token and was not independently verified. No portal, activation, cloud, microphone or speaker. SW2 short press starts friends or greets a connected peer; hold 1 second returns home and stops the radio. Pairing code must be confirmed on both touchscreens. Hardware and cross-board acceptance pending."
+      "notes": "Profile ojbadge-wifi is currently local-only: NONE denotes no Agent Link platform backend, not absence of the ESP-NOW WiFi radio. Product ojbadge (id 11, enterprise_id 0, esp32-s3) supplied by the developer; platform lookup requires an account token and was not independently verified. No portal, activation, cloud, microphone or speaker. SW2 short press starts friends or greets a connected peer; hold 1 second returns home and stops the radio. Pairing code must be confirmed on both touchscreens. Hardware and cross-board acceptance pending.",
+      "build": {
+        "hardware": "ojbadge",
+        "drivers": [
+          "bq27220.cc",
+          "cst816_touch.cc",
+          "cjk_font.cc",
+          "gc9a01_panel.cc"
+        ],
+        "hardware_sources": [
+          "ojbadge_hardware.cc"
+        ],
+        "defaults": "boards/ojbadge/hardware.defaults",
+        "layout": "standard-v1",
+        "flash_assets": [
+          {
+            "partition": "font_cjk",
+            "file": "boards/common/fonts/cjk_font.bin"
+          }
+        ]
+      }
     }
   ]
 }

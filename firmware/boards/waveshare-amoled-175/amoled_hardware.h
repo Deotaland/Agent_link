@@ -6,7 +6,7 @@
 class AmoledHardware {
 public:
     void Init(int volume);
-    void InitDisplayAndTouch();  // Offline diagnostics: do not initialize audio.
+    void InitDisplayAndTouch(uint16_t stripe_rows = 12);  // Offline diagnostics: do not initialize audio.
     esp_err_t SetSpeakerEnabled(bool enabled);
     void Battery(int* percent, bool* charging);
     bool ButtonDown() const;

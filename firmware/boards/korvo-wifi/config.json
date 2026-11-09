@@ -1,40 +1,59 @@
 {
-    "manufacturer": "deotaland",
-    "type": "korvo-wifi",
-    "target": "esp32s3",
-    "boards": [
-        {
-            "board_type": "ESP32S3_KORVO_CLOUD",
-            "model": "Korvo 2 V3",
-            "product": "ESP32S3 Korvo 2 V3 development board",
-            "vendor": "KSDIY (Kevincoooool)",
-            "buy": ["https://item.taobao.com/item.htm?id=681702043224"],
-            "docs": ["https://github.com/Kevincoooool/esp-idf-docs"],
-            "aliases": [
-              "Korvo",
-              "Korvo 2",
-              "Korvo-2",
-              "Korvo2",
-              "ESP32-S3-Korvo-2",
-              "ESP32S3 Korvo",
-              "Korvo S3",
-              "korvo-cloud",
-              "KSDIY",
-              "Kevincoooool",
-              "681702043224",
-              "科沃",
-              "Korvo开发板",
-              "科沃开发板"
-            ],
-            "hardware": "ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM); 1.69-inch 240x280 ST7789 touch LCD (CST816); ES8311 + ES7210 audio; 24-pin DVP camera connector (this firmware drives a GC2145); TF card slot",
-            "identify": "Two USB-C ports; 1.69-inch touch screen; camera on a 24-pin ribbon connector; six ADC buttons",
-            "flash_port": "Left USB-C (CH9102F USB-UART, automatic download). The right USB-C is the chip's own USB, not for flashing.",
-            "use": "WiFi platform voice: hotspot setup and activation code; bind the agent in the console, then list, create, select or delete conversations and start a realtime call; camera preview",
-            "transport": "WIFI",
-            "ble_name": "KorvoCloud-XXXX (WiFi hotspot)",
-            "fw_model": "KORVO-CLOUD",
-            "status": "supported",
-            "notes": "The platform origin is compiled from boards/common/platform_config.h; product identity comes from profiles/products.json. Confirm the 240x280 ST7789 panel variant; the official Espressif Korvo LCD differs. Rebuild after changing the platform address. Agent binding is managed in the console only. Deleting a conversation requires confirmation."
-        }
-    ]
+  "manufacturer": "deotaland",
+  "type": "korvo-wifi",
+  "target": "esp32s3",
+  "boards": [
+    {
+      "board_type": "ESP32S3_KORVO_CLOUD",
+      "model": "Korvo 2 V3",
+      "product": "ESP32S3 Korvo 2 V3 development board",
+      "vendor": "KSDIY (Kevincoooool)",
+      "buy": [
+        "https://item.taobao.com/item.htm?id=681702043224"
+      ],
+      "docs": [
+        "https://github.com/Kevincoooool/esp-idf-docs"
+      ],
+      "aliases": [
+        "Korvo",
+        "Korvo 2",
+        "Korvo-2",
+        "Korvo2",
+        "ESP32-S3-Korvo-2",
+        "ESP32S3 Korvo",
+        "Korvo S3",
+        "korvo-cloud",
+        "KSDIY",
+        "Kevincoooool",
+        "681702043224",
+        "科沃",
+        "Korvo开发板",
+        "科沃开发板"
+      ],
+      "hardware": "ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM); 1.69-inch 240x280 ST7789 touch LCD (CST816); ES8311 + ES7210 audio; 24-pin DVP camera connector (this firmware drives a GC2145); TF card slot",
+      "identify": "Two USB-C ports; 1.69-inch touch screen; camera on a 24-pin ribbon connector; six ADC buttons",
+      "flash_port": "Left USB-C (CH9102F USB-UART, automatic download). The right USB-C is the chip's own USB, not for flashing.",
+      "use": "WiFi platform voice: hotspot setup and activation code; bind the agent in the console, then list, create, select or delete conversations and start a realtime call; camera preview",
+      "transport": "WIFI",
+      "ble_name": "KorvoCloud-XXXX (WiFi hotspot)",
+      "fw_model": "KORVO-CLOUD",
+      "status": "supported",
+      "notes": "The platform origin is compiled from boards/common/platform_config.h; product identity comes from profiles/products.json. Confirm the 240x280 ST7789 panel variant; the official Espressif Korvo LCD differs. Rebuild after changing the platform address. Agent binding is managed in the console only. Deleting a conversation requires confirmation.",
+      "build": {
+        "hardware": "korvo",
+        "drivers": [
+          "cst816_touch.cc",
+          "es_codec.cc",
+          "gc2145_camera.cc",
+          "st7789_lcd.cc"
+        ],
+        "hardware_sources": [
+          "korvo_hardware.cc",
+          "servo8.cc"
+        ],
+        "defaults": "boards/korvo-wifi/hardware.defaults",
+        "layout": "standard-v1"
+      }
+    }
+  ]
 }

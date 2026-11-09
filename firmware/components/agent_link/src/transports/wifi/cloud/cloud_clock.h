@@ -2,7 +2,7 @@
 // Wall-clock time for the WiFi channel, whose every message carries a 13-digit Unix time in ms.
 //
 // The ESP32 has no battery-backed clock and boots in 1970. Two sources set it: SNTP, started with
-// the cloud session, and the platform's own clock, read off each mqtt-token answer (expire_at
+// WiFi even for applications without an Agent session, and the platform's clock, read off each mqtt-token answer (expire_at
 // minus expires_in is the platform's "now"). The platform's is used only until SNTP has
 // synchronised, which covers networks that block NTP, and it always arrives before MQTT connects.
 

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "app_id": "paper-s31-wifi",
+  "name": "paper-s31-wifi",
+  "backend": "WIFI",
+  "ui": "none",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": [],
+  "requires": [
+    "json"
+  ]
+}

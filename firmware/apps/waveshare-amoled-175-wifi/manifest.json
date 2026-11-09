@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "app_id": "agent.voice",
+  "name": "Agent Voice",
+  "backend": "WIFI",
+  "ui": "lvgl",
+  "shared_app": "amoled-wifi",
+  "ui_component": "amoled_ui",
+  "sources": [],
+  "include_dirs": [],
+  "role": "voice"
+}

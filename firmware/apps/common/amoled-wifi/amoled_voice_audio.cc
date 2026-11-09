@@ -80,7 +80,7 @@ void AmoledVoiceAudio::PublishDiagnostics(bool final) {
 }
 
 void AmoledVoiceAudio::ReportDiagnostics() {
-    amoled_voice::MicDiagnosticWindow snapshot;
+    amoled_ui::MicDiagnosticWindow snapshot;
     taskENTER_CRITICAL(&diagnostic_lock_);
     snapshot = diagnostic_snapshot_;
     taskEXIT_CRITICAL(&diagnostic_lock_);

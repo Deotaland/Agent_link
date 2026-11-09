@@ -1,0 +1,18 @@
+choice AGENT_LINK_BUILD_TARGET
+    prompt "Firmware build target"
+    default AGENT_LINK_BUILD_APPLICATION
+    help
+        Application mode selects a firmware profile. Factory mode selects only
+        hardware with a registered board-bound Factory. The two selectors are
+        separate, and Factory is offered only on chips with an adapted board.
+
+    config AGENT_LINK_BUILD_APPLICATION
+        bool "Application firmware (selected profile)"
+
+    config AGENT_LINK_BUILD_FACTORY
+        bool "Factory firmware (bound to selected board)"
+        depends on AGENT_LINK_CHIP_FACTORY_AVAILABLE
+
+endchoice
+
+rsource "Kconfig.factories"

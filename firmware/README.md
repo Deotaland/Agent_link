@@ -21,12 +21,13 @@ python tools/build_firmware.py korvo-ble --jobs 2
 idf.py -p PORT flash monitor
 ```
 
-Omit the profile name to choose from a menu. Each profile fixes the chip, board,
-application and backend. [Profiles](profiles/README.md) lists the combinations.
+Omit the profile name to choose from a menu. Each profile selects a board, application and backend; the board fixes
+the chip, hardware and partition layout. [Profiles](profiles/README.md) lists the combinations.
 Identify the hardware before flashing; ESP32-P4 is not adapted.
 
 The tool reuses `build/`, reconfigures, compiles and merges the image. It verifies
-that each merged segment matches the original build file. It never flashes.
+that every produced merged segment matches its build files. A managed application
+uses separate update files; the board package tool supplies its initial USB image. It never flashes.
 A fresh checkout needs no saved config or build files; ESP-IDF restores managed
 dependencies from the manifests and lock file. The first build needs network access.
 
@@ -37,7 +38,14 @@ dependencies from the manifests and lock file. The first build needs network acc
 | `agent_link.elf`, `agent_link.map` | Debugging this exact build |
 | `flasher_args.json`, `flash_args` | Chip-specific files and flash offsets |
 
-`idf.py flash` uses the separate build files and leaves NVS intact. A merged
+For managed AMOLED builds, the application goes to `ota_0`, while Factory goes
+to `factory`; both use generated `flash-plan.json`. The actual Flash command checks
+the device layout/launcher and rejects a destination containing another app.
+Application-only builds omit `build/merged.bin` to preserve the launcher. Build
+initial board packages with `python tools/package_firmware.py waveshare-amoled-175-wifi --jobs 2`;
+they live under `build/packages/<profile>/` with their own metadata and debug files.
+
+`idf.py flash` uses separate build files and leaves NVS intact. A merged
 image may overwrite WiFi, pairing and device identity. Check the package before
 writing and explain its effect. Do not use a merged image as an OTA application.
 
@@ -49,14 +57,16 @@ python tools/build_firmware.py korvo-ble --reset-config
 python tools/build_firmware.py --check
 ```
 
-Defaults load in this order: common, chip, profile fragments, private settings.
+Defaults load common/chip software policy, shared fragments, board hardware,
+layout, profile software overrides, then private settings.
 Keep supported credentials in ignored `sdkconfig.private`; do not commit or share
 that file or an image containing its values. The first migration backs up the
 previous config to `sdkconfig.before-profile` and imports recognized private
 settings. `sdkconfig` is generated; see [profiles](profiles/README.md).
 
-In `menuconfig`, select **Agent Link Device > Firmware profile**. The list is
-limited to the active chip. Use the build tool to change chips or SDK versions;
+In `menuconfig`, first select **Agent Link Device > Firmware build target**.
+Application mode lists the active chip's application Profiles; Factory mode lists
+only boards with a registered Factory, using hardware names. Use the build tool to change chips or SDK versions;
 it clears incompatible files in the existing build directory.
 
 ## Connect
@@ -80,13 +90,19 @@ catalog before rebuilding; see [profiles](profiles/README.md).
 
 | Path | Responsibility |
 | --- | --- |
-| `boards/<hardware>/` | Wiring and hardware initialization |
+| `boards/<hardware>/` | Wiring, hardware initialization, catalog and `hardware*.defaults` |
 | `boards/common/` | Shared peripheral drivers |
 | `apps/<app>/` | UI, audio workers, sessions and SDK callbacks |
+| `factory/<hardware>/` | That board's factory controller, pages and image manifest |
 | `apps/common/application.h` | Interface used by `main/app_main.cpp` |
-| `profiles/` | Supported firmware combinations and defaults |
+| `profiles/` | Supported board/application/backend combinations and software defaults |
+| `partitions/` | Layout registry, CSV tables and matching defaults; see [layout guide](partitions/README.md) |
 | `components/board_support/` | Drivers selected by the profile |
 | `components/agent_link/` | BLE/WiFi/Muse transports, I/O, audio and OTA |
+| `components/agent_system/` | Multi-app install, launch, shared settings and slot covers |
+| `components/amoled_ui/` | Shared 466x466 round-screen UI and system menu |
+| `tools/` | Production build, image validation, packaging and authorized-flash entrypoints; see [tool guide](tools/README.md) |
+| `tests/` | Host regression sources, boundary stubs and the local development app service; see [test guide](tests/README.md) |
 
 To add hardware, follow the [board guide](boards/README.md). For a standalone
 ESP-IDF integration, see the [SDK guide](components/agent_link/README.md).

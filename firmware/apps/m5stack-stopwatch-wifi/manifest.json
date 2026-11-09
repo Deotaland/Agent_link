@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "app_id": "m5stack-stopwatch-wifi",
+  "name": "m5stack-stopwatch-wifi",
+  "backend": "WIFI",
+  "ui": "lvgl",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": []
+}

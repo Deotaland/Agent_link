@@ -12,6 +12,14 @@ spec.loader.exec_module(firmware)
 profiles = firmware.load_profiles()
 profile = profiles['waveshare-amoled-175-wifi']
 assert profile['board'] == 'waveshare-amoled-175' and profile['app_shared'] == 'amoled-wifi'
+bundle=firmware.system_images(profile)
+assert bundle['board']==profile['factory']==profile['board']
+assert bundle['images']['factory']['path']=='factory/waveshare-amoled-175'
+assert bundle['images']['voice']['path']=='apps/waveshare-amoled-175-wifi'
+assert set(bundle['images'])=={'factory','voice'}
+assert bundle['images']['factory']['shared_app']==''
+assert profile['ui_component']=='amoled_ui'
+assert firmware.system_images(profiles['waveshare-amoled-175c-wifi']) is None
 assert 'es_codec.cc' in profile['drivers']
 assert firmware.expected_settings(profile)['CONFIG_ESPTOOLPY_FLASHSIZE_16MB'] == 'y'
 assert firmware.expected_settings(profiles['waveshare-amoled-175c-wifi'])['CONFIG_ESPTOOLPY_FLASHSIZE_32MB'] == 'y'
@@ -19,7 +27,7 @@ build = root / 'build/amoled-175-tests'
 build.mkdir(parents=True, exist_ok=True)
 firmware.write_product_header(profile, build / 'platform_product.h')
 includes = [build, root / 'tests/amoled_175_stubs', root / 'tests/amoled_touch_stubs',
-            root / 'apps/common/amoled-wifi',
+            root / 'apps/common/amoled-wifi', root / 'components/amoled_ui/include',
             root / 'tests/platform_api_stubs', root / 'boards/waveshare-amoled-175', root / 'boards/common']
 sources = [root / 'tests/amoled_175_test.cc', root / 'boards/waveshare-amoled-175/amoled_audio.cc']
 env = os.environ.copy()

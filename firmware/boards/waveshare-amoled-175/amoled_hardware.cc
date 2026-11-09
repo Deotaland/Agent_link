@@ -4,7 +4,7 @@
 
 namespace { constexpr const char* TAG = "Amoled175.hw"; }
 
-void AmoledHardware::InitDisplayAndTouch() {
+void AmoledHardware::InitDisplayAndTouch(uint16_t stripe_rows) {
     i2c_master_bus_config_t bus_cfg = {};
     bus_cfg.i2c_port = SYS_I2C_PORT;
     bus_cfg.sda_io_num = SYS_I2C_SDA;
@@ -38,6 +38,7 @@ void AmoledHardware::InitDisplayAndTouch() {
     display.pclk_hz = DISPLAY_QSPI_CLK_HZ;
     display.x_gap = DISPLAY_X_GAP;
     display.waveshare_175 = true;
+    display.stripe_rows = stripe_rows;
     const esp_err_t panel_error = panel_.Init(display);
     if (panel_error != ESP_OK) ESP_LOGE(TAG, "display: %s", esp_err_to_name(panel_error));
     if (touch_.Init(SYS_I2C_PORT, TOUCH_RST_PIN, TOUCH_INT_PIN, DISPLAY_WIDTH, DISPLAY_HEIGHT,

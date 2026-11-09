@@ -9,10 +9,14 @@ import json
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--rotation', type=int, choices=(0, 90), default=0)
+parser.add_argument('--carousel', action='store_true', help='render and exercise the factory cover carousel')
+parser.add_argument('--voice-cover',type=Path,help='a backend-converted 132x132 Agent Link raw cover')
 args = parser.parse_args()
 
 root = Path(__file__).resolve().parents[1]
 app = root / 'apps/common/amoled-wifi'
+ui = root / 'components/amoled_ui'
+factory_ui = root / 'factory/waveshare-amoled-175/ui'
 lvgl = root / 'managed_components/lvgl__lvgl'
 build = root / 'build/amoled-voice-tests/ui'
 build.mkdir(parents=True, exist_ok=True)
@@ -28,6 +32,7 @@ flags = ['/nologo', '/utf-8', '/w', '/D_CRT_SECURE_NO_WARNINGS', '/DLV_CONF_SKIP
          '/DLV_USE_STDLIB_MALLOC=1', '/DLV_USE_STDLIB_STRING=1', '/DLV_USE_STDLIB_SPRINTF=1',
          '/DLV_FONT_MONTSERRAT_20=1', '/DLV_FONT_MONTSERRAT_24=1', '/DLV_FONT_MONTSERRAT_48=1',
          '/DLV_FONT_SIMSUN_14_CJK=1', '/DLV_USE_TINY_TTF=1', '/DLV_USE_LOG=0', '/DLV_USE_ASSERT_MALLOC=1',
+         '/DLV_USE_LODEPNG=1','/DLV_USE_FS_WIN32=1','/DLV_FS_WIN32_LETTER=65',
          '/I' + str(lvgl), '/I' + str(app), '/I' + str(root / 'boards/waveshare-amoled-175C')]
 sources = sorted((lvgl / 'src').rglob('*.c'))
 assert len({s.stem for s in sources}) == len(sources)
@@ -47,14 +52,16 @@ prefix = r'''
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <vector>
 #include "lvgl.h"
 #include "amoled_fonts.h"
-#include "amoled_voice_layout.h"
-#include "amoled_voice_controls.h"
+#include "amoled_ui_layout.h"
+#include "amoled_ui_controls.h"
 #include "amoled_orientation.h"
 
 constexpr int DISPLAY_ROTATION_CW=0;
@@ -63,7 +70,7 @@ constexpr int ESP_OK=0, DISPLAY_WIDTH=466, DISPLAY_HEIGHT=466, UI_DRAW_BUF_ROWS=
 constexpr int DISPLAY_BRIGHTNESS=200, DISPLAY_BRIGHTNESS_DIM=20;
 enum phase_t { AGENT_LINK_PHASE_IDLE, AGENT_LINK_PHASE_SETUP, AGENT_LINK_PHASE_PAIRING, AGENT_LINK_PHASE_BLOCKED, AGENT_LINK_PHASE_CONNECTED, AGENT_LINK_PHASE_READY };
 struct agent_link_status_t { phase_t phase=AGENT_LINK_PHASE_CONNECTED; int transport=0, detail=0; uint32_t expires_s=0; char title[32]={}, hint[112]={}, code[8]={}; };
-uint64_t clock_us = 1000000;
+std::atomic<uint64_t> clock_us{1000000};
 int64_t esp_timer_get_time() { return clock_us; }
 int portMUX_INITIALIZER_UNLOCKED=0;
 using portMUX_TYPE=int;
@@ -100,12 +107,17 @@ lv_font_t* LoadCjkFont(const char*, int32_t size, uint32_t cache) {
     return lv_tiny_ttf_create_data_ex(font_image.data()+32, font_image.size()-32, size, LV_FONT_KERNING_NONE, cache);
 }
 '''
-header = (app/'amoled_voice_ui.h').read_text(encoding='utf-8')
-header = header[header.index('namespace amoled_voice {'):]
-fonts = (root/'apps/common/amoled-wifi/amoled_fonts.cc').read_text(encoding='utf-8')
+prefix += '\n#include "amoled_display_stubs.h"\n'
+transfer_header = (ui/'include/amoled_display_transfer.h').read_text(encoding='utf-8')
+transfer_source = (ui/'amoled_display_transfer.cc').read_text(encoding='utf-8')
+prefix += '\n'.join(line for line in (transfer_header+'\n'+transfer_source).splitlines()
+                    if not line.startswith(('#include', '#pragma'))) + '\n'
+header = (ui/'include/amoled_ui.h').read_text(encoding='utf-8')
+header = header[header.index('namespace amoled_ui {'):]
+fonts = (ui/'amoled_fonts.cc').read_text(encoding='utf-8')
 fonts = '\n'.join(l for l in fonts.splitlines() if not l.startswith('#include'))
-source = (app/'amoled_voice_ui.cc').read_text(encoding='utf-8')
-source = source[source.index('namespace amoled_voice {'):]
+source = (ui/'amoled_ui.cc').read_text(encoding='utf-8')
+source = source[source.index('namespace amoled_ui {'):]
 start = source.index('esp_err_t StartUi(')
 end = source.index('bool SameScreen(', start)
 source = source[:start] + source[end:]
@@ -118,7 +130,7 @@ for declaration in ['uint32_t seen =', 'size_t offset =', 'bool dim =', 'int64_t
     source = source[:begin] + source[begin:].replace('    ' + declaration, '    static ' + declaration, 1)
 
 post = r'''
-using namespace amoled_voice;
+using namespace amoled_ui;
 Input last_input{};
 int row_inputs=0;
 bool InputHandlerTest(const Input& input, void*) {
@@ -200,6 +212,7 @@ void CheckMenuTaps(lv_display_t* display) {
 }
 void Frame(const char* name) {
     clock_us+=100000; Render(nullptr); lv_refr_now(nullptr);
+    CompleteTransfer(true);
     FILE* out=fopen(name,"wb"); assert(out); fprintf(out,"P6\n466 466\n255\n");
     for(int y=0;y<466;++y) for(int x=0;x<466;++x) {
         uint16_t v=panel_->pixels[y*466+x];
@@ -308,12 +321,217 @@ int main(int argc, char** argv) {
 '''
 generated = build/'preview.cc'
 prefix = prefix.replace('DISPLAY_ROTATION_CW=0;', f'DISPLAY_ROTATION_CW={args.rotation};')
-generated.write_text(prefix+header+fonts+source+post,encoding='utf-8')
+factory_source = ''
+if args.carousel:
+    # These affect only the production C++ UI. Reuse the native LVGL C library.
+    prefix = '#define AGENT_SYSTEM_ENABLED 1\n' + prefix
+    prefix += '\n#include "amoled_launcher_view.h"\n'
+    prefix += r'''
+namespace agent_system {
+std::shared_ptr<const CoverPixels> supplied_pixels;
+std::shared_ptr<const CoverPixels> AcquireCover(const Cover& cover) {return cover.slot==0 ? supplied_pixels : nullptr;}
+}
+void CheckCoverCache() {
+    const int before=native_allocations.load();
+    {
+        AmoledCoverCache cache;
+        auto* bytes=new uint8_t[agent_system::kCoverBytes]{};
+        auto image=std::make_shared<agent_system::CoverPixels>();
+        image->blob=std::shared_ptr<const uint8_t>(bytes,[](const uint8_t* p){delete[] p;});
+        auto* colors=reinterpret_cast<uint16_t*>(bytes+agent_system::kCoverHeaderBytes);
+        auto* alpha=bytes+agent_system::kCoverHeaderBytes+132*132*2;
+        for(int y=0;y<132;++y) for(int x=0;x<132;++x) {
+            colors[y*132+x]=0x07E0;alpha[y*132+x]=(x-66)*(x-66)+(y-66)*(y-66)<65*65 ? 255 : 0;
+        }
+        const auto* scaled=cache.Get(image,256);assert(scaled && scaled->data_size==256*256*3);
+        assert(reinterpret_cast<const uint16_t*>(scaled->data)[128*256+128]==0x07E0);
+        assert(scaled->data[256*256*2]==0 && scaled->data[256*256*2+128*256+128]==255);
+        const int allocated=native_allocations.load();
+        assert(cache.Get(image,256)==scaled && native_allocations.load()==allocated);
+        native_fail_allocation=true;assert(cache.Get(image,180)==nullptr);native_fail_allocation=false;
+        assert(cache.Get(image,180));
+        for(int i=0;i<5;++i) {
+            auto revision=std::make_shared<agent_system::CoverPixels>();revision->blob=image->blob;
+            assert(cache.Get(revision,256));
+        }
+        assert(native_allocations.load()==before+3);
+    }
+    assert(native_allocations.load()==before);
+    puts("Cover cache: alpha/color, reused sizes, new revisions, bounded eviction and low-memory fallback passed.");
+}
+'''
+    # Compile the real System controller too; only its network/NVS/system
+    # boundaries are mocked, so standalone/installed menu decisions stay real.
+    prefix += '#define AGENT_SYSTEM_LAYOUT 1\n#define AGENT_SYSTEM_BOARD_MODEL "ESP32-S3-Touch-AMOLED-1.75-16M"\n'
+    system_header = (root/'components/agent_system/include/agent_system.h').read_text(encoding='utf-8')
+    menu_header = (ui/'include/amoled_system_menu.h').read_text(encoding='utf-8')
+    menu_source = (ui/'amoled_system_menu.cc').read_text(encoding='utf-8')
+    system_header = '\n'.join(line for line in system_header.splitlines() if not line.startswith(('#include','#pragma')))
+    menu_header = '\n'.join(line for line in menu_header.splitlines() if not line.startswith(('#include','#pragma')))
+    menu_source = '\n'.join(line for line in menu_source.splitlines() if not line.startswith('#include'))
+    menu_support = r'''
+namespace agent_system {
+bool menu_launcher=false, menu_return=false;
+bool IsLauncher() {return menu_launcher;}
+bool CanReturnToLauncher() {return menu_return;}
+const Descriptor& Current() {static Descriptor value{};return value;}
+esp_err_t CatalogUrl(char* value,size_t) {value[0]=0;return ESP_OK;}
+}
+struct agent_link_wifi_info_t {bool connected=false;char ssid[33]{},ip[16]{},setup_ssid[33]{};int rssi=0;};
+esp_err_t agent_link_wifi_info(agent_link_wifi_info_t*) {return ESP_OK;}
+esp_err_t agent_link_wifi_setup() {return ESP_OK;}
+struct NativeAppDescription {char version[32]="test";};
+const NativeAppDescription* esp_app_get_description() {static NativeAppDescription value;return &value;}
+uint32_t esp_get_free_heap_size() {return 1024*1024;}
+const char* esp_err_to_name(esp_err_t) {return "test-error";}
+using nvs_handle_t=int;
+constexpr int NVS_READONLY=0,NVS_READWRITE=1;
+esp_err_t nvs_open(const char*,int,nvs_handle_t*) {return ESP_ERR_INVALID_STATE;}
+esp_err_t nvs_get_i8(nvs_handle_t,const char*,int8_t*) {return ESP_ERR_INVALID_STATE;}
+esp_err_t nvs_set_i8(nvs_handle_t,const char*,int8_t) {return ESP_OK;}
+esp_err_t nvs_commit(nvs_handle_t) {return ESP_OK;}
+void nvs_close(nvs_handle_t) {}
+'''
+    menu_check = r'''
+void CheckSystemMenu() {
+    AmoledSystemMenu menu;amoled_ui::Screen s;
+    menu.Open();menu.Render(s,1,1,70,false);
+    assert(s.row_count==6);
+    amoled_ui::Input input{};input.action=amoled_ui::TouchAction::kRow;input.row=6;
+    menu.Handle(input);assert(!menu.TakeExit());
+    agent_system::menu_return=true;menu.Render(s,1,1,70,false);
+    assert(s.row_count==7 && !strcmp(s.rows[6],amoled_ui::Tr("返回应用选择器","Return to launcher")));
+    menu.Handle(input);assert(menu.TakeExit());
+    agent_system::menu_return=false;menu.Handle(input);assert(!menu.TakeExit());
+    agent_system::menu_launcher=true;menu.Render(s,1,1,70,false);
+    assert(s.row_count==7 && !strcmp(s.rows[6],amoled_ui::Tr("应用封面与同步","App covers and sync")));
+    menu.Handle(input);assert(!menu.TakeExit());menu.Render(s,1,1,70,false);
+    assert(!strcmp(s.title,amoled_ui::Tr("应用封面与同步","App covers and sync")));
+    agent_system::menu_launcher=false;
+    puts("System menu: standalone hides return, installed app can return, stale input rejected and launcher cover page retained.");
+}
+'''
+    factory_source = system_header+'\n'+menu_support+'\n'+menu_header+'\n'+menu_source+'\n'+menu_check+'\n'
+    factory_source += '\n'.join(line for line in (factory_ui/'factory_view.cc').read_text(encoding='utf-8').splitlines() if not line.startswith('#include'))+'\n'
+    cover=args.voice_cover or root/'tests/local_app_store/assets/voice.raw'
+    prefix += 'const char* supplied_cover='+json.dumps(cover.resolve().as_posix() if cover.is_file() else '')+';\n'
+    post = post.replace('int main(int argc, char** argv) {', r'''
+void CheckCarousel(lv_display_t* display) {
+    CheckSystemMenu();
+    CheckCoverCache();
+    static uint8_t full_buffers[2][466*466*2];
+    fast_ui_=true;
+    assert(display_transfer_.Start(panel_,sizeof full_buffers[0],DISPLAY_ROTATION_CW,466)==ESP_OK);
+    lv_display_set_buffers(display,full_buffers[0],full_buffers[1],sizeof full_buffers[0],LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_flush_wait_cb(display,WaitFlush);
+    lv_timer_set_period(lv_display_get_refr_timer(display),8);
+    lv_timer_set_period(lv_anim_get_timer(),8);
+    Screen s; s.kind=View::kCarousel; s.launcher_shell=true; s.view=100; s.navigation=100;
+    s.card_count=3;
+    {
+        auto* data=new uint8_t[agent_system::kCoverBytes]{};
+        if(supplied_cover[0]) {
+            std::ifstream raw(supplied_cover,std::ios::binary);
+            raw.read(reinterpret_cast<char*>(data),agent_system::kCoverBytes);assert(raw.gcount()==agent_system::kCoverBytes);
+        } else {
+            auto* rgb=reinterpret_cast<uint16_t*>(data+agent_system::kCoverHeaderBytes);
+            auto* alpha=data+agent_system::kCoverHeaderBytes+132*132*2;
+            for(int y=0;y<132;++y) for(int x=0;x<132;++x) {
+                rgb[y*132+x]=static_cast<uint16_t>(((x*31/131)<<11)|((y*63/131)<<5)|15);
+                const float distance=std::sqrt(float((2*x-131)*(2*x-131)+(2*y-131)*(2*y-131)))/2;
+                alpha[y*132+x]=static_cast<uint8_t>(std::max(0.f,std::min(1.f,66-distance))*255);
+            }
+        }
+        auto image=std::make_shared<agent_system::CoverPixels>();
+        image->blob=std::shared_ptr<const uint8_t>(data,[](const uint8_t* p){delete[] p;});
+        agent_system::supplied_pixels=image;s.cover_slot=0;s.cover_revision=1;
+    }
+    snprintf(s.title,sizeof s.title,"Agent Voice");snprintf(s.app_id,sizeof s.app_id,"agent.voice");
+    SetScreen(s);Frame("launcher-voice.ppm");
+    lv_point_t corner{115,150};
+    const int corner_x=DISPLAY_ROTATION_CW==90 ? 465-corner.y : corner.x;
+    const int corner_y=DISPLAY_ROTATION_CW==90 ? corner.x : corner.y;
+    assert(panel_->pixels[corner_y*466+corner_x]==0);
+    if(s.cover_slot==0) assert(lv_obj_get_width(lv_obj_get_child(amoled_factory::launcher_view.CardObject(),0))==256);
+    assert(lv_obj_has_flag(heading_,LV_OBJ_FLAG_HIDDEN) && lv_obj_has_flag(battery_label_,LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_has_flag(ring_,LV_OBJ_FLAG_HIDDEN) && lv_obj_has_flag(list_,LV_OBJ_FLAG_HIDDEN));
+    Cst9217Touch touch; touch_=&touch;
+    pointer_=lv_indev_create();lv_indev_set_type(pointer_,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer_,display);lv_indev_set_read_cb(pointer_,ReadTouch);
+    const auto feed=[&](bool down,int x,int y){TouchSample(touch,down,x,y);};
+    int before=row_inputs;
+    feed(true,233,215);feed(false,233,215);
+    assert(row_inputs==before+1 && last_input.action==TouchAction::kRow && last_input.row==0);
+    pending_=false;
+    before=row_inputs;
+    feed(true,310,220);feed(true,220,220);feed(false,220,220);
+    assert(last_input.action==TouchAction::kNextCard && row_inputs==before);
+    ++s.view;++s.navigation;s.card_index=1;s.cover_slot=-1;
+    snprintf(s.title,sizeof s.title,"Test App");snprintf(s.app_id,sizeof s.app_id,"test.notes");
+    SetScreen(s);Frame("launcher-sample.ppm");clock_us+=200000;Frame("launcher-sample.ppm");
+    ++s.view;++s.navigation;s.card_index=2;s.add_card=true;s.cover_slot=-1;
+    snprintf(s.title,sizeof s.title,"添加应用");SetScreen(s);Frame("launcher-add.ppm");
+    clock_us+=200000;Frame("launcher-add.ppm");
+    before=row_inputs;feed(true,233,215);feed(false,233,215);
+    assert(row_inputs==before+1 && last_input.action==TouchAction::kRow);
+    pending_=false;
+    feed(true,180,220);feed(true,270,220);feed(false,270,220);
+    assert(last_input.action==TouchAction::kPreviousCard);
+    pending_=false;
+    feed(true,233,55);feed(true,233,125);feed(false,233,125);
+    assert(last_input.action==TouchAction::kSystem);
+    ++s.view;++s.navigation;s.kind=View::kAppActions;s.card_index=0;s.add_card=false;
+    if(agent_system::supplied_pixels) s.cover_slot=0;
+    snprintf(s.title,sizeof s.title,"Agent Voice");
+    snprintf(s.detail,sizeof s.detail,"2.0.0");SetScreen(s);Frame("launcher-actions.ppm");
+    before=row_inputs;feed(true,233,185);feed(false,233,185);assert(row_inputs==before);
+    feed(true,163,365);feed(false,163,365);assert(row_inputs==before+1 && last_input.row==0);
+    pending_=false;feed(true,303,365);feed(false,303,365);assert(row_inputs==before+2 && last_input.row==1);
+    pending_=false;
+    feed(true,163,365);feed(true,303,365);feed(false,303,365);assert(row_inputs==before+2);
+    lv_indev_delete(pointer_);pointer_=nullptr;touch_=nullptr;pending_=false;
+    CompleteTransfer(true);
+    uint16_t source[]{1,2,3,4,5,6,7,8};
+    const uint16_t original[]{1,2,3,4,5,6,7,8};
+    lv_area_t area{20,30,23,31};
+    Flush(display,&area,reinterpret_cast<uint8_t*>(source));
+    assert(display_transfer_.Submit({20,30,4,2},reinterpret_cast<uint8_t*>(source))==ESP_ERR_INVALID_STATE);
+    CompleteTransfer(true);
+    assert(memcmp(source,original,sizeof source)==0);
+    for(int y=0;y<2;++y) for(int x=0;x<4;++x) {
+        const int px=DISPLAY_ROTATION_CW==90 ? 465-(30+y) : 20+x;
+        const int py=DISPLAY_ROTATION_CW==90 ? 20+x : 30+y;
+        assert(panel_->pixels[py*466+px]==y*4+x+1);
+    }
+    const auto completed=flushes_.load();
+    panel_->fail_next=true;Flush(display,&area,reinterpret_cast<uint8_t*>(source));CompleteTransfer(true);
+    assert(panel_fault_ && flushes_.load()==completed+1);
+    const int draws=panel_->draw_calls;
+    Flush(display,&area,reinterpret_cast<uint8_t*>(source));assert(panel_->draw_calls==draws);
+    clock_us=panel_retry_at_+1;Render(nullptr);CompleteTransfer(true);assert(!panel_fault_);
+    const int allocations=native_allocations.load();
+    display_transfer_.Stop();assert(native_allocations.load()==allocations-1);
+    AmoledDisplayTransfer failed;
+    native_fail_allocation=true;
+    assert(failed.Start(panel_,sizeof full_buffers[0],DISPLAY_ROTATION_CW,466)==ESP_ERR_NO_MEM);
+    native_fail_allocation=false;assert(!failed.Active());
+    assert(native_allocations.load()==allocations-1);
+    puts("Async display: borrowed source lifetime, rotation/byte order, completion, transfer failure/recovery and allocation failure passed.");
+    puts("Factory carousel: cover taps, swipe/click separation, final add card, top-down menu and launch/delete targets passed.");
+}
+int main(int argc, char** argv) {''')
+    post = post.replace('    puts("Native LVGL:', '    CheckCarousel(display);\n    puts("Native LVGL:')
+if args.carousel:
+    post = post.replace('int main(int argc, char** argv) {', 'int main(int argc, char** argv) {\n    card_renderer_ = &amoled_factory::Renderer();')
+generated.write_text(prefix+header+fonts+factory_source+source+post,encoding='utf-8')
 with log.open('a',encoding='utf-8') as output:
-    subprocess.run([cl,*flags,'/std:c++17','/EHsc',str(generated),str(build/'lvgl.lib'),'/Fo'+str(build/'preview.obj'),'/Fe'+str(build/'preview.exe')],env=env,cwd=build,stdout=output,stderr=subprocess.STDOUT,check=True)
+    subprocess.run([cl,*flags,'/I'+str(root/'tests/co5300_stubs'),'/I'+str(root/'tests'),'/I'+str(root/'components/agent_system/include'),'/I'+str(ui/'include'),'/I'+str(factory_ui),'/std:c++17','/EHsc',str(generated),str(build/'lvgl.lib'),'/Fo'+str(build/'preview.obj'),'/Fe'+str(build/'preview.exe')],env=env,cwd=build,stdout=output,stderr=subprocess.STDOUT,check=True)
 font = root/'boards/common/fonts/cjk_font.bin'
 subprocess.run([str(build/'preview.exe'),str(font)],cwd=build,check=True,timeout=45)
 from PIL import Image
 for ppm in build.glob('*.ppm'):
-    Image.open(ppm).save(ppm.with_suffix('.png'))
+    rendered = Image.open(ppm)
+    if args.rotation == 90:
+        rendered = rendered.transpose(Image.Transpose.ROTATE_90)
+    rendered.save(ppm.with_suffix('.png'))
 print('Screenshots:',build)

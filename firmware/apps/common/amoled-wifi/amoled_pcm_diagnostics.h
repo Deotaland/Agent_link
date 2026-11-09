@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace amoled_voice {
+namespace amoled_ui {
 using kc_audio::PcmLevels;
 
 struct MicDiagnosticWindow {
@@ -18,4 +18,4 @@ struct MicDiagnosticWindow {
     uint32_t mic_stack_min = 0, play_stack_min = 0;
     bool final = false;
 };
-}  // namespace amoled_voice
+}  // namespace amoled_ui

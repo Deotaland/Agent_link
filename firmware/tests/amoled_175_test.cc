@@ -9,7 +9,7 @@ EsCodecConfig observed{};
 int init_error = ESP_OK, read_error = ESP_OK, read_calls = 0, observed_volume = 0;
 
 void CheckOrientation() {
-    using namespace amoled_voice;
+    using namespace amoled_ui;
     static_assert(DISPLAY_ROTATION_CW == 90);
     constexpr auto rect = Clockwise90Rect({10, 20, 6, 4}, DISPLAY_WIDTH);
     static_assert(rect.x == 442 && rect.y == 10 && rect.w == 4 && rect.h == 6);

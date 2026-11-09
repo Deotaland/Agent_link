@@ -46,9 +46,21 @@ new model prevents cross-board OTA selection. The platform product name remains
 
 ## Application and build
 
-`apps/waveshare-amoled-175-wifi` registers one Application. It shares the circular
-UI, Chinese fonts, session management and audio workers in `apps/common/amoled-wifi`
-with the C board. Pins and codecs stay board-specific; provisioning, activation,
+The non-C profile defaults to its voice application. Menuconfig's separate
+**Agent Link Device > Firmware build target** selects **Application firmware
+(selected profile)** or **Factory firmware (bound to selected board)**. The
+factory always comes from this board's own manifest. For the complete
+launcher + voice package and the private-LAN test catalog, follow
+the [multi-app example](../../factory/waveshare-amoled-175/README.md).
+That layout requires initial USB installation rather than an OTA update from
+the previous layout. No device acceptance is implied by the source example.
+
+The board factory is registered under `factory/waveshare-amoled-175`, the existing
+voice app stays under `apps/waveshare-amoled-175-wifi`. Each image registers one
+Application. Voice session/audio
+business remains shared with the C board in `apps/common/amoled-wifi`; common
+rendering, fonts and system menu are in `components/amoled_ui`.
+Pins and codecs stay board-specific; provisioning, activation,
 MQTT, authenticated conversations, realtime grants and OTA use the existing SDK.
 
 From the repository root, in an activated ESP-IDF 5.5.x or 6.1.x environment:
@@ -58,6 +70,13 @@ python firmware/tools/build_firmware.py waveshare-amoled-175-wifi --jobs 2
 ```
 
 The build reuses `firmware/build` and includes the shared Chinese font asset.
+Normal USB Voice Flash writes `ota_0` at `0x310000` and preserves the launcher;
+Factory Flash writes `factory` at `0x10000`. The generated plan also selects the
+matching boot target. Actual writes check the device layout and app identity.
+For a blank device, build the complete board package with
+`python firmware/tools/package_firmware.py waveshare-amoled-175-wifi --jobs 2`.
+Its initial merged package replaces settings and installed apps. Hardware settings
+live beside this board; layout and application definitions are separate manifests.
 Do not use the C-board image: its reset/MCLK pins and flash size differ.
 
 After an explicitly requested flash, join `Amoled175-16M-XXXX`, open

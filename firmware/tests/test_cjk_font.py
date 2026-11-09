@@ -3,7 +3,7 @@
 Requires fontTools for the offline TrueType cmap/outline inspection.
 """
 import io
-import json
+import sys
 from pathlib import Path
 import struct
 import zlib
@@ -14,9 +14,13 @@ except ImportError:
     raise SystemExit("Install fontTools to inspect the Chinese font: python -m pip install fonttools")
 
 root = Path(__file__).resolve().parents[1]
-profile = json.loads((root / 'profiles/profiles.json').read_text(encoding='utf-8'))['waveshare-epaper-397-wifi']
+sys.path.insert(0, str(root / "tools"))
+from firmware_manifest import resolve_profiles
+
+profiles = resolve_profiles(root)
+profile = profiles['waveshare-epaper-397-wifi']
 asset, = profile['flash_assets']
-assert asset['partition'] == 'anim_pack'
+assert asset['partition'] == 'font_cjk'
 source = root / asset['file']
 assert source == root / "boards/common/fonts/cjk_font.bin"
 image = source.read_bytes()
@@ -45,12 +49,17 @@ with TTFont(io.BytesIO(image[32:])) as font:
     assert 'fvar' not in font, 'TinyTTF needs a static font instance'
     count = len(cmap)
 
-rows = [line.split('#')[0].strip().split(',') for line in
-        (root / 'partitions.csv').read_text(encoding='utf-8').splitlines()]
-partition, = [row for row in rows if row[0].strip() == asset['partition']]
-assert partition[1].strip() == 'data'
-assert len(image) <= int(partition[4].strip(), 0), 'Font exceeds the existing partition'
-assert int(partition[3].strip(), 0) == 0x412000
+# Each consumer must install the font into the partition that its layout exposes.
+for name, consumer in profiles.items():
+    for resource in consumer.get('flash_assets', []):
+        if resource['file'] != asset['file']:
+            continue
+        assert resource['partition'] == 'font_cjk', name
+        partition = consumer['layout_info']['partitions'][resource['partition']]
+        assert partition['type'] == 'data', name
+        assert len(image) <= partition['size'], f'Font exceeds partition for {name}'
+        expected = 0xC22000 if consumer['board'] == 'waveshare-amoled-175' else 0x412000
+        assert partition['offset'] == expected, name
 assert (source.parent / 'OFL.txt').is_file(), 'Font license missing'
 print(f'Chinese font OK: {count} mapped characters, all 6763 GB2312 Hanzi with outlines, '
       f'punctuation, header/CRC, license and partition fit ({len(image)} bytes).')

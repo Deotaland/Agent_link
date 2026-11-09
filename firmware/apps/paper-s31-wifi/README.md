@@ -39,7 +39,7 @@ advances it.
 An alarm rings for up to one minute; any navigation key dismisses it.
 Alarms require the device to remain powered on; this is not power-off wake-up.
 
-This profile uses partitions_paper_s31.csv with two 4 MB application slots.
+This profile uses partitions/paper-s31-v1.csv with two 4 MB application slots.
 The first installation of this desktop version requires USB flashing of the
 partition table and application, rather than application-only OTA from the old
 2 MB layout. NVS and activation settings keep their original offsets. The old

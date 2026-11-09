@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "app_id": "ojbadge-wifi",
+  "name": "ojbadge-wifi",
+  "backend": "NONE",
+  "ui": "lvgl",
+  "shared_app": "",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": [],
+  "requires": [
+    "agent_link",
+    "nvs_flash"
+  ]
+}

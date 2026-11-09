@@ -34,6 +34,13 @@ vendor, aliases, identification details, USB port, use, transport, BLE name,
 machine identifiers or add parallel catalog copies. Record hardware acceptance
 in notes; `supported` means a source profile exists, not a completed device test.
 
+Keep memory, clocks and console routing in `hardware.defaults` beside the board.
+Use explicit suffixes only where values differ, such as `hardware-old.defaults`
+for an older PCB or `hardware-wifi.defaults` for a distinct existing WiFi policy.
+Variants with identical hardware settings share one file. The board's `build`
+entry points to it and selects a layout ID from `partitions/layouts.json`; CSVs
+and layout defaults stay together under `partitions/`.
+
 Use distinct board types for BLE and WiFi variants. `fw_model` must match the
 application's `Model()` exactly. Preserve existing model strings when migrating
 an installed product; OTA validates them.
@@ -100,43 +107,50 @@ for formats, worker ownership and playback buffering.
 
 For `my-board-ble` on ESP32-S3, add these together:
 
-1. In `main/Kconfig.profiles`, add `AGENT_LINK_PROFILE_MY_BOARD_BLE` to the choice
-   with `depends on IDF_TARGET_ESP32S3`, and map it to `"my-board-ble"` in
-   `AGENT_LINK_FIRMWARE_PROFILE`.
+1. The profile menu and effective `AGENT_LINK_FIRMWARE_PROFILE` mapping are generated
+   from `profiles/profiles.json`; do not edit `main/Kconfig.profiles` by hand.
 2. In `main/Kconfig.projbuild`, add `BOARD_TYPE_MY_BOARD_BLE` with a default for
    that profile. Add it to the defaults selecting `AGENT_LINK_TRANSPORT_BLE`.
    WiFi profiles select `AGENT_LINK_TRANSPORT_WIFI` instead.
-3. Create `profiles/my-board-ble.defaults` with
-   `CONFIG_AGENT_LINK_PROFILE_MY_BOARD_BLE=y` and hardware-specific settings.
-   Declare flash capacity, the custom partition table, PSRAM wiring, board clocks
-   and console routing here; never inherit them from common or chip defaults.
-4. Add an entry to `profiles/profiles.json`:
+3. Put memory, clocks, console routing and PSRAM wiring in a board defaults file.
+   Add the catalog entry's `build` object with `hardware`, `drivers`,
+   `hardware_sources`, `defaults` (the board defaults path), and a `layout` ID from
+   `partitions/layouts.json`. Shared resource images belong in `build.flash_assets`.
+   Only managed layouts have `build.factory`, bound to this board's directory.
+4. Create `apps/my-board-ble/manifest.json` with `schema: 1`, a stable `app_id`,
+   display `name`, `backend`, `ui`, optional `shared_app`/`ui_component`/`requires`,
+   and `sources`/`include_dirs` arrays for additional application files.
+5. Create `profiles/my-board-ble.defaults` with
+   `CONFIG_AGENT_LINK_PROFILE_MY_BOARD_BLE=y` and software policy. Add the profile:
 
 ```json
 "my-board-ble": {
   "board": "my-board",
   "board_type": "MY_BOARD_BLE",
-  "target": "esp32s3",
   "backend": "BLE",
   "defaults": ["profiles/ble.defaults", "profiles/s3-ble.defaults", "profiles/my-board-ble.defaults"],
-  "app": "my-board-ble",
-  "hardware": "my-board",
-  "hardware_sources": [],
-  "drivers": [],
-  "ui": "none"
+  "app": "my-board-ble"
 }
 ```
 
-List hardware `.c`/`.cc` files in `hardware_sources` and common drivers in
-`drivers`; application sources are collected from the selected app directory.
-Related boards can optionally select `app_shared: "family-name"` to compile the
-implementation in `apps/common/family-name/` with the selected board headers.
-Keep one `DECLARE_APPLICATION` entrypoint in each selected app directory and
-keep board pins and initialization under `boards/`.
-Add `profiles/lvgl.defaults` and `ui: "lvgl"` only if needed. The S3 fragments
-assume PSRAM: adapt defaults to the actual memory instead of copying them to a
-board without PSRAM. For WiFi on S3, use `profiles/s3-network.defaults` in place
-of the BLE fragments and set product identity in the application config.
+The chip is derived from the board catalog. Hardware source selection comes from
+the board's build definition, application/UI choices from the app manifest, and
+partition addresses from the layout CSV. Related boards may select a shared
+business implementation under `apps/common/`; each selected app still registers
+one `DECLARE_APPLICATION`. Existing catalog aliases and OTA models must remain
+compatible when adding this metadata.
+
+Add `profiles/lvgl.defaults` and application `ui: "lvgl"` only if needed. Shared
+fragments may tune allocator/network policy but must not assume physical memory
+wiring. WiFi on S3 uses `profiles/s3-network.defaults`. Single-app boards retain
+A/B updates; a multi-app board's installer owns slot allocation and boot selection.
+Adding a second firmware does not itself require another CSV. New addresses
+require a versioned layout and an explicit device migration.
+
+Run `python firmware/tools/build_firmware.py --generate-kconfig` after adding a
+profile or changing Factory bindings. It generates the application and Factory
+menus, with mode-specific selectors and chip availability. CMake and flash/package tools resolve all definitions through
+the same production manifest module. See [profiles](../profiles/README.md).
 
 If a new driver needs a component, add its dependency selection in
 `components/board_support/CMakeLists.txt` and managed version in

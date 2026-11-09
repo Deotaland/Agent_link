@@ -17,7 +17,7 @@ MANIFEST = ROOT / "profiles/profiles.json"
 PRODUCTS = ROOT / "profiles/products.json"
 PRIVATE = ROOT / "sdkconfig.private"
 STATE = ROOT / ".firmware-profile.json"
-SCHEMA = 3
+SCHEMA = 5
 SETTING = re.compile(r"^(CONFIG_\w+)=(.*)$")
 UNSET = re.compile(r"^# (CONFIG_\w+) is not set$")
 PRIVATE_KEYS = {
@@ -29,6 +29,16 @@ PRIVATE_KEYS = {
     "CONFIG_AGENT_LINK_REALTIME_BASE_URL", "CONFIG_AGENT_LINK_REALTIME_SESSION_ID",
     "CONFIG_AGENT_LINK_REALTIME_USER_API_KEY",
 }
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from firmware_manifest import resolve_profiles, system_images as compose_images, flash_plan
+
+from firmware_menu import (application_selection, selected_factory, factory_boards, factory_symbol,
+                           factory_kconfig as make_factory_kconfig, profiles_kconfig, write_application_cache)
+
+BUILD_TARGET_SYMBOLS = (
+    "CONFIG_AGENT_LINK_BUILD_APPLICATION",
+    "CONFIG_AGENT_LINK_BUILD_FACTORY",
+)
 
 
 def idf_context():
@@ -124,10 +134,73 @@ def check_hardware_defaults(profile):
     if (values.get("CONFIG_PARTITION_TABLE_CUSTOM") != "y" or not filename or
             not partition.resolve().is_relative_to(ROOT) or not partition.is_file()):
         raise ValueError(f"{profile['name']}: declare an existing custom partition table in profile defaults")
+    if filename != profile["layout_info"]["csv"]:
+        raise ValueError("Layout defaults select a different partition table")
+    flash_bytes = int(re.search(r"_(\d+)MB$", sizes[0])[1]) * 1024 * 1024
+    if max(p["offset"] + p["size"] for p in profile["layout_info"]["partitions"].values()) > flash_bytes:
+        raise ValueError("Partition layout exceeds this board's flash capacity")
+
+
+def system_images(profile):
+    return compose_images(profile, ROOT)
+
+
+def default_image_role(profile, bundle):
+    """Match the profile's real application, never infer factory from its board."""
+    if not bundle:
+        return "standard"
+    matches = [role for role, image in bundle["images"].items()
+               if role != "factory" and image["path"] == f"apps/{profile['app']}" and
+               image["shared_app"] == profile.get("app_shared", "")]
+    if len(matches) != 1:
+        raise ValueError("Board manifest must declare exactly one matching profile application")
+    return matches[0]
+
+
+def image_target_symbol(profile, bundle, role):
+    if role == default_image_role(profile, bundle):
+        return BUILD_TARGET_SYMBOLS[0]
+    if not bundle or role not in bundle["images"]:
+        raise ValueError("Select an image declared by this board/application combination")
+    if role == "factory":
+        return BUILD_TARGET_SYMBOLS[1]
+    raise ValueError("Image has no firmware build target mapping")
+
+
+def selected_image_role(profile, config):
+    bundle = system_images(profile)
+    values = settings(config)
+    selected = [symbol for symbol in BUILD_TARGET_SYMBOLS if values.get(symbol) == "y"]
+    if len(selected) > 1:
+        raise ValueError("Multiple firmware build targets selected")
+    symbol = selected[0] if selected else BUILD_TARGET_SYMBOLS[0]
+    if symbol == BUILD_TARGET_SYMBOLS[0]:
+        return default_image_role(profile, bundle)
+    image_target_symbol(profile, bundle, "factory")
+    return "factory"
+
+
+def select_image_role(profile, config, role):
+    """Select the mode and its own selector without replacing the other mode."""
+    symbol = image_target_symbol(profile, system_images(profile), role)
+    original = config.read_text(encoding="utf-8-sig").splitlines() if config.exists() else []
+    def replaced(key):
+        return (key in BUILD_TARGET_SYMBOLS or
+                (symbol == BUILD_TARGET_SYMBOLS[0] and key.startswith("CONFIG_AGENT_LINK_PROFILE_")) or
+                (symbol == BUILD_TARGET_SYMBOLS[1] and key.startswith("CONFIG_AGENT_LINK_FACTORY_BOARD_")))
+    lines = []
+    for line in original:
+        match = SETTING.fullmatch(line) or UNSET.fullmatch(line)
+        if not match or not replaced(match[1]):
+            lines.append(line)
+    lines += [f"{key}=y" if key == symbol else f"# {key} is not set" for key in BUILD_TARGET_SYMBOLS]
+    selected = factory_symbol(profile["board"]) if role == "factory" else profile_symbol(profile["name"])
+    lines.append(f"{selected}=y")
+    config.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def load_profiles():
-    profiles = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    profiles = resolve_profiles(ROOT)
     seen = set()
     for name, profile in profiles.items():
         profile["name"] = name
@@ -140,7 +213,7 @@ def load_profiles():
         if not any(app.glob("*.cc")) or profile["ui"] not in {"lvgl", "raster", "none"}:
             raise ValueError(f"{name}: missing application or invalid UI")
         shared_app = profile.get("app_shared")
-        if shared_app is not None:
+        if shared_app:
             if not isinstance(shared_app, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", shared_app):
                 raise ValueError(f"{name}: invalid shared application")
             if not any((ROOT / "apps/common" / shared_app).glob("*.cc")):
@@ -157,7 +230,7 @@ def load_profiles():
         if (not entry or entry["status"] == "not-adapted" or
                 entry["transport"] != profile["backend"] or catalog["target"] != profile["target"]):
             raise ValueError(f"{name}: board, backend or target does not match the board catalog")
-        pair = (profile["board_type"], profile["backend"])
+        pair = (profile["board_type"], profile["app"], profile["backend"])
         if pair in seen:
             raise ValueError(f"{name}: duplicate firmware combination")
         seen.add(pair)
@@ -167,6 +240,9 @@ def load_profiles():
             if PRIVATE_KEYS.intersection(settings(path)):
                 raise ValueError(f"{name}: private settings must not appear in public defaults")
         check_hardware_defaults(profile)
+        if profile.get("ui_component") and not (ROOT / "components" / profile["ui_component"] / "CMakeLists.txt").is_file():
+            raise ValueError(f"{name}: missing UI component")
+        system_images(profile)
         partitions = set()
         for asset in profile.get("flash_assets", []):
             partition = asset.get("partition", "")
@@ -186,6 +262,10 @@ def load_profiles():
             raise ValueError(f"{name}: defaults do not select the declared profile choice")
     load_products(profiles)
     return profiles
+
+
+def factory_kconfig(profiles):
+    return make_factory_kconfig(profiles, ROOT)
 
 
 def load_products(profiles):
@@ -259,7 +339,11 @@ def import_private(config, private=PRIVATE):
 def fingerprint(name, profile):
     digest = hashlib.sha256(f"{SCHEMA}:{name}".encode())
     digest.update(json.dumps(idf_context(), sort_keys=True).encode())
-    for path in [MANIFEST, *defaults_files(profile), PRIVATE]:
+    for path in [MANIFEST, ROOT / "partitions/layouts.json",
+                 ROOT / "boards" / profile["board"] / "config.json",
+                 ROOT / "apps" / profile["app"] / "manifest.json",
+                 *([ROOT / "factory" / profile["factory"] / "manifest.json"] if profile.get("factory") else []),
+                 *defaults_files(profile), PRIVATE]:
         digest.update(path.name.encode())
         digest.update(path.read_bytes() if path.exists() else b"")
     return digest.hexdigest()
@@ -271,13 +355,15 @@ def read_state():
 
 def selected_profile(profiles, config, fallback=None):
     values = settings(config)
-    selected = [name for name in profiles if values.get(profile_symbol(name)) == "y"]
-    if len(selected) > 1:
-        raise ValueError("Multiple firmware profiles selected; select exactly one")
+    if sum(values.get(key) == "y" for key in BUILD_TARGET_SYMBOLS) > 1:
+        raise ValueError("Multiple firmware build targets selected")
+    if values.get("CONFIG_AGENT_LINK_BUILD_FACTORY") == "y":
+        return selected_factory(profiles, values)
+    selected = application_selection(profiles, values)
     if selected:
-        return selected[0]
+        return selected
     legacy = values.get("CONFIG_AGENT_LINK_FIRMWARE_PROFILE", "").strip('"')
-    for name in [legacy, fallback, read_state().get("profile")]:
+    for name in [legacy, fallback, read_state().get("application_profile"), read_state().get("profile")]:
         if name in profiles:
             return name
     return None
@@ -309,8 +395,35 @@ def prepare_config(name, profile, config, reset=False):
     backup = ROOT / "sdkconfig.before-profile"
     if config.exists() and not backup.exists():
         shutil.copy2(config, backup)
-    config.write_text(f"{profile_symbol(name)}=y\n", encoding="utf-8")
-    STATE.write_text(json.dumps({"schema": SCHEMA, "profile": name,
+    values = settings(config)
+    saved_app = application_selection(resolve_profiles(ROOT), values,
+                                      state.get("application_profile", state.get("profile")))
+    factory_mode = values.get("CONFIG_AGENT_LINK_BUILD_FACTORY") == "y"
+    # A manifest/schema migration within the same board must retain local log
+    # levels and the saved application/factory choice. Switching profiles still
+    # starts from that profile's defaults.
+    if not reset and config.exists() and state.get("profile") == name:
+        owned = expected_settings(profile)
+        if factory_mode:
+            owned = {key: value for key, value in owned.items() if not key.startswith("CONFIG_AGENT_LINK_PROFILE_")}
+        lines = []
+        for line in config.read_text(encoding="utf-8-sig").splitlines():
+            match = SETTING.fullmatch(line) or UNSET.fullmatch(line)
+            if match and match[1] in owned:
+                continue
+            lines.append(line)
+        lines += [f"# {key} is not set" if value == "n" else f"{key}={value}" for key, value in owned.items()]
+        config.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    else:
+        kept = {key: value for key, value in values.items()
+                if key in BUILD_TARGET_SYMBOLS or key.startswith(("CONFIG_AGENT_LINK_FACTORY_BOARD_", "CONFIG_LOG_"))}
+        if saved_app:
+            kept["CONFIG_AGENT_LINK_SAVED_APPLICATION_PROFILE"] = json.dumps(saved_app)
+        if not factory_mode:
+            kept[profile_symbol(name)] = "y"
+        config.write_text("\n".join(f"# {key} is not set" if value == "n" else f"{key}={value}"
+                                   for key, value in kept.items()) + "\n", encoding="utf-8")
+    STATE.write_text(json.dumps({"schema": SCHEMA, "profile": name, "application_profile": saved_app,
                                  "idf": idf_context(),
                                  "fingerprint": fingerprint(name, profile)}, indent=2) + "\n",
                      encoding="utf-8")
@@ -334,6 +447,8 @@ def validate_settings(profile, actual):
     if actual.get("CONFIG_IDF_TARGET") != json.dumps(profile["target"]):
         problems.append("target chip does not match the firmware profile")
     for key, value in expected_settings(profile).items():
+        if actual.get("CONFIG_AGENT_LINK_BUILD_FACTORY") == "y" and key.startswith("CONFIG_AGENT_LINK_PROFILE_"):
+            continue
         if actual.get(key, "n") != value:
             problems.append(f"{key} does not match the profile")
     if actual.get("CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL") == "y":
@@ -342,12 +457,15 @@ def validate_settings(profile, actual):
     return problems
 
 
-def validate(name, profile, config):
+def validate(name, profile, config, expected_role=None):
     check_private()
     if needs_regeneration(read_state(), name, fingerprint(name, profile), config):
         raise ValueError(f"Configuration is missing or belongs to another profile. Run: "
                          f"python tools/build_firmware.py {name}")
     problems = validate_settings(profile, settings(config))
+    role = selected_image_role(profile, config)
+    if expected_role is not None and role != expected_role:
+        problems.append("build target changed during configuration; configure again")
     if problems:
         raise ValueError("Invalid firmware configuration:\n  " + "\n  ".join(problems) +
                          f"\nRegenerate with: python tools/build_firmware.py {name} --reset-config")
@@ -368,6 +486,9 @@ def verify_merged(build_dir):
 
 
 def build(args, profile):
+    bundle = system_images(profile)
+    if args.image_role:
+        image_target_symbol(profile, bundle, args.image_role)
     product_for(profile, load_products(load_profiles()))
     context = idf_context()
     idf_path = Path(context.get("path", ""))
@@ -401,21 +522,64 @@ def build(args, profile):
         print("Target chip or ESP-IDF changed; clearing the existing build cache.", flush=True)
         run([*idf_command, "fullclean"],
             env=dict(os.environ, IDF_TARGET=build_target or old_target or profile["target"]))
-    if not prepare_config(args.profile, profile, config, args.reset_config):
+    if args.image_role and config.exists():
+        select_image_role(profile, config, args.image_role)
+    regenerated = prepare_config(args.profile, profile, config, args.reset_config)
+    if args.image_role:
+        select_image_role(profile, config, args.image_role)
+    role = selected_image_role(profile, config)
+    print(f"Selected build target: {role} (board {profile['board']})", flush=True)
+    if not regenerated:
         validate(args.profile, profile, config)
 
     run([*idf_command, "-D", f"AGENT_LINK_PROFILE={args.profile}",
          "-D", f"IDF_TARGET={profile['target']}", "-D", f"SDKCONFIG={config.as_posix()}",
          "reconfigure"], env=env)
-    validate(args.profile, profile, config)
+    validate(args.profile, profile, config, role)
     if args.configure_only:
         return
     run(["cmake", "--build", build_dir, "--parallel", args.jobs], env=env)
-    merge_command = "merge-bin" if int(package_version("esptool").split(".")[0]) >= 5 else "merge_bin"
-    run([sys.executable, "-m", "esptool", "--chip", profile["target"], merge_command,
-         "-o", "merged.bin", "@flash_args"], cwd=build_dir, env=env)
-    verify_merged(build_dir)
-    print(f"Built {args.profile}: build/agent_link.bin and build/merged.bin. No device flashed.")
+    archive_build(profile, role, build_dir)
+    if bundle and role != "factory":
+        # A merged image spanning ota_0 would fill the launcher's area with FF.
+        # App updates therefore use separate files; initial USB packages contain
+        # a separately built and verified board-bound launcher.
+        (build_dir / "merged.bin").unlink(missing_ok=True)
+        print(f"Built {role}: app -> {flash_plan(profile, role)['partition']}; "
+              "Factory preserved. Initial USB package: tools/package_firmware.py "
+              f"{args.profile} --jobs 2. No device flashed.")
+    else:
+        merge_command = "merge-bin" if int(package_version("esptool").split(".")[0]) >= 5 else "merge_bin"
+        run([sys.executable, "-m", "esptool", "--chip", profile["target"], merge_command,
+             "-o", "merged.bin", "@flash_args"], cwd=build_dir, env=env)
+        verify_merged(build_dir)
+        print(f"Built {args.profile}: build/agent_link.bin and build/merged.bin. No device flashed.")
+
+
+def archive_build(profile, role, build_dir):
+    metadata = json.loads((build_dir / "flasher_args.json").read_text(encoding="utf-8"))
+    plan = flash_plan(profile, role)
+    files = metadata["flash_files"]
+    app_offsets = [int(offset, 0) for offset, file in files.items() if file == "agent_link.bin"]
+    if app_offsets != [plan["app_offset"]]:
+        raise ValueError("IDF flash metadata disagrees with the generated application destination")
+    if (build_dir / "agent_link.bin").stat().st_size > plan["app_max_bytes"]:
+        raise ValueError("Application exceeds its usable partition size")
+    if plan["mode"] == "managed":
+        from firmware_image import image_info
+        info = image_info(build_dir / "agent_link.bin", plan["model"], plan["layout_version"], plan["app_max_bytes"], chip=plan["chip"])
+        if info["app_id"] != plan["app_id"]:
+            raise ValueError("Built application identity differs from the selected target")
+    output = build_dir / "images" / profile["name"] / role
+    output.mkdir(parents=True, exist_ok=True)
+    names = set(files.values()) | {"agent_link.elf", "agent_link.map", "flasher_args.json", "flash-plan.json"}
+    for name in names:
+        destination = output / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(build_dir / name, destination)
+    record = dict(schema=1, profile=profile["name"], role=role, plan=plan, idf=idf_context(),
+                  sha256={name: hashlib.sha256((output / name).read_bytes()).hexdigest() for name in sorted(names)})
+    (output / "artifacts.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
 def main():
@@ -426,8 +590,14 @@ def main():
     parser.add_argument("--configure-only", action="store_true")
     parser.add_argument("--reset-config", action="store_true", help="regenerate this profile's configuration")
     parser.add_argument("--jobs", type=int, choices=range(1, 33), default=2)
+    parser.add_argument("--image-role", help="Select an image through the Menuconfig build target; otherwise keep that selection (default: profile application)")
+    parser.add_argument("--generate-kconfig", action="store_true", help="regenerate factory/layout Kconfig bindings")
+    parser.add_argument("--menu-cache", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--export-profiles", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--flash-plan", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--validate", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--resolve", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--resolve-image-role", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--prepare", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--product-header", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--fallback", help=argparse.SUPPRESS)
@@ -435,10 +605,29 @@ def main():
     args = parser.parse_args()
     try:
         profiles = load_profiles()
-        if args.list:
+        if args.generate_kconfig:
+            (ROOT / "main/Kconfig.factories").write_text(factory_kconfig(profiles), encoding="utf-8", newline="\n")
+            (ROOT / "main/Kconfig.profiles").write_text(profiles_kconfig(profiles), encoding="utf-8", newline="\n")
+        elif args.menu_cache:
+            state = read_state()
+            name = application_selection(profiles, settings(args.sdkconfig), state.get("application_profile", state.get("profile")))
+            write_application_cache(args.menu_cache, name)
+            if name and state.get("application_profile") != name:
+                state["application_profile"] = name
+                STATE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        elif args.export_profiles:
+            for profile in profiles.values():
+                profile["system"] = system_images(profile)
+            args.export_profiles.parent.mkdir(parents=True, exist_ok=True)
+            args.export_profiles.write_text(json.dumps(profiles, indent=2) + "\n", encoding="utf-8")
+        elif args.list:
             for name, profile in profiles.items():
                 print(f"{name:24} {profile['target']:10} {profile['backend']:5} {profile['board_type']}")
         elif args.check:
+            for filename, expected in (("Kconfig.factories", factory_kconfig(profiles)),
+                                       ("Kconfig.profiles", profiles_kconfig(profiles))):
+                if (ROOT / "main" / filename).read_text(encoding="utf-8") != expected:
+                    raise ValueError("Kconfig bindings are stale; run --generate-kconfig")
             print(f"Checked {len(profiles)} firmware profiles against the board catalog.")
         elif args.resolve:
             selected = selected_profile(profiles, args.sdkconfig, args.fallback)
@@ -455,11 +644,21 @@ def main():
             parser.error("choose a supported profile with --list")
         elif args.product_header:
             write_product_header(profiles[args.profile], args.product_header)
+        elif args.resolve_image_role:
+            print(selected_image_role(profiles[args.profile], args.sdkconfig))
+        elif args.flash_plan:
+            role = selected_image_role(profiles[args.profile], args.sdkconfig)
+            args.flash_plan.parent.mkdir(parents=True, exist_ok=True)
+            plan = flash_plan(profiles[args.profile], role)
+            args.flash_plan.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+            from firmware_image import boot_data
+            slot = plan["app_slots"].index(plan["partition"]) if plan["mode"] == "managed" and role != "factory" else None
+            args.flash_plan.with_name("boot-selection.bin").write_bytes(boot_data(slot))
         elif args.prepare:
             prepare_config(args.profile, profiles[args.profile], args.sdkconfig, args.reset_config)
         elif args.validate:
-            validate(args.profile, profiles[args.profile], args.sdkconfig)
-            print(f"Firmware configuration verified: {args.profile}")
+            validate(args.profile, profiles[args.profile], args.sdkconfig, args.image_role)
+            print(f"Firmware configuration verified: {args.profile} (image {selected_image_role(profiles[args.profile], args.sdkconfig)})")
         else:
             build(args, profiles[args.profile])
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

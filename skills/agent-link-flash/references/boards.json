@@ -64,7 +64,7 @@
       "ble_name": "MuseGadget-XXXXXX",
       "fw_model": "RRL-01",
       "status": "supported",
-      "notes": "Hold VOL- for 6 s to forget the Muse pairing. Chinese text needs a font image in anim_pack (boards/rorolee-muse/font/README.md).",
+      "notes": "Hold VOL- for 6 s to forget the Muse pairing. Chinese text needs a font image in font_cjk (boards/rorolee-muse/font/README.md).",
       "profile": "rorolee-muse",
       "sdkconfig": [
         "CONFIG_AGENT_LINK_PROFILE_ROROLEE_MUSE=y"
@@ -208,7 +208,7 @@
       "ble_name": "AIPassport",
       "fw_model": "AI-PASSPORT",
       "status": "supported",
-      "notes": "ESP32-C3 profile: ai-passport-ble; build with tools/build_firmware.py. Uses partitions_esp32c3.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
+      "notes": "ESP32-C3 profile: ai-passport-ble; build with tools/build_firmware.py. Uses partitions/passport-8m-v1.csv (8 MB, dual OTA). Console is USB Serial/JTAG — UART0 TX conflicts with the backlight (GPIO21). Pins match FoloToy ai-passport bsp_pins.h.",
       "profile": "ai-passport-ble",
       "sdkconfig": [
         "CONFIG_AGENT_LINK_PROFILE_AI_PASSPORT_BLE=y"
