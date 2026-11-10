@@ -19,6 +19,7 @@
 
 #include "driver/spi_master.h"
 #include "esp_err.h"
+#include "round_display.h"
 
 enum class Co5300Bus : uint8_t {
     kMipiDsi,   // ESP32-P4
@@ -49,7 +50,7 @@ struct Co5300Config {
     uint16_t stripe_rows  = 12;
 };
 
-class Co5300Panel {
+class Co5300Panel : public RoundDisplay {
 public:
     Co5300Panel() = default;
     ~Co5300Panel();

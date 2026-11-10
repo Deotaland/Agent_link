@@ -157,6 +157,7 @@ are listed in the [device guide](guides/devices.md).
 | paper V2 4IN0 | Mozhifang paper V2 (4.0-inch monochrome e-paper) | `paper-s31-4in0-wifi` | ESP32-S31 | WiFi | supported |
 | OJBadge | OJBadge | `ojbadge-wifi` | ESP32-S3 | — | supported |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 development board | `gc2145-camera-ble` | ESP32-S3 | BLE | supported |
+| Button | Sugarat Button | `sdgoods-wifi` | ESP32-S3 | WiFi | supported |
 | ESP32-S3-Touch-AMOLED-1.75 | Waveshare ESP32-S3-Touch-AMOLED-1.75 (non-C) | `waveshare-amoled-175-wifi` | ESP32-S3 | WiFi | supported |
 | ESP32-S3-Touch-AMOLED-1.75C | Waveshare ESP32-S3-Touch-AMOLED-1.75C | `waveshare-amoled-175c-wifi` | ESP32-S3 | WiFi | supported |
 | ESP32-S3-ePaper-3.97 | Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | ESP32-S3 | WiFi | supported |

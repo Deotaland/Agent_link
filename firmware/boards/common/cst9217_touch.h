@@ -2,8 +2,9 @@
 #include "cst9217_frame.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
+#include "round_display.h"
 
-class Cst9217Touch {
+class Cst9217Touch : public RoundTouch {
 public:
     esp_err_t Init(i2c_port_t port, gpio_num_t reset, gpio_num_t interrupt, int width, int height,
                    bool mirror_x = false, bool mirror_y = false);

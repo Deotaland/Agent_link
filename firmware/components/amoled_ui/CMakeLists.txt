@@ -12,6 +12,10 @@ idf_component_register(SRCS "amoled_ui.cc" "amoled_fonts.cc" "amoled_system_menu
     PRIV_INCLUDE_DIRS "${FIRMWARE_ROOT}/boards/${PROFILE_board}" "${CMAKE_BINARY_DIR}/generated"
     REQUIRES ${_requires}
     PRIV_REQUIRES nvs_flash esp_timer)
+string(JSON _ui_size ERROR_VARIABLE _size_error GET "${BUILD_PROFILE}" ui_size)
+if(NOT _size_error)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC AMOLED_UI_SIZE=${_ui_size})
+endif()
 if(AGENT_LINK_IMAGE_ROLE STREQUAL "factory")
     target_compile_options(${COMPONENT_LIB} PRIVATE -O2)
 endif()

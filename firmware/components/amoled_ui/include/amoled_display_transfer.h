@@ -1,6 +1,6 @@
 #pragma once
 #include "amoled_orientation.h"
-#include "co5300_panel.h"
+#include "round_display.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -19,7 +19,7 @@ class AmoledDisplayTransfer {
     ~AmoledDisplayTransfer() {
         Stop();
     }
-    esp_err_t Start(Co5300Panel* panel, size_t capacity, int rotation, int width);
+    esp_err_t Start(RoundDisplay* panel, size_t capacity, int rotation, int width);
     bool Active() const {
         return task_ != nullptr;
     }
@@ -35,7 +35,7 @@ class AmoledDisplayTransfer {
     };
     static void Entry(void* context);
     void Run();
-    Co5300Panel* panel_ = nullptr;
+    RoundDisplay* panel_ = nullptr;
     uint8_t* staging_ = nullptr;
     size_t capacity_ = 0;
     int rotation_ = 0, width_ = 0;

@@ -39,12 +39,13 @@ class ProfileHardwareTests(unittest.TestCase):
                 else:
                     # The AMOLED C revision has 32 MB; OJBadge and the other
                     # existing network boards have 16 MB.
-                    flash_mb = 32 if profile['board'] == 'waveshare-amoled-175C' else 16
+                    flash_mb = 32 if profile['board'] in {'waveshare-amoled-175C', 'sdgoods-esp32s3'} else 16
                     self.assertEqual(values[f'CONFIG_ESPTOOLPY_FLASHSIZE_{flash_mb}MB'], 'y')
                     self.assertEqual(values['CONFIG_SPIRAM'], 'y')
                     self.assertEqual(values['CONFIG_SPIRAM_IGNORE_NOTFOUND'], 'n')
                     expected_partition = {'paper-s31-wifi': 'partitions/paper-s31-v1.csv',
                                           'paper-s31-4in0-wifi': 'partitions/paper-4in0-v2.csv',
+                                          'sdgoods-wifi': 'partitions/sdgoods-v2.csv',
                                           'waveshare-amoled-175-wifi': 'partitions/amoled-175-v1.csv'}.get(name, 'partitions/standard-v1.csv')
                     self.assertEqual(values['CONFIG_PARTITION_TABLE_CUSTOM_FILENAME'], '"' + expected_partition + '"')
                     if profile['target'] == 'esp32s3':

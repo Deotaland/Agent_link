@@ -19,7 +19,7 @@ class ProductProfileTests(unittest.TestCase):
         self.catalog = build.load_products(self.profiles)
 
     def test_registered_profiles_use_current_platform_ids(self):
-        expected = {'korvo-wifi': 6, 'korvo-ble': 7, 'm5stack-stopwatch-wifi': 4,
+        expected = {'sdgoods-wifi': 13, 'korvo-wifi': 6, 'korvo-ble': 7, 'm5stack-stopwatch-wifi': 4,
                     'm5stack-stopwatch-ble': 4, 'waveshare-epaper-397-wifi': 5,
                     'ai-passport-wifi': 1, 'ai-passport-ble': 1, 'rorolee-ble': 2,
                     'work-badge-ble': 2, 'paper-s31-wifi': 8, 'paper-s31-4in0-wifi': 14,

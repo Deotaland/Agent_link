@@ -28,6 +28,7 @@ std::atomic<uint32_t> completed_frames_{0}, active_frame_samples_{0};
 std::atomic<uint32_t> active_frame_us_{0};
 static_assert(DISPLAY_ROTATION_CW == 0 || DISPLAY_ROTATION_CW == 90);
 static_assert(DISPLAY_WIDTH == DISPLAY_HEIGHT, "Circular AMOLED UI requires a square panel");
+static_assert(kDisplaySize == DISPLAY_WIDTH, "UI geometry must match the native panel size");
 uint8_t* rotated_pixels_ = nullptr;
 bool panel_fault_ = false;
 int64_t panel_retry_at_ = 0;
@@ -37,8 +38,8 @@ std::atomic<uint32_t> volume_events_{0}, volume_commits_{0};
 int64_t last_touch_poll_at_ = 0;
 constexpr uint32_t kWhite = 0xF5F5F7, kMuted = 0x98989F, kBlue = 0x0A84FF;
 AmoledFonts fonts_;
-Co5300Panel* panel_ = nullptr;
-Cst9217Touch* touch_ = nullptr;
+RoundDisplay* panel_ = nullptr;
+RoundTouch* touch_ = nullptr;
 InputHandler handler_ = nullptr;
 void* context_ = nullptr;
 portMUX_TYPE lock_ = portMUX_INITIALIZER_UNLOCKED;
@@ -297,7 +298,7 @@ void Build() {
     answer_view_ = Card(root); Position(answer_view_, kAnswer); ScrollStyle(answer_view_);
     lv_obj_set_style_pad_all(answer_view_, 12, 0);
     answer_label_ = Label(answer_view_, fonts_.Body(), kWhite);
-    lv_obj_set_width(answer_label_, kAnswer.w - 32); lv_obj_set_style_text_line_space(answer_label_, 5, 0);
+    lv_obj_set_width(answer_label_, kAnswer.w - Scale(32)); lv_obj_set_style_text_line_space(answer_label_, Scale(5), 0);
     list_ = lv_obj_create(root); lv_obj_remove_style_all(list_); Position(list_, kList); ScrollStyle(list_);
     // Keep the thumb visible while idle whenever a list has more content.
     lv_obj_set_style_width(list_, 5, LV_PART_SCROLLBAR);
@@ -305,25 +306,29 @@ void Build() {
     lv_obj_set_style_bg_opa(list_, LV_OPA_COVER, LV_PART_SCROLLBAR);
     lv_obj_add_event_cb(list_, CancelClick, LV_EVENT_SCROLL_BEGIN, nullptr);
     lv_obj_add_event_cb(list_, ListScroll, LV_EVENT_SCROLL_END, nullptr);
+#if AMOLED_UI_SIZE <= 360
+    list_code_ = Label(list_, &lv_font_montserrat_36, kBlue, true);
+#else
     list_code_ = Label(list_, &lv_font_montserrat_48, kBlue, true);
+#endif
     list_info_ = Label(list_, fonts_.Body(), kWhite);
     list_hint_ = Label(list_, fonts_.Body(), kMuted, true);
     for (int i = 0; i < kListRows; ++i) {
         rows_[i] = Card(list_, 18); BindClick(rows_[i], i);
-        lv_obj_set_size(rows_[i], kList.w - 5, kRowHeight - 8);
+        lv_obj_set_size(rows_[i], kList.w - Scale(5), kRowHeight - Scale(8));
         row_icons_[i] = Label(rows_[i], &lv_font_montserrat_20, kBlue, true);
-        lv_obj_set_pos(row_icons_[i], 10, 17); lv_obj_set_size(row_icons_[i], 28, 26);
+        lv_obj_set_pos(row_icons_[i], Scale(10), Scale(17)); lv_obj_set_size(row_icons_[i], Scale(28), Scale(26));
         row_labels_[i] = Label(rows_[i], fonts_.Body(), kWhite);
-        lv_obj_set_pos(row_labels_[i], 48, 7); lv_obj_set_size(row_labels_[i], kList.w - 84, 46);
+        lv_obj_set_pos(row_labels_[i], Scale(48), Scale(7)); lv_obj_set_size(row_labels_[i], kList.w - Scale(84), Scale(46));
         lv_label_set_long_mode(row_labels_[i], LV_LABEL_LONG_DOT);
         auto* arrow = Label(rows_[i], &lv_font_montserrat_14, kMuted);
-        Text(arrow, LV_SYMBOL_RIGHT); lv_obj_set_pos(arrow, kList.w - 27, 20);
+        Text(arrow, LV_SYMBOL_RIGHT); lv_obj_set_pos(arrow, kList.w - Scale(27), Scale(20));
     }
     volume_box_ = Card(root, 18); Position(volume_box_, kVolume);
     volume_label_ = Label(volume_box_, fonts_.Body(), kMuted, true);
-    lv_obj_set_pos(volume_label_, 0, 0); lv_obj_set_size(volume_label_, kVolume.w, 25);
+    lv_obj_set_pos(volume_label_, 0, 0); lv_obj_set_size(volume_label_, kVolume.w, Scale(25));
     slider_ = lv_slider_create(volume_box_); lv_obj_remove_style_all(slider_);
-    lv_obj_set_pos(slider_, 30, 34); lv_obj_set_size(slider_, 200, 5);
+    lv_obj_set_pos(slider_, Scale(30), Scale(34)); lv_obj_set_size(slider_, Scale(200), Scale(5));
     lv_obj_set_ext_click_area(slider_, 14);
     lv_slider_set_range(slider_, 0, 100);
     lv_obj_set_style_bg_color(slider_, lv_color_hex(0x48484A), LV_PART_MAIN);
@@ -342,7 +347,7 @@ void Build() {
     auto* handle = Card(root, 3); Position(handle, kHandle);
     home_handle_ = handle;
     lv_obj_set_style_bg_color(handle, lv_color_hex(0xB8B8BD), 0); lv_obj_set_style_border_width(handle, 0, 0);
-    latest_ = Card(root, 12); lv_obj_set_pos(latest_, 324, 286); lv_obj_set_size(latest_, 40, 32);
+    latest_ = Card(root, Scale(12)); lv_obj_set_pos(latest_, Scale(324), Scale(286)); lv_obj_set_size(latest_, Scale(40), Scale(32));
     BindClick(latest_, -2); auto* down = Label(latest_, &lv_font_montserrat_20, kBlue);
     Text(down, LV_SYMBOL_DOWN); lv_obj_center(down); Visible(latest_, false);
     if (card_renderer_) card_renderer_->create(root, fonts_, BindClick);
@@ -439,7 +444,7 @@ void Render(void*) {
             } else swallow_ = false;
             const bool volume_touch = !lv_obj_has_flag(volume_box_, LV_OBJ_FLAG_HIDDEN) &&
                 contact_y_ >= kVolume.y - 10 && contact_y_ <= kVolume.y + kVolume.h + 10;
-            const Swipe direction = swipe_.Update(next.pressed && !swallow_, next.x, next.y, shown_view_, now, volume_touch);
+            const Swipe direction = swipe_.Update(next.pressed && !swallow_, next.x * 466 / DISPLAY_WIDTH, next.y * 466 / DISPLAY_HEIGHT, shown_view_, now, volume_touch);
             bool sent = false;
             if (direction == Swipe::kSystem) sent = Dispatch(TouchAction::kSystem);
             else if (shown_kind_ == View::kCarousel && direction == Swipe::kLeft) sent = Dispatch(TouchAction::kNextCard);
@@ -489,18 +494,18 @@ void Render(void*) {
             const char* setup_title = status.phase == AGENT_LINK_PHASE_PAIRING ? Tr("激活设备", "Activate device") :
                 status.phase == AGENT_LINK_PHASE_SETUP ? Tr("连接 WiFi", "Connect WiFi") : Tr("设备需要处理", "Needs attention");
             Text(title_, setup ? setup_title : screen.title);
-            Position(title_, quiet ? Rect{111,72,244,36} : kTitle);
-            Position(back_, quiet ? Rect{85,111,38,35} : kBack);
-            Position(list_, quiet ? Rect{85,154,296,222} : kList);
-            Position(detail_, quiet ? Rect{129,115,249,24} : kDetail);
-            if (!home) { lv_obj_set_x(detail_, 129); lv_obj_set_width(detail_, 249); }
+            Position(title_, quiet ? Rect{Scale(111),Scale(72),Scale(244),Scale(36)} : kTitle);
+            Position(back_, quiet ? Rect{Scale(85),Scale(111),Scale(38),Scale(35)} : kBack);
+            Position(list_, quiet ? Rect{Scale(85),Scale(154),Scale(296),Scale(222)} : kList);
+            Position(detail_, quiet ? Rect{Scale(129),Scale(115),Scale(249),Scale(24)} : kDetail);
+            if (!home) { lv_obj_set_x(detail_, Scale(129)); lv_obj_set_width(detail_, Scale(249)); }
             Text(detail_, setup ? status.hint : screen.detail);
             Visible(back_, !home && !screen.busy);
             Visible(answer_view_, home && !setup);
             Visible(volume_box_, (home && !setup) || volume_page);
             if (!lv_slider_is_dragged(slider_)) { lv_slider_set_value(slider_, volume, LV_ANIM_OFF); VolumeText(volume); }
             Visible(list_, !home || setup); Visible(latest_, false);
-            lv_obj_set_height(list_, volume_page ? kAnswer.h : quiet ? 222 : kList.h);
+            lv_obj_set_height(list_, volume_page ? kAnswer.h : quiet ? Scale(222) : kList.h);
             const char* answer = text[0] ? text : screen.calling && state == Activity::kListening ?
                 Tr("我在听，请说话。", "Listening. Go ahead.") : screen.calling ?
                 Tr("正在建立通话，准备好后请说话…", "Connecting. Speak when ready...") :
@@ -526,12 +531,12 @@ void Render(void*) {
                 const char* code = setup ? status.code : screen.pair_code;
                 const bool show_code = code[0] && (!setup || status.phase == AGENT_LINK_PHASE_PAIRING);
                 Visible(list_code_, show_code);
-                if (show_code) { Text(list_code_, code); lv_obj_set_pos(list_code_, 0, y); lv_obj_set_size(list_code_, kList.w - 6, 60); y += 68; }
+                if (show_code) { Text(list_code_, code); lv_obj_set_pos(list_code_, 0, y); lv_obj_set_size(list_code_, kList.w - Scale(6), Scale(60)); y += Scale(68); }
                 const char* description = setup ? status.hint : screen.info;
                 Visible(list_info_, description[0]);
                 if (description[0]) {
-                    Text(list_info_, description); lv_obj_set_pos(list_info_, 8, y); lv_obj_set_width(list_info_, kList.w - 22);
-                    lv_obj_set_height(list_info_, LV_SIZE_CONTENT); lv_obj_update_layout(list_info_); y += lv_obj_get_height(list_info_) + 18;
+                    Text(list_info_, description); lv_obj_set_pos(list_info_, Scale(8), y); lv_obj_set_width(list_info_, kList.w - Scale(22));
+                    lv_obj_set_height(list_info_, LV_SIZE_CONTENT); lv_obj_update_layout(list_info_); y += lv_obj_get_height(list_info_) + Scale(18);
                 }
                 for (int i = 0; i < kListRows; ++i) {
                     const bool show = !setup && i < screen.row_count;
@@ -547,7 +552,7 @@ void Render(void*) {
                 Visible(list_hint_, screen.next || screen.previous);
                 if (screen.next || screen.previous) {
                     Text(list_hint_, screen.next ? Tr("继续上滑加载更多", "Scroll for more") : Tr("已到末尾", "End of list"));
-                    lv_obj_set_pos(list_hint_, 0, y); lv_obj_set_size(list_hint_, kList.w - 6, 30);
+                    lv_obj_set_pos(list_hint_, 0, y); lv_obj_set_size(list_hint_, kList.w - Scale(6), Scale(30));
                 }
                 Mark(UiStage::kListLayout); lv_obj_update_layout(list_);
                 const int scroll_y = new_page ? 0 : WindowScroll(old_y, offset, screen.row_offset, kRowHeight);
@@ -593,7 +598,7 @@ void Render(void*) {
 }
 }  // namespace
 
-esp_err_t StartUi(Co5300Panel* panel, Cst9217Touch* touch, InputHandler handler, void* context,
+esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, void* context,
                   const CardRenderer* cards, DisplayPerformance performance) {
     if (!panel || !panel->Ready()) return ESP_ERR_INVALID_STATE;
     panel_ = panel; touch_ = touch; handler_ = handler; context_ = context; card_renderer_ = cards;

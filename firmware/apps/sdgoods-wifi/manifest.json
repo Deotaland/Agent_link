@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "app_id": "agent.status",
+  "name": "Device status",
+  "backend": "WIFI",
+  "ui": "lvgl",
+  "ui_component": "amoled_ui",
+  "sources": [],
+  "include_dirs": [],
+  "role": "standard",
+  "shared_app": ""
+}

@@ -44,8 +44,9 @@ class FirmwareMenuTests(unittest.TestCase):
         factory = k.named_choices["AGENT_LINK_FACTORY_BOARD_SELECTION"]
         self.assertFalse(app.visibility)
         options = [s for s in factory.syms if s.visibility]
-        self.assertEqual([s.name for s in options], ["AGENT_LINK_FACTORY_BOARD_WAVESHARE_AMOLED_175"])
+        self.assertEqual([s.name for s in options], ["AGENT_LINK_FACTORY_BOARD_WAVESHARE_AMOLED_175", "AGENT_LINK_FACTORY_BOARD_SDGOODS_ESP32S3"])
         self.assertEqual(options[0].nodes[0].prompt[0], "Waveshare ESP32-S3-Touch-AMOLED-1.75 (non-C)")
+        k.syms["AGENT_LINK_FACTORY_BOARD_WAVESHARE_AMOLED_175"].set_value(2)
         path = self.save("factory")
         self.assertEqual(build.selected_profile(self.profiles, path), "waveshare-amoled-175-wifi")
         self.assertEqual(k.syms["AGENT_LINK_FIRMWARE_PROFILE"].str_value, "waveshare-amoled-175-wifi")

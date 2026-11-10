@@ -26,6 +26,7 @@ iOS overseas App Store search **rorolee**, Android APK at [rorolee.com](https://
 | RoRoLee / WOWNNY Muse | MuseGadget-XXXXXX | BOOT confirms pairing; hold to record and release to send |
 | WOWNNY old Muse | MuseGadget-XXXXXX | Same flow; confirm old hardware revision first |
 | AIoT Basic V2 camera | GC2145_CAMERA | Verify LCD preview and send snapshot to app |
+| Sugarat Button / SDGOODS / sdgoods-wifi | Sugarat-Button-XXXX | Factory: swipe cards, tap actions, pull down for setup; native 360px LCD; hardware acceptance pending |
 | OJBadge | Local ESP-NOW, no activation | SW2 finds/greets peers; both sides confirm code; hardware acceptance pending |
 | ES8311 ASR wiring example | ROROLEE_ES8311_ASR | Verify pins, then hold speech key; transcription only |
 | ES8311 voice wiring example | ROROLEE_ES8311 | Verify pins, then hold BOOT to talk |

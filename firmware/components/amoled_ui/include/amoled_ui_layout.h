@@ -4,22 +4,29 @@
 #include "amoled_ui_language.h"
 
 namespace amoled_ui {
-constexpr int kDisplaySize = 466, kCenter = 233;
-constexpr int kRingInset = 7, kRingDiameter = 452, kRingWidth = 6;
-constexpr int kContentInset = 25, kContentDiameter = 416, kContentRadius = 208;
-constexpr int kListRows = 12, kListStride = 8, kRowHeight = 66;
+#ifndef AMOLED_UI_SIZE
+#define AMOLED_UI_SIZE 466
+#endif
+constexpr int Scale(int value) { return (value * AMOLED_UI_SIZE + 233) / 466; }
+constexpr int kDisplaySize = AMOLED_UI_SIZE, kCenter = kDisplaySize / 2;
+constexpr int kRingInset = Scale(7), kRingDiameter = kDisplaySize - 2 * kRingInset, kRingWidth = Scale(6);
+constexpr int kContentInset = Scale(25), kContentDiameter = kDisplaySize - 2 * kContentInset, kContentRadius = kContentDiameter / 2;
+constexpr int kListRows = 12, kListStride = 8, kRowHeight = Scale(66);
 struct Rect { int x, y, w, h; };
-constexpr Rect kHeading{133, 51, 200, 27};
-constexpr Rect kBattery{132, 84, 202, 20};
-constexpr Rect kTitle{89, 111, 288, 33};
-constexpr Rect kDetail{89, 148, 288, 24};
-constexpr Rect kBack{85, 139, 38, 35};
-constexpr Rect kAnswer{85, 182, 296, 142};
-constexpr Rect kList{85, 181, 296, 195};
-constexpr Rect kVolume{103, 337, 260, 51};
-constexpr Rect kFooter{133, 391, 200, 23};
-constexpr Rect kHandle{197, 421, 72, 5};
-constexpr Rect kToast{113, 260, 240, 68};
+constexpr Rect ScaledRect(int x, int y, int w, int h) {
+    return {Scale(x), Scale(y), Scale(x+w)-Scale(x), Scale(y+h)-Scale(y)};
+}
+constexpr Rect kHeading = ScaledRect(133, 51, 200, 27);
+constexpr Rect kBattery = ScaledRect(132, 84, 202, 20);
+constexpr Rect kTitle = ScaledRect(89, 111, 288, 33);
+constexpr Rect kDetail = ScaledRect(89, 148, 288, 24);
+constexpr Rect kBack = ScaledRect(85, 139, 38, 35);
+constexpr Rect kAnswer = ScaledRect(85, 182, 296, 142);
+constexpr Rect kList = ScaledRect(85, 181, 296, 195);
+constexpr Rect kVolume = ScaledRect(103, 337, 260, 51);
+constexpr Rect kFooter = ScaledRect(133, 391, 200, 23);
+constexpr Rect kHandle = ScaledRect(197, 421, 72, 5);
+constexpr Rect kToast = ScaledRect(113, 260, 240, 68);
 constexpr bool Inside(int x, int y, int radius = kContentRadius) {
     return (x - kCenter) * (x - kCenter) + (y - kCenter) * (y - kCenter) <= radius * radius;
 }

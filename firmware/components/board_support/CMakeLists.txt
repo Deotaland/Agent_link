@@ -53,6 +53,9 @@ endif()
 if("ai_passport_hardware.cc" IN_LIST _hardware_sources)
     list(APPEND _requires esp_adc)
 endif()
+if("sdgoods_panel_init.c" IN_LIST _hardware_sources)
+    list(APPEND _requires esp_driver_ledc)
+endif()
 idf_component_register(SRCS ${_sources}
     INCLUDE_DIRS "${FIRMWARE_ROOT}/boards/common" "${FIRMWARE_ROOT}/boards/${PROFILE_hardware}"
     PRIV_INCLUDE_DIRS "${FIRMWARE_ROOT}/boards/${PROFILE_board}" "${CMAKE_BINARY_DIR}/generated"

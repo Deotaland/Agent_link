@@ -5,6 +5,7 @@ import hashlib
 from importlib.metadata import version
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,11 @@ def package(profile, output):
     bundle = system_images(profile)
     if not bundle:
         raise ValueError("Use build_firmware.py for this board's single-app USB package")
+    catalog = json.loads((ROOT / "boards" / profile["board"] / "config.json").read_text(encoding="utf-8"))
+    hardware = next(entry for entry in catalog["boards"] if entry["board_type"] == profile["board_type"])
+    package_name = profile.get("package_name", "")
+    if not isinstance(package_name, str) or (package_name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", package_name)):
+        raise ValueError("Invalid board package filename prefix")
     role = default_image_role(profile, bundle)
     images = ROOT / "build/images" / profile["name"]
     factory = images / "factory"
@@ -62,6 +68,10 @@ def package(profile, output):
         for suffix in ("bin", "elf", "map"):
             shutil.copy2(source / f"agent_link.{suffix}", output / f"{selected_role}.{suffix}")
     shutil.copy2(ROOT / "boards/common/fonts/OFL.txt", output / "fonts-OFL.txt")
+    notices = {name for name in factory_record["sha256"]
+               if name.endswith(("-LICENSE.txt", "-NOTICE.txt"))}
+    for name in notices:
+        shutil.copy2(factory / name, output / name)
     full_files = dict(files)
     full_files[hex(plan["app_offset"])] = role + ".bin"
     merge = "merge-bin" if int(version("esptool").split(".")[0]) >= 5 else "merge_bin"
@@ -92,10 +102,18 @@ def package(profile, output):
     metadata[plan["partition"]] = dict(offset=hex(plan["app_offset"]), file=role + ".bin", encrypted="false")
     (output / "flasher_args.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     package_info = dict(schema=1, layout=bundle["layout"], layout_id=plan["layout"], board=profile["model"],
+                        display_name=hardware["product"], brand=hardware["vendor"],
+                        hardware_model=hardware["model"], aliases=hardware["aliases"],
                         profile=profile["name"], boot="factory", apps=[dict(app_info, file=role + ".bin")],
                         settings_impact="Initial merged USB packages replace settings and installed apps.")
     package_files = set(full_files.values()) | {"merged.bin", "factory-only-merged.bin", "flasher_args.json",
                                                "factory.elf", "factory.map", role + ".elf", role + ".map", "fonts-OFL.txt"}
+    package_files.update(notices)
+    if package_name:
+        for source, suffix in (("merged.bin", "full"), ("factory-only-merged.bin", "factory-full")):
+            name = f"{package_name}-{suffix}.bin"
+            shutil.copy2(output / source, output / name)
+            package_files.add(name)
     package_info["sha256"] = {name: hashlib.sha256((output / name).read_bytes()).hexdigest()
                               for name in sorted(package_files)}
     (output / "package.json").write_text(json.dumps(package_info, indent=2) + "\n", encoding="utf-8")

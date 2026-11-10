@@ -27,6 +27,7 @@ BLE 先安装 Rorolee App：iOS 在海外 App Store 搜索 `rorolee`；安卓在
 | WOWNNY：`wownny-muse` | Muse App 添加 `MuseGadget-XXXXXX` | BOOT 确认配对，按住录音、松开发送；有 MiniMax 配置才有相应语音回复 |
 | WOWNNY 旧版：`wownny-old-muse` | 同上 | 确认确实是旧板再选；新旧板音量键有差异 |
 | AIoT Basic V2：`gc2145-camera-ble` | App 搜索 `GC2145_CAMERA` | 先看 LCD 预览，再用按钮或 App 拍照，确认 App 收到；不是默认语音设备 |
+| Sugarat Button（含 SDGOODS 渠道）：`sdgoods-wifi` | `Sugarat-Button-XXXX` | Factory 左右滑动卡片，轻触启动/卸载，下拉系统设置；360px LCD，首次需完整包，真机验收待完成 |
 | OJBadge：`ojbadge-wifi` | 本地交友，无平台激活 | SW2 短按寻找/打招呼，长按 1 秒回主页；两端核对验证码后确认。无云端语音；真机和双机验收待完成 |
 | 自接 ES8311：`es8311-asr-ble` | App 搜索 `ROROLEE_ES8311_ASR` | 核对引脚后按住说话键，验证转写；只有麦克风路径 |
 | 自接 ES8311：`es8311-voice-ble` | App 搜索 `ROROLEE_ES8311` | 核对引脚后按住 BOOT 说话、松开发送，验证喇叭回复 |

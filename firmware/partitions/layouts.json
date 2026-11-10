@@ -60,5 +60,14 @@
     ],
     "cover_reserve": 57344,
     "defaults": "partitions/amoled-175-v1.defaults"
+  },
+  "sdgoods-v2": {
+    "version": 2,
+    "mode": "managed",
+    "csv": "partitions/sdgoods-v2.csv",
+    "targets": ["esp32s3"],
+    "app_slots": ["ota_0", "ota_1", "ota_2"],
+    "cover_reserve": 57344,
+    "defaults": "partitions/sdgoods-v2.defaults"
   }
 }

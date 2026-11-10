@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "board": "sdgoods-esp32s3",
+  "image": {
+    "app_id": "agent.launcher",
+    "name": "Agent Link Launcher",
+    "shared_app": "",
+    "sources": [
+      "ui/factory_view.cc"
+    ],
+    "include_dirs": [
+      "ui"
+    ]
+  }
+}

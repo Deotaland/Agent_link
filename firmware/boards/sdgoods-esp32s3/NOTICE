@@ -1,0 +1,95 @@
+谷仓共创计划 · 谷仓 SDGOODS 开放平台基础工程
+NOTICE
+
+Copyright (c) 2026 深圳希德创新网络有限公司 (SDGOODS)
+https://github.com/SDGOODS/SDGOODS-ESP32S3
+联系邮箱：karl@sdgoods.ai
+
+「谷仓共创计划」与「谷仓 SDGOODS 开放平台」项目、谷仓次元屏（谷仓电子徽章）设备，
+以及本基础代码的著作权与相关权利，均归深圳希德创新网络有限公司所有。
+
+本产品包含由深圳希德创新网络有限公司开发的软件，以及下列第三方组件。
+本文件依据 Apache License 2.0 第 4(d) 条提供，用于记录再分发时需保留的
+归属声明。
+
+================================================================
+一、本仓库的许可
+================================================================
+
+本仓库（平台层 `components/sdgoods_board/` 与应用层 `main/`）**统一以
+Apache-2.0 发布**：可自由商用、可闭源分发，要求保留版权声明与许可声明，
+并随分发携带本 NOTICE 文件。详见根目录 [LICENSE](LICENSE)。
+
+  Apache-2.0 涵盖范围：
+    components/sdgoods_board/ 下的全部自有代码 —— 屏幕驱动、LVGL 移植、
+    触摸、电源键、音频、WiFi/BLE 扫描、截屏、应用外壳（sdgoods_app_shell）、
+    开机动画、圆屏栅格常量（sdgoods_ui.h）、注册接口（sdgoods_hooks.*），
+    以及 main/ 下的全部应用层代码、tools/ 下的全部脚本。
+
+  ----------------------------------------------------------------
+  例外（许可由上游决定，我们无权更改，沿用原许可）：
+    main/patches/                    MIT（LVGL 衍生）
+    components/sdgoods_board/fonts/  SIL OFL 1.1（Noto Sans SC / 思源黑体
+                                     Source Han Sans 子集字体衍生，全文见该目录 OFL.txt）
+
+================================================================
+二、第三方组件
+================================================================
+
+LVGL 8.3.11
+  https://github.com/lvgl/lvgl
+  Copyright (c) 2021 LVGL Kft
+  Licensed under the MIT License.
+
+  说明：通过 ESP-IDF 组件管理器下载，**未随本仓库分发**。
+        本仓库 main/patches/ 存放对其内置 GIF 解码器（gifdec）的修改
+        ——让 GIF canvas 分配到 PSRAM。该修改是对 LVGL 源代码的衍生，
+        因此**沿用 LVGL 原许可 MIT**，不受本仓库 Apache-2.0 许可约束。
+
+Noto Sans SC
+  https://github.com/notofonts/noto-cjk
+  Copyright (c) 2014-2021 Adobe (http://www.adobe.com/),
+  with Reserved Font Name 'Source'.
+  Licensed under the SIL Open Font License, Version 1.1.
+
+  说明：components/sdgoods_board/fonts/*.c 是依据该项目字形生成的**子集字体**
+        （扫描本工程源码字符集后只取用到的字形，非完整字库）。
+        作为该字体的衍生，这些文件**沿用 SIL OFL 1.1**，
+        不受本仓库应用层非商业条款约束。每个文件头部都带有完整的
+        版权与许可声明，请勿删除。
+
+Source Han Sans（思源黑体）
+  https://github.com/adobe-fonts/source-han-sans
+  Copyright (c) 2014-2021 Adobe (http://www.adobe.com/),
+  with Reserved Font Name 'Source'.
+  Licensed under the SIL Open Font License, Version 1.1.
+
+  说明：components/sdgoods_board/fonts/si_yuan_black_icon_*.c 是依据该项目
+        字形生成的图标/符号子集字体。作为该字体的衍生，这些文件沿用
+        SIL OFL 1.1（全文见 components/sdgoods_board/fonts/OFL.txt）。
+        请保留文件头部的版权与许可声明。
+
+ESP-IDF
+  https://github.com/espressif/esp-idf
+  Copyright (c) 2016-2025 Espressif Systems (Shanghai) CO LTD
+  Licensed under the Apache License, Version 2.0.
+
+lv_font_conv
+  https://github.com/lvgl/lv_font_conv
+  Licensed under the MIT License.
+
+  说明：生成子集字体的开发期工具，未随本仓库分发。
+
+gifdec
+  https://github.com/lecram/gifdec
+  Licensed under the MIT License.
+
+  说明：GIF 解码库，由 LVGL 以组件形式内置，未随本仓库独立分发。
+
+================================================================
+三、开机动画素材
+================================================================
+
+components/sdgoods_board/src/sdgoods_boot_gif.c 是谷仓次元屏的开机动画帧数据。
+若你要基于本工程发布自己的产品，请确认你拥有该素材的分发权，
+或替换为你自己的动画。

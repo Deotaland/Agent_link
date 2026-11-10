@@ -9,6 +9,7 @@ import json
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--rotation', type=int, choices=(0, 90), default=0)
+parser.add_argument('--sdgoods', action='store_true', help='render the native 360px SDGOODS Factory')
 parser.add_argument('--carousel', action='store_true', help='render and exercise the factory cover carousel')
 parser.add_argument('--voice-cover',type=Path,help='a backend-converted 132x132 Agent Link raw cover')
 args = parser.parse_args()
@@ -30,10 +31,10 @@ cl = shutil.which('cl.exe', path=env.get('Path') or env.get('PATH'))
 lib = shutil.which('lib.exe', path=env.get('Path') or env.get('PATH'))
 flags = ['/nologo', '/utf-8', '/w', '/D_CRT_SECURE_NO_WARNINGS', '/DLV_CONF_SKIP', '/DLV_KCONFIG_IGNORE',
          '/DLV_USE_STDLIB_MALLOC=1', '/DLV_USE_STDLIB_STRING=1', '/DLV_USE_STDLIB_SPRINTF=1',
-         '/DLV_FONT_MONTSERRAT_20=1', '/DLV_FONT_MONTSERRAT_24=1', '/DLV_FONT_MONTSERRAT_48=1',
+         '/DLV_FONT_MONTSERRAT_16=1', '/DLV_FONT_MONTSERRAT_18=1', '/DLV_FONT_MONTSERRAT_36=1', '/DLV_FONT_MONTSERRAT_20=1', '/DLV_FONT_MONTSERRAT_24=1', '/DLV_FONT_MONTSERRAT_48=1',
          '/DLV_FONT_SIMSUN_14_CJK=1', '/DLV_USE_TINY_TTF=1', '/DLV_USE_LOG=0', '/DLV_USE_ASSERT_MALLOC=1',
          '/DLV_USE_LODEPNG=1','/DLV_USE_FS_WIN32=1','/DLV_FS_WIN32_LETTER=65',
-         '/I' + str(lvgl), '/I' + str(app), '/I' + str(root / 'boards/waveshare-amoled-175C')]
+         '/I' + str(lvgl), '/I' + str(root / 'boards/common'), '/I' + str(root / 'boards/sdgoods-esp32s3'), '/I' + str(app), '/I' + str(root / 'boards/waveshare-amoled-175C')]
 sources = sorted((lvgl / 'src').rglob('*.c'))
 assert len({s.stem for s in sources}) == len(sources)
 stamp = hashlib.sha256((' '.join(flags) + ''.join(hashlib.sha256(s.read_bytes()).hexdigest() for s in sources)).encode()).hexdigest()
@@ -100,14 +101,14 @@ struct Co5300Panel {
         return 0;
     }
 };
-namespace cst9217 { struct Point { int x=0, y=0; bool pressed=false; }; }
+#include "cst9217_frame.h"
 struct Cst9217Touch { cst9217::Point sample; int Poll(cst9217::Point* p) { *p=sample; return 0; } };
 std::vector<char> font_image;
 lv_font_t* LoadCjkFont(const char*, int32_t size, uint32_t cache) {
     return lv_tiny_ttf_create_data_ex(font_image.data()+32, font_image.size()-32, size, LV_FONT_KERNING_NONE, cache);
 }
 '''
-prefix += '\n#include "amoled_display_stubs.h"\n'
+prefix += '\nusing RoundDisplay = Co5300Panel; using RoundTouch = Cst9217Touch;\n#include "amoled_display_stubs.h"\n'
 transfer_header = (ui/'include/amoled_display_transfer.h').read_text(encoding='utf-8')
 transfer_source = (ui/'amoled_display_transfer.cc').read_text(encoding='utf-8')
 prefix += '\n'.join(line for line in (transfer_header+'\n'+transfer_source).splitlines()
@@ -523,6 +524,23 @@ int main(int argc, char** argv) {''')
     post = post.replace('    puts("Native LVGL:', '    CheckCarousel(display);\n    puts("Native LVGL:')
 if args.carousel:
     post = post.replace('int main(int argc, char** argv) {', 'int main(int argc, char** argv) {\n    card_renderer_ = &amoled_factory::Renderer();')
+
+if args.sdgoods:
+    import re
+    factory_ui = root / 'factory/sdgoods-esp32s3/ui'
+    prefix = '#define AGENT_SYSTEM_ENABLED 1\n#define AMOLED_UI_SIZE 360\n' + prefix
+    prefix = re.sub(r'\b466\b', '360', prefix)
+    prefix += r"""
+#include "sdgoods_touch_frame.h"
+#include "amoled_cover_cache.h"
+namespace agent_system {
+std::shared_ptr<const CoverPixels> supplied_pixels;
+std::shared_ptr<const CoverPixels> AcquireCover(const Cover& cover) { return cover.slot==0 ? supplied_pixels : nullptr; }
+}
+"""
+    factory_source = '\n'.join(line for line in (factory_ui/'factory_view.cc').read_text(encoding='utf-8').splitlines() if not line.startswith('#include'))+'\n'
+    post = (root/'tests/sdgoods_ui_fixture.cc').read_text(encoding='utf-8')
+
 generated.write_text(prefix+header+fonts+factory_source+source+post,encoding='utf-8')
 with log.open('a',encoding='utf-8') as output:
     subprocess.run([cl,*flags,'/I'+str(root/'tests/co5300_stubs'),'/I'+str(root/'tests'),'/I'+str(root/'components/agent_system/include'),'/I'+str(ui/'include'),'/I'+str(factory_ui),'/std:c++17','/EHsc',str(generated),str(build/'lvgl.lib'),'/Fo'+str(build/'preview.obj'),'/Fe'+str(build/'preview.exe')],env=env,cwd=build,stdout=output,stderr=subprocess.STDOUT,check=True)

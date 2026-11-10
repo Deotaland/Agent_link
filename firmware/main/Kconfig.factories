@@ -5,7 +5,7 @@ config AGENT_LINK_CHIP_FACTORY_AVAILABLE
 
 config AGENT_LINK_BOARD_FACTORY_AVAILABLE
     bool
-    default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-amoled-175-wifi"
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "waveshare-amoled-175-wifi" || AGENT_LINK_FIRMWARE_PROFILE = "sdgoods-wifi"
 
 config AGENT_LINK_MANAGED_APPS
     bool
@@ -19,6 +19,10 @@ choice AGENT_LINK_FACTORY_BOARD_SELECTION
 
     config AGENT_LINK_FACTORY_BOARD_WAVESHARE_AMOLED_175
         bool "Waveshare ESP32-S3-Touch-AMOLED-1.75 (non-C)"
+        depends on IDF_TARGET_ESP32S3
+
+    config AGENT_LINK_FACTORY_BOARD_SDGOODS_ESP32S3
+        bool "Sugarat Button"
         depends on IDF_TARGET_ESP32S3
 
 endchoice

@@ -1,7 +1,6 @@
 #pragma once
 #include "agent_link.h"
-#include "co5300_panel.h"
-#include "cst9217_touch.h"
+#include "round_display.h"
 #include "amoled_ui_layout.h"
 #include "lvgl.h"
 class AmoledFonts;
@@ -38,7 +37,7 @@ struct CardRenderer {
     void (*hide)();
 };
 enum class DisplayPerformance { kBalanced, kLauncher };
-esp_err_t StartUi(Co5300Panel* panel, Cst9217Touch* touch, InputHandler handler, void* context,
+esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, void* context,
                   const CardRenderer* cards = nullptr, DisplayPerformance performance = DisplayPerformance::kBalanced);
 void SetScreen(const Screen& screen);
 void SetStatus(const agent_link_status_t& status);

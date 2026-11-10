@@ -2,7 +2,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 
-esp_err_t AmoledDisplayTransfer::Start(Co5300Panel* panel, size_t capacity, int rotation,
+esp_err_t AmoledDisplayTransfer::Start(RoundDisplay* panel, size_t capacity, int rotation,
                                        int width) {
     if (Active() || !panel || !capacity || width <= 0 || (rotation != 0 && rotation != 90))
         return ESP_ERR_INVALID_ARG;

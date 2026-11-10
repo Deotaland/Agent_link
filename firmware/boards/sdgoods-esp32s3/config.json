@@ -1,0 +1,61 @@
+{
+  "manufacturer": "sugarat",
+  "type": "sdgoods-esp32s3",
+  "target": "esp32s3",
+  "boards": [
+    {
+      "board_type": "SDGOODS_ESP32S3_WIFI",
+      "model": "Button",
+      "product": "Sugarat Button",
+      "vendor": "Sugarat",
+      "buy": [],
+      "docs": [
+        "https://github.com/SDGOODS/SDGOODS-ESP32S3"
+      ],
+      "aliases": [
+        "Sugarat",
+        "Sugarat Button",
+        "Sugarat-Button",
+        "Button",
+        "SDGOODS Button",
+        "SDGOODS Sugarat Button",
+        "SDGOODS",
+        "sdgoods-esp32s3",
+        "谷仓",
+        "谷仓次元屏",
+        "谷仓电子徽章"
+      ],
+      "hardware": "ESP32-S3-R8; 32 MB flash, 8 MB octal PSRAM at 80 MHz; 360x360 ST77916 QSPI LCD, CST816 touch; GPIO7 battery latch, GPIO6 key; separate I2S microphone and speaker buses",
+      "identify": "Sugarat Button, also sold by SDGOODS as an electronic badge; native USB-C and a 360x360 round LCD. Uses the matching SDGOODS-ESP32S3 BSP pinout.",
+      "flash_port": "USB-C native ESP32-S3 USB (GPIO19/20).",
+      "use": "Touch Factory launcher, WiFi setup, app installation/removal, cover carousel and device status",
+      "transport": "WIFI",
+      "ble_name": null,
+      "fw_model": "SDGOODS-ESP32S3",
+      "status": "supported",
+      "notes": "Brand Sugarat, model Button; the same hardware bought from SDGOODS uses this profile. Public names Sugarat, Button and SDGOODS all resolve here. The existing sdgoods-wifi profile and SDGOODS-ESP32S3 image compatibility model remain stable. Platform product sdgoods (id 13, enterprise 0), confirmed by developer. Hotspot Sugarat-Button-XXXX. Factory build: --image-role factory. Uses sdgoods-v2 (layout 2): 3 MB Factory and three 3 MB app slots; all executable images and the shared font stay below 16 MB without experimental 32-bit cache mapping. LCD GPIO12 supply enable is active low. Migrate from older layouts or vendor firmware with a full USB package; settings and installed applications are replaced. Hardware acceptance pending. Battery percentage/charging telemetry is not exposed by the upstream BSP; do not report invented battery values. Audio, TE synchronization and vendor app/bootloader compatibility are not enabled.",
+      "build": {
+        "hardware": "sdgoods-esp32s3",
+        "drivers": [
+          "cjk_font.cc",
+          "co5300_qspi_io.c"
+        ],
+        "hardware_sources": [
+          "amoled_hardware.cc",
+          "sdgoods_panel_init.c"
+        ],
+        "defaults": "boards/sdgoods-esp32s3/hardware.defaults",
+        "layout": "sdgoods-v2",
+        "factory": "sdgoods-esp32s3",
+        "ui_size": 360,
+        "flash_assets": [
+          {
+            "partition": "font_cjk",
+            "file": "boards/common/fonts/cjk_font.bin"
+          }
+        ],
+        "package_name": "Sugarat-Button"
+      }
+    }
+  ]
+}

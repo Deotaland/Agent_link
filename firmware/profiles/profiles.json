@@ -165,7 +165,9 @@
     "board_type": "PAPER_S31_4IN0_WIFI",
     "app": "paper-s31-4in0-wifi",
     "backend": "WIFI",
-    "defaults": ["profiles/paper-s31-4in0-wifi.defaults"]
+    "defaults": [
+      "profiles/paper-s31-4in0-wifi.defaults"
+    ]
   },
   "paper-s31-wifi": {
     "board": "paper-s31",
@@ -217,6 +219,17 @@
       "profiles/lvgl.defaults",
       "profiles/s3-network.defaults",
       "profiles/waveshare-amoled-175-wifi.defaults"
+    ]
+  },
+  "sdgoods-wifi": {
+    "board": "sdgoods-esp32s3",
+    "board_type": "SDGOODS_ESP32S3_WIFI",
+    "app": "sdgoods-wifi",
+    "backend": "WIFI",
+    "defaults": [
+      "profiles/lvgl.defaults",
+      "profiles/s3-network.defaults",
+      "profiles/sdgoods-wifi.defaults"
     ]
   }
 }

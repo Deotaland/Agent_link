@@ -1,6 +1,7 @@
 {
   "platform": "https://bot.deotaland.cn",
   "products": {
+    "sdgoods": {"id": 13, "enterprise_id": 0, "name": "SDGOODS", "product_key": "sdgoods", "chip_type": "esp32-s3"},
     "ojbadge": {"id": 11, "enterprise_id": 0, "name": "OJBadge", "chip_type": "esp32-s3"},
     "folotoy-ai-passport": {"id": 1, "name": "FoloToy-AI-Passport", "chip_type": "esp32-c3"},
     "rorolee-rrl-01": {"id": 2, "name": "ROROLEE", "chip_type": "esp32-s3"},
@@ -15,6 +16,7 @@
     "esp32-s3-touch-amoled-175": {"id": 10, "enterprise_id": 0, "product_key": "esp32-s3-touch-amoled-175", "name": "ESP32-S3-Touch-AMOLED-1.75", "chip_type": "esp32-s3"}
   },
   "profiles": {
+    "sdgoods-wifi": "sdgoods",
     "ojbadge-wifi": "ojbadge",
     "ai-passport-ble": "folotoy-ai-passport",
     "ai-passport-wifi": "folotoy-ai-passport",

@@ -24,6 +24,7 @@ python tools/build_firmware.py korvo-wifi --jobs 2
 | Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | WiFi; ESP32-S3 |
 | Mozhifang paper V2 | `paper-s31-wifi` | WiFi; ESP32-S31 |
 | Mozhifang paper V2 4.0-inch monochrome | `paper-s31-4in0-wifi` | WiFi; ESP32-S31; independent three-key desktop |
+| Sugarat Button / SDGOODS (360px LCD, 32 MB) | `sdgoods-wifi` | WiFi; Factory launcher + Device status |
 | OJBadge | `ojbadge-wifi` | Local ESP-NOW friends; no platform backend |
 
 S3/C3 profiles support ESP-IDF 5.5.x and 6.1.x. S31 needs an S31-capable 6.1 SDK.
@@ -35,8 +36,8 @@ The non-C AMOLED 1.75 profile defaults to its Agent voice application. In
 **Agent Link Device > Firmware build target** comes first. Application mode shows
 **Application firmware profile**, with profiles supported by the current chip.
 Factory mode hides that application list and shows **Factory board**, containing
-only registered hardware names. Currently only the non-C Waveshare AMOLED 1.75
-is listed. Chips without any registered Factory do not offer Factory mode.
+only registered hardware names, including the non-C Waveshare AMOLED 1.75 and
+Sugarat Button. Chips without any registered Factory do not offer Factory mode.
 The Factory source is bound to the selected board manifest.
 The same Menuconfig selection is used by VS Code and the build tool. Old CMake
 image-role cache entries do not override it. `--image-role voice` or
@@ -73,6 +74,10 @@ starts the launcher. Its own `flasher_args.json`, ELF/MAP and SHA-256 manifest t
 with it. Initial merged packages replace settings and installed apps. Application
 builds deliberately do not leave `build/merged.bin`: its padding would erase the
 launcher. See the [factory guide](../factory/waveshare-amoled-175/README.md).
+The Sugarat Button profile (`sdgoods-wifi`, also for units bought from SDGOODS)
+uses managed layout sdgoods-v2, with three 3 MB app slots
+and its shared font below 16 MB in the physical 32 MB flash. Migration from a different layout
+requires a full USB package. See its [Factory guide](../factory/sdgoods-esp32s3/README.md).
 Other boards retain their existing single-app A/B layouts and flash behavior.
 
 ## Configuration

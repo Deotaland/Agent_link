@@ -573,6 +573,12 @@ def archive_build(profile, role, build_dir):
     output = build_dir / "images" / profile["name"] / role
     output.mkdir(parents=True, exist_ok=True)
     names = set(files.values()) | {"agent_link.elf", "agent_link.map", "flasher_args.json", "flash-plan.json"}
+    for filename in ("LICENSE", "NOTICE"):
+        source = ROOT / "boards" / profile["board"] / filename
+        if source.is_file():
+            name = f"{profile['board']}-{filename}.txt"
+            shutil.copy2(source, build_dir / name)
+            names.add(name)
     if any(asset["file"].startswith("components/paper_resources/") for asset in profile.get("flash_assets", [])):
         names.update({"fonts-OFL.txt", "pinyin-LICENSE.txt", "jieba-LICENSE.txt"})
     for name in names:
