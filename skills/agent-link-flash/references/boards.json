@@ -453,6 +453,37 @@
       ]
     },
     {
+      "board_type": "PAPER_S31_4IN0_WIFI",
+      "dir": "paper-s31-4in0",
+      "target": "esp32s31",
+      "model": "paper V2 4IN0",
+      "product": "Mozhifang paper V2 (4.0-inch monochrome e-paper)",
+      "vendor": "Mozhifang",
+      "buy": [],
+      "docs": [],
+      "aliases": [
+        "paper-s31-4in0",
+        "paper-s31-4IN0",
+        "paper V2 4IN0",
+        "墨纸坊黑白屏",
+        "墨纸坊4寸",
+        "秋田微 E0400A01-AF-S"
+      ],
+      "hardware": "Paper V2 ESP32-S31NRV16, E0400A01-AF-S 4.0-inch monochrome panel, optional I2C touch on FPC2, ES8389, BQ27220, PCF85063, SC7A20",
+      "identify": "Paper V2 PCB with E0400A01-AF-S on FPC3 (24 pins); 528x792 portrait logical display",
+      "flash_port": "Type-C USB Serial/JTAG on GPIO33/34; hold BOOT (GPIO61) while connecting for download mode",
+      "use": "Independent touch/three-key WiFi desktop: offline nine-key/full-keyboard pinyin, Agent text/voice, conversations, alarm, calendar and SD music",
+      "transport": "WIFI",
+      "ble_name": null,
+      "fw_model": "PAPER-S31-4IN0",
+      "status": "supported",
+      "notes": "Product ID 14, key paper-s31-4in0, chip_type esp32-s31. ESP-IDF 6.1. Shares Paper V2 peripheral drivers. KEY3 up, KEY2 down, KEY1 confirm; hold KEY1 back. BOOT has no app action. I2C touch auto-detects GT911/FT6x36/CST816; GT911 defaults to reversed 320x480 axes scaled to 528x792, with optional four-point calibration. Offline pinyin, 6763 GB2312 Hanzi; no handwriting. Layout v2 requires initial USB migration: future 3 MiB Factory, three 3 MiB app slots, shared raster/IME resources in font_cjk. Factory firmware is not implemented. Hardware/live platform acceptance pending. PCM16 voice; no S31 Opus library.",
+      "profile": "paper-s31-4in0-wifi",
+      "sdkconfig": [
+        "CONFIG_AGENT_LINK_PROFILE_PAPER_S31_4IN0_WIFI=y"
+      ]
+    },
+    {
       "board_type": "OJBADGE_WIFI",
       "dir": "ojbadge",
       "target": "esp32s3",

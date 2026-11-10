@@ -18,6 +18,7 @@ iOS overseas App Store search **rorolee**, Android APK at [rorolee.com](https://
 | Waveshare AMOLED 1.75C / waveshare-amoled-175c-wifi | Amoled175-XXXX | 32 MB board; BOOT starts/ends call; swipe left for apps; nearby acceptance pending |
 | Waveshare ePaper 3.97 WiFi | WavePaper397-XXXX | Hold center for conversations, tap center for a call; device acceptance pending |
 | paper V2 / S31 | PaperS31-XXXX | KEY1/2/3 navigate/confirm; Voice selects conversations; hold KEY1 for call, KEY2 to stop audio; device acceptance pending |
+| paper V2 4IN0 / paper-s31-4in0-wifi | Paper4IN0-XXXX | KEY3 up, KEY2 down, KEY1 confirm; hold KEY1 back; BOOT unused by app; hardware/platform acceptance pending |
 | Korvo BLE | KORVO | Open Voice or Camera; confirm ST7789 240x280 panel variant |
 | Korvo WiFi | KorvoCloud-XXXX | Select/create conversation on voice page; camera preview is local |
 | RoRoLee reference BLE | ROROLEE_S3 | Hold BOOT to talk, release to send; distinct from staff badge |

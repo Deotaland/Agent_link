@@ -4,7 +4,7 @@
   "name": "paper-s31-wifi",
   "backend": "WIFI",
   "ui": "none",
-  "shared_app": "",
+  "shared_app": "paper-services",
   "ui_component": "",
   "sources": [],
   "include_dirs": [],

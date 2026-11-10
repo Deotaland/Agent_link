@@ -18,6 +18,7 @@ BLE 先安装 Rorolee App：iOS 在海外 App Store 搜索 `rorolee`；安卓在
 | 微雪 1.75**C**（32 MB）：`waveshare-amoled-175c-wifi` | `Amoled175-XXXX` | 短按 BOOT 开始/结束通话；左滑进应用，设置选语言；交友双机验收待完成 |
 | 微雪 3.97 墨水屏：`waveshare-epaper-397-wifi` | `WavePaper397-XXXX` | 长按中键选会话；主页短按中键通话，UP/DOWN 调音量，BOOT 返回/结束；等待刷新，真机验收待完成 |
 | 墨纸坊 paper V2：`paper-s31-wifi` | `PaperS31-XXXX` | KEY1/2/3 为上/下/确认，BOOT 返回；Voice 中选会话。长按 KEY1 通话、KEY2 停音，KEY3 请求刷新。六色屏刷新较慢，真机验收待完成 |
+| 墨纸坊 paper V2 4 寸黑白屏：`paper-s31-4in0-wifi` | `Paper4IN0-XXXX` | KEY3 上、KEY2 下、KEY1 确认，长按 KEY1 返回；BOOT 不参与应用。独立桌面含 Agent 语音、文字、会话、闹钟、月历和 SD 音乐；产品 14，真机与平台验收待完成 |
 | Korvo：`korvo-ble` | App 搜索 `KORVO` | 进入本地 Voice 应用发起语音，或验证 Camera 预览；先确认 240×280 ST7789 屏幕变体 |
 | Korvo：`korvo-wifi` | `KorvoCloud-XXXX` | 进入语音页选/建会话并开始通话；相机是本地预览，不应期待 Agent 图片上传 |
 | RoRoLee RRL-01：`rorolee-ble` | App 搜索 `ROROLEE_S3` | 按住 BOOT 说话、松开发送，验证回复；与工牌方案用途不同 |

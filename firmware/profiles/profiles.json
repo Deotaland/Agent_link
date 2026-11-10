@@ -160,6 +160,13 @@
       "profiles/wownny-old-muse.defaults"
     ]
   },
+  "paper-s31-4in0-wifi": {
+    "board": "paper-s31-4in0",
+    "board_type": "PAPER_S31_4IN0_WIFI",
+    "app": "paper-s31-4in0-wifi",
+    "backend": "WIFI",
+    "defaults": ["profiles/paper-s31-4in0-wifi.defaults"]
+  },
   "paper-s31-wifi": {
     "board": "paper-s31",
     "board_type": "PAPER_S31_WIFI",

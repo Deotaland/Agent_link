@@ -154,6 +154,7 @@ are listed in the [device guide](guides/devices.md).
 | C152 | M5Stack StopWatch | `m5stack-stopwatch-ble` | ESP32-S3 | BLE | supported |
 | C152 | M5Stack StopWatch | `m5stack-stopwatch-wifi` | ESP32-S3 | WiFi | supported |
 | paper V2 | Mozhifang paper V2 (3.6-inch six-color e-paper) | `paper-s31-wifi` | ESP32-S31 | WiFi | supported |
+| paper V2 4IN0 | Mozhifang paper V2 (4.0-inch monochrome e-paper) | `paper-s31-4in0-wifi` | ESP32-S31 | WiFi | supported |
 | OJBadge | OJBadge | `ojbadge-wifi` | ESP32-S3 | — | supported |
 | ESP32-S3 AIoT Basic V2 | ESP32-S3 AIoT Basic V2 development board | `gc2145-camera-ble` | ESP32-S3 | BLE | supported |
 | ESP32-S3-Touch-AMOLED-1.75 | Waveshare ESP32-S3-Touch-AMOLED-1.75 (non-C) | `waveshare-amoled-175-wifi` | ESP32-S3 | WiFi | supported |

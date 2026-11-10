@@ -1,0 +1,10 @@
+{
+  "pinyin.txt": {
+    "url": "https://raw.githubusercontent.com/mozillazg/pinyin-data/master/pinyin.txt",
+    "sha256": "2342a6f98c85dbc3c8d26aef31744876a36326c6466e51e9a0f16898c36c2011"
+  },
+  "LICENSE": {
+    "url": "https://raw.githubusercontent.com/mozillazg/pinyin-data/master/LICENSE",
+    "sha256": "9c048697be2502a16e8bcb282d5d465a07295b2def0ffb05a269c5d39dbe1586"
+  }
+}

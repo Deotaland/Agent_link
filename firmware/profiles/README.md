@@ -23,6 +23,7 @@ python tools/build_firmware.py korvo-wifi --jobs 2
 | ESP32-S3 + ES8311 wiring examples | `es8311-asr-ble`, `es8311-voice-ble` | BLE |
 | Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | WiFi; ESP32-S3 |
 | Mozhifang paper V2 | `paper-s31-wifi` | WiFi; ESP32-S31 |
+| Mozhifang paper V2 4.0-inch monochrome | `paper-s31-4in0-wifi` | WiFi; ESP32-S31; independent three-key desktop |
 | OJBadge | `ojbadge-wifi` | Local ESP-NOW friends; no platform backend |
 
 S3/C3 profiles support ESP-IDF 5.5.x and 6.1.x. S31 needs an S31-capable 6.1 SDK.

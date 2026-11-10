@@ -1,0 +1,2 @@
+#pragma once
+#define CONFIG_BOARD_TYPE_PAPER_S31_4IN0_WIFI 1

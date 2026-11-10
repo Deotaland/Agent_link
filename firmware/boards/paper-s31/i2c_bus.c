@@ -90,3 +90,11 @@ esp_err_t i2c_read_reg16(uint8_t addr, uint16_t reg, uint8_t *buf, size_t len)
     const uint8_t r[2] = { reg >> 8, reg & 0xFF };
     return i2c_master_transmit_receive(d, r, sizeof(r), buf, len, I2C_TIMEOUT_MS);
 }
+
+esp_err_t i2c_write_reg16(uint8_t addr, uint16_t reg, uint8_t value)
+{
+    i2c_master_dev_handle_t d = dev(addr);
+    if (!d) return ESP_ERR_INVALID_STATE;
+    const uint8_t bytes[] = { (uint8_t)(reg >> 8), (uint8_t)reg, value };
+    return i2c_master_transmit(d, bytes, sizeof(bytes), I2C_TIMEOUT_MS);
+}

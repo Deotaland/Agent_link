@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "app_id": "paper-s31-4in0-wifi",
+  "name": "Paper 4IN0 Desktop",
+  "backend": "WIFI",
+  "ui": "raster",
+  "shared_app": "paper-services",
+  "ui_component": "",
+  "sources": [],
+  "include_dirs": [],
+  "requires": ["json", "paper_resources", "offline_ime"]
+}

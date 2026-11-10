@@ -1,9 +1,9 @@
-# A single generated plan controls IDF flash/app-flash, external flash metadata
-# and package tools. IDF's default "first app" address is overridden for managed
-# applications; the board's factory partition remains the launcher.
+# A single generated plan controls flash destinations and initial boot selection.
+# Override IDF's first-app address for both installed and future/reserved Factory layouts.
 file(READ "${CMAKE_BINARY_DIR}/flash-plan.json" _flash_plan)
 string(JSON _flash_mode GET "${_flash_plan}" mode)
-if(_flash_mode STREQUAL "managed")
+string(JSON _reserved_factory ERROR_VARIABLE _factory_error GET "${_flash_plan}" partitions factory size)
+if(_flash_mode STREQUAL "managed" OR NOT _factory_error)
     string(JSON _app_offset GET "${_flash_plan}" app_offset)
     string(JSON _boot_offset GET "${_flash_plan}" otadata_offset)
     math(EXPR _app_offset "${_app_offset}" OUTPUT_FORMAT HEXADECIMAL)

@@ -38,6 +38,14 @@
     ],
     "defaults": "partitions/paper-s31-v1.defaults"
   },
+  "paper-4in0-v2": {
+    "version": 2,
+    "mode": "single",
+    "csv": "partitions/paper-4in0-v2.csv",
+    "targets": ["esp32s31"],
+    "app_slots": ["ota_0", "ota_1", "ota_2"],
+    "defaults": "partitions/paper-4in0-v2.defaults"
+  },
   "amoled-175-v1": {
     "version": 1,
     "mode": "managed",

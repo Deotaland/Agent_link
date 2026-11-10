@@ -26,6 +26,7 @@ esp_err_t i2c_write_reg(uint8_t addr, uint8_t reg, uint8_t value);
 
 /* 16 位寄存器地址（高字节在前），摄像头 SCCB 用 */
 esp_err_t i2c_read_reg16(uint8_t addr, uint16_t reg, uint8_t *buf, size_t len);
+esp_err_t i2c_write_reg16(uint8_t addr, uint16_t reg, uint8_t value);
 
 #ifdef __cplusplus
 }

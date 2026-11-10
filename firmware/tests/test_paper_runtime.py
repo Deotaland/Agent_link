@@ -9,9 +9,10 @@ import subprocess
 
 root = Path(__file__).resolve().parents[1]
 app = root / 'apps/paper-s31-wifi'
+services = root / 'apps/common/paper-services'
 build = root / '.cache/paper-runtime-tests'
 build.mkdir(parents=True, exist_ok=True)
-music = (app / 'paper_music.cc').read_text(encoding='utf-8')
+music = (services / 'paper_music.cc').read_text(encoding='utf-8')
 desktop = (app / 'paper_s31_wifi.cc').read_text(encoding='utf-8')
 driver = (root / 'boards/paper-s31/epd.c').read_text(encoding='utf-8')
 
@@ -22,7 +23,7 @@ def section(source, start, end):
 
 
 fixture = (root / 'tests/paper_runtime_test.cc').read_text(encoding='utf-8')
-music_class = (app / 'paper_music.h').read_text(encoding='utf-8')
+music_class = (services / 'paper_music.h').read_text(encoding='utf-8')
 music_class = music_class[music_class.index('class PaperMusic {'):].replace('private:', 'public:')
 parts = {
     'MUSIC_CLASS': music_class,
@@ -50,7 +51,7 @@ if not (json_dir / 'cJSON.h').is_file():
     json_dir = Path(os.environ.get('IDF_PATH', '')) / 'components/json/cJSON'
 if not (json_dir / 'cJSON.h').is_file():
     raise SystemExit('Local cJSON headers are required; build the S31 profile first')
-includes = [app, root / 'boards/paper-s31', json_dir, root / 'tests/platform_api_stubs']
+includes = [app, services, root / 'boards/paper-s31', json_dir, root / 'tests/platform_api_stubs']
 environment = os.environ.copy()
 if os.name == 'nt':
     vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'

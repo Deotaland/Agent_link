@@ -375,10 +375,14 @@ void PIC_display_Clear(void)
  *    PWR  VGH/VGL ±20V、VSH/VSL ±15V（与规格书光学测试条件一致）
  *    PSR  0x1F：黑白模式，波形用 OTP（芯片默认 0x0F 是黑白红模式），镜像时改 epd.h 的 EPD_4IN0_PSR
  *    TRES 792 x 600：芯片横着扫（长边是源极），短边 600 根栅极全刷（屏上用了 528 根，
- *         偶数 G0~G598 在左 300 列、奇数 G1~G455 在右 228 列），竖放靠 EPD_ROTATION 90 转回 528x792
+ *         偶数 G0~G598 在左 300 列、奇数 G1~G455 在右 228 列），90/270 度竖屏映射为 528x792
  *    CDI  0x29 0x07：新数据 1=白 0=黑，刷新后新数据自动拷到旧数据
  * ================================================================ */
 #elif EPD_PANEL == EPD_PANEL_4IN0
+
+#include "epd_4in0_window.h"
+
+static bool s_shadow_valid; // Invalid after any transfer or sleep timeout.
 
 static void EPD_W21_Init(void)
 {
@@ -428,6 +432,7 @@ void EPD_sleep(void)
     vTaskDelay(pdMS_TO_TICKS(20));
     lcd_chkstatus();
     CMD(DSLP, 0xA5);    /* deep sleep，唤醒需要重新 EPD_init() */
+    if (s_dead) s_shadow_valid = false;
 }
 
 static void bw_refresh(void)
@@ -451,14 +456,13 @@ static uint8_t *shadow(void)
     return s_shadow;
 }
 
-static bool s_shadow_valid;     /* 全刷过一次后才知道屏上是什么 */
-
 void PIC_display(const unsigned char *picData)
 {
     send_frame_bw(DTM, NULL, 0xFF);                  /* 旧数据当作全白 */
     send_frame_bw(DTM2, picData, 0);
     bw_refresh();
-    if (shadow()) {
+    s_shadow_valid = false;
+    if (!s_dead && shadow()) {
         memcpy(s_shadow, picData, EPD_WIDTH * EPD_HEIGHT);
         s_shadow_valid = true;
     }
@@ -469,7 +473,8 @@ void EPD_Display_Color(uint8_t color)
     send_frame_bw(DTM, NULL, 0xFF);
     send_frame_bw(DTM2, NULL, color == EPD_WHITE ? 0xFF : 0x00);
     bw_refresh();
-    if (shadow()) {
+    s_shadow_valid = false;
+    if (!s_dead && shadow()) {
         memset(s_shadow, color == EPD_WHITE ? 0xFF : 0x00, EPD_WIDTH * EPD_HEIGHT);
         s_shadow_valid = true;
     }
@@ -480,31 +485,20 @@ void PIC_display_Clear(void)
     EPD_Display_Color(EPD_WHITE);
 }
 
-/* 屏上第 x 列（从左往右）由哪根栅极驱动：偶数 G0~G598 在左 300 列，奇数接着排右边 */
-static int gate_of_col(int x)
-{
-    return x < EPD_4IN0_LEFT_COLS ? 2 * x : 2 * (x - EPD_4IN0_LEFT_COLS) + 1;
-}
-
-/* 栅极 g 在屏上第几列，不在屏上返回 -1 */
-static int col_of_gate(int g)
-{
-    int x = (g % 2 == 0) ? g / 2 : EPD_4IN0_LEFT_COLS + g / 2;
-    return x < EPD_WIDTH ? x : -1;
-}
-
 /* 局部刷新。picData 是整屏新画面，(x,y,w,h) 是变了的区域（应用层坐标）。
  * 芯片窗口：屏上的行 = 源极（按 8 对齐），屏上的列换算成栅极取最小~最大。
  * 因为栅极奇偶分在左右两边，一个窗口在屏上是左右两条，两条都按新画面发。 */
 void epd_partial(const unsigned char *picData, int x, int y, int w, int h)
 {
-#if EPD_ROTATION != 90
-    ESP_LOGW(TAG, "局刷只按竖放（EPD_ROTATION 90）算了窗口，改用全刷");
+#if EPD_ROTATION != 90 && EPD_ROTATION != 270
+    ESP_LOGW(TAG, "局刷只支持 90/270 度竖屏，改用全刷");
     EPD_init();
     PIC_display(picData);
     EPD_sleep();
     return;
 #endif
+    epd4_window_t window;
+    if (!picData || !epd4_window(x, y, w, h, &window)) return;
     if (!shadow() || !s_shadow_valid) {
         ESP_LOGI(TAG, "还没全刷过，先全刷一次");
         EPD_init();
@@ -512,21 +506,7 @@ void epd_partial(const unsigned char *picData, int x, int y, int w, int h)
         EPD_sleep();
         return;
     }
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > EPD_WIDTH) { w = EPD_WIDTH - x; }
-    if (y + h > EPD_HEIGHT) { h = EPD_HEIGHT - y; }
-    if (w <= 0 || h <= 0) {
-        return;
-    }
-
-    int h0 = y & ~7, h1 = (y + h - 1) | 7;           /* 源极按 8 对齐 */
-    int g0 = EPD_4IN0_GATES, g1 = -1;
-    for (int c = x; c < x + w; c++) {
-        int g = gate_of_col(c);
-        g0 = g < g0 ? g : g0;
-        g1 = g > g1 ? g : g1;
-    }
+    const int h0 = window.h0, h1 = window.h1, g0 = window.g0, g1 = window.g1;
     ESP_LOGD(TAG, "局刷 (%d,%d %dx%d) -> 源极 %d~%d 栅极 %d~%d", x, y, w, h, h0, h1, g0, g1);
 
     init_regs();
@@ -537,8 +517,8 @@ void epd_partial(const unsigned char *picData, int x, int y, int w, int h)
     power_on();
     EPD_W21_WriteCMD(PTIN);
     const uint8_t win[] = {
-        h0 >> 8, h0 & 0xF8, h1 >> 8, (h1 & 0xF8) | 0x07,
-        g0 >> 8, g0 & 0xFF, g1 >> 8, g1 & 0xFF,
+        (uint8_t)(h0 >> 8), (uint8_t)(h0 & 0xF8), (uint8_t)(h1 >> 8), (uint8_t)((h1 & 0xF8) | 0x07),
+        (uint8_t)(g0 >> 8), (uint8_t)(g0 & 0xFF), (uint8_t)(g1 >> 8), (uint8_t)(g1 & 0xFF),
         0x01,                                        /* PT_SCAN：窗口内外栅极都扫 */
     };
     write_cmd_data(PTL, win, sizeof(win));
@@ -548,14 +528,17 @@ void epd_partial(const unsigned char *picData, int x, int y, int w, int h)
     EPD_W21_WriteCMD(PTOUT);
     EPD_sleep();
 
+    if (s_dead) { s_shadow_valid = false; return; }
+
     /* 只把真正刷过的像素记进 shadow（窗口里左右两条） */
     for (int g = g0; g <= g1; g++) {
-        int c = col_of_gate(g);
+        int c = epd4_col_of_gate(g);
         if (c < 0) {
             continue;
         }
         for (int r = h0; r <= h1 && r < EPD_HEIGHT; r++) {
-            s_shadow[r * EPD_WIDTH + c] = picData[r * EPD_WIDTH + c];
+            const int row = epd4_row_of_source(r);
+            s_shadow[row * EPD_WIDTH + c] = picData[row * EPD_WIDTH + c];
         }
     }
 }
@@ -774,3 +757,12 @@ void epd_partial(const unsigned char *picData, int x, int y, int w, int h)
     EPD_sleep();
 }
 #endif
+
+bool epd_partial_ready(void)
+{
+#if EPD_PANEL == EPD_PANEL_4IN0
+    return s_shadow_valid && !s_dead;
+#else
+    return false;
+#endif
+}

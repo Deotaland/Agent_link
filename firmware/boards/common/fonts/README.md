@@ -34,6 +34,11 @@ selected layout:
 | `partitions/standard-v1.csv` | `0x412000` | `0xB72000` | Shared font for the display profiles using this layout |
 | `partitions/paper-s31-v1.csv` | `0x812000` | `0x772000` | Reserved; the current S31 app embeds its raster font |
 
+Paper 4IN0 now uses `paper-4in0-v2.csv`. Its `font_cjk` partition at `0xC22000`
+stores a [shared raster/IME pack](../../../components/paper_resources/README.md)
+with the pre-generated glyphs and pinyin dictionary. It does not use this
+LVGL/TTF binary or TinyTTF loader. The six-color S31 and C3 raster paths are unchanged.
+
 A segmented USB flash includes the declared font asset and retains NVS. A merged
 USB image spans the intervening settings areas and can overwrite them. An
 app-only OTA does not install the font: install the partition table, app and

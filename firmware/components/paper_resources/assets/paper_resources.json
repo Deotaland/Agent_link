@@ -1,0 +1,10 @@
+{
+  "format": "AGLKRSC1",
+  "version": 1,
+  "bytes": 937110,
+  "glyphs": 7813,
+  "dictionary_entries": 9216,
+  "sha256": "48f6fc5797e256551e36955fec94f940fe8d9fb3c9ec048269808c4d7c89417a",
+  "font_source_sha256": "8dad134217f692f3e65415078d72421ba4d6c4085967de3714d177a2a6b9d227",
+  "dictionary_source_sha256": "b4df3e31d3808cbe6af8e147be59e8c0a1074d9dc990f0f8800d4335c27705d2"
+}

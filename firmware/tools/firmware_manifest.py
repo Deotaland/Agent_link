@@ -151,3 +151,10 @@ def flash_plan(profile, role):
                 partition_table_offset=0x8000, partitions=layout["partitions"],
                 app_slots=layout["app_slots"], cover_reserve=layout.get("cover_reserve", 0),
                 flash_assets=profile.get("flash_assets", []))
+
+
+def initial_boot_slot(plan):
+    """A reserved/installed Factory must not take precedence over a USB app install."""
+    if plan["partition"] == "factory" or "factory" not in plan["partitions"]:
+        return None
+    return plan["app_slots"].index(plan["partition"])

@@ -27,6 +27,7 @@ build/
 
 # ESP-IDF specific build outputs
 *.bin
+!firmware/components/paper_resources/assets/paper_resources.bin
 *.elf
 *.map
 # Generated in the build directory

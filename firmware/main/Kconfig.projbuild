@@ -11,6 +11,10 @@ config BOARD_TYPE_PAPER_S31_WIFI
     bool
     default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-wifi"
 
+config BOARD_TYPE_PAPER_S31_4IN0_WIFI
+    bool
+    default y if AGENT_LINK_FIRMWARE_PROFILE = "paper-s31-4in0-wifi"
+
 config PAPER_S31_DISPLAY_DIAGNOSTIC
     bool "S31: display one static diagnostic frame, then hold"
     depends on BOARD_TYPE_PAPER_S31_WIFI
@@ -182,6 +186,7 @@ config AGENT_LINK_TRANSPORT_WIFI
     default y if BOARD_TYPE_FOLOTOY_AI_PASSPORT_WIFI
     default y if BOARD_TYPE_WAVESHARE_EPAPER_397_WIFI
     default y if BOARD_TYPE_PAPER_S31_WIFI
+    default y if BOARD_TYPE_PAPER_S31_4IN0_WIFI
     default y if BOARD_TYPE_ESP32S3_KORVO_CLOUD
     default y if BOARD_TYPE_M5STACK_STOPWATCH_WIFI
     default y if BOARD_TYPE_WAVESHARE_AMOLED_175C_WIFI

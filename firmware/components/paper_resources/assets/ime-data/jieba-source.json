@@ -1,0 +1,10 @@
+{
+  "jieba/dict.txt": {
+    "url": "https://raw.githubusercontent.com/fxsjy/jieba/master/jieba/dict.txt",
+    "sha256": "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8"
+  },
+  "LICENSE": {
+    "url": "https://raw.githubusercontent.com/fxsjy/jieba/master/LICENSE",
+    "sha256": "18ba0984839f85853b29fadaf992f7dba8fd0ca0fbeae34de2b8735222dc7a37"
+  }
+}

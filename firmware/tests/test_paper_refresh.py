@@ -10,6 +10,7 @@ build = root / '.cache/paper-refresh-tests'
 build.mkdir(parents=True, exist_ok=True)
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--busy-diagnostic', action='store_true', help='test production BUSY trace against simulated pin transitions')
+parser.add_argument('--paper4', action='store_true', help='test the independent Paper 4IN0 desktop state helpers')
 args = parser.parse_args()
 source = root / 'tests/paper_refresh_test.cc'
 if args.busy_diagnostic:
@@ -20,7 +21,12 @@ if args.busy_diagnostic:
     source = build / 'paper_busy_diag_test.cc'
     source.write_text(fixture.replace('// INSERT_PRODUCTION_BUSY_WAIT', production[start:end]), encoding='utf-8')
 include = root / 'apps/paper-s31-wifi'
+if args.paper4:
+    source = root / 'tests/paper4_state_test.cc'
+    include = root / 'apps/paper-s31-4in0-wifi'
 environment = os.environ.copy()
+extra_includes = ([root / 'components/offline_ime/include', root / 'components/paper_resources/include',
+                   root / 'boards/common'] if args.paper4 else [])
 if os.name == 'nt':
     vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
     installation = subprocess.check_output([str(vswhere), '-latest', '-products', '*',
@@ -36,10 +42,10 @@ if os.name == 'nt':
     compiler = shutil.which('cl.exe', path=environment.get('Path') or environment.get('PATH'))
     binary = build / 'paper_refresh_test.exe'
     subprocess.run([compiler, '/nologo', '/std:c++17', '/EHsc', '/W4', '/utf-8', '/D_CRT_SECURE_NO_WARNINGS',
-        '/I' + str(include), str(source), '/Fo' + str(build) + '/', '/Fe' + str(binary)],
+        '/I' + str(include), *['/I'+str(p) for p in extra_includes], str(source), '/Fo' + str(build) + '/', '/Fe' + str(binary)],
         env=environment, cwd=build, check=True)
 else:
     binary = build / 'paper_refresh_test'
     subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-I' + str(include),
-                    str(source), '-o', str(binary)], cwd=build, check=True)
+                    *['-I'+str(p) for p in extra_includes], str(source), '-o', str(binary)], cwd=build, check=True)
 subprocess.run([str(binary)], check=True)

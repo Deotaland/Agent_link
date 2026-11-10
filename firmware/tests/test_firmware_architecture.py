@@ -11,7 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import build_firmware as build
-from firmware_manifest import flash_plan, partitions, resolve_profiles
+from firmware_manifest import flash_plan, partitions, resolve_profiles, initial_boot_slot
 from firmware_image import DESCRIPTOR, boot_data, partition_records
 from flash_firmware import check_device, compatible_identity, preflight
 
@@ -59,6 +59,31 @@ class FirmwareArchitectureTests(unittest.TestCase):
         factory = flash_plan(self.profile, "factory")
         self.assertEqual((factory["partition"], factory["app_offset"]), ("factory", 0x10000))
         self.assertEqual(self.plan["app_max_bytes"], 0x2F2000)
+
+    def test_paper_reserved_factory_boot_and_shared_resources(self):
+        profile = self.profiles['paper-s31-4in0-wifi']
+        plan = flash_plan(profile, 'standard')
+        self.assertEqual((plan['layout'],plan['layout_version']), ('paper-4in0-v2',2))
+        self.assertIsNone(build.system_images(profile))  # Launcher firmware is a later task.
+        self.assertEqual((plan['app_offset'],plan['app_max_bytes']), (0x310000,0x300000))
+        entries = plan['partitions']
+        self.assertEqual((entries['factory']['offset'],entries['factory']['size']), (0x10000,0x300000))
+        self.assertEqual(plan['app_slots'], ['ota_0','ota_1','ota_2'])
+        for i, slot in enumerate(plan['app_slots']):
+            self.assertEqual((entries[slot]['offset'],entries[slot]['size']), (0x310000+i*0x300000,0x300000))
+        self.assertEqual((entries['font_cjk']['offset'],entries['font_cjk']['size']), (0xC22000,0x230000))
+        self.assertEqual(max(e['offset']+e['size'] for e in entries.values()),0xE52000)
+        self.assertEqual(initial_boot_slot(plan),0)
+        self.assertEqual(struct.unpack_from('<I',boot_data(initial_boot_slot(plan)))[0],1)
+        asset = profile['flash_assets'][0]
+        self.assertEqual(asset['partition'],'font_cjk')
+        self.assertLess((ROOT / asset['file']).stat().st_size,entries['font_cjk']['size'])
+        self.assertNotIn('raster_cjk_14.c',profile['drivers'])
+        old = flash_plan(self.profiles['paper-s31-wifi'],'standard')
+        self.assertEqual((old['app_offset'],old['app_max_bytes']), (0x10000,0x400000))
+        self.assertIsNone(initial_boot_slot(old))
+        self.assertEqual(initial_boot_slot(self.plan),0)
+        self.assertIsNone(initial_boot_slot(flash_plan(self.profile,'factory')))
 
     def test_same_board_and_backend_can_select_multiple_application_profiles(self):
         # Use an existing source directory as a metadata fixture only. This does

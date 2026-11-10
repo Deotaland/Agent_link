@@ -30,7 +30,7 @@ PRIVATE_KEYS = {
     "CONFIG_AGENT_LINK_REALTIME_USER_API_KEY",
 }
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from firmware_manifest import resolve_profiles, system_images as compose_images, flash_plan
+from firmware_manifest import resolve_profiles, system_images as compose_images, flash_plan, initial_boot_slot
 
 from firmware_menu import (application_selection, selected_factory, factory_boards, factory_symbol,
                            factory_kconfig as make_factory_kconfig, profiles_kconfig, write_application_cache)
@@ -573,6 +573,8 @@ def archive_build(profile, role, build_dir):
     output = build_dir / "images" / profile["name"] / role
     output.mkdir(parents=True, exist_ok=True)
     names = set(files.values()) | {"agent_link.elf", "agent_link.map", "flasher_args.json", "flash-plan.json"}
+    if any(asset["file"].startswith("components/paper_resources/") for asset in profile.get("flash_assets", [])):
+        names.update({"fonts-OFL.txt", "pinyin-LICENSE.txt", "jieba-LICENSE.txt"})
     for name in names:
         destination = output / name
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -652,8 +654,7 @@ def main():
             plan = flash_plan(profiles[args.profile], role)
             args.flash_plan.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
             from firmware_image import boot_data
-            slot = plan["app_slots"].index(plan["partition"]) if plan["mode"] == "managed" and role != "factory" else None
-            args.flash_plan.with_name("boot-selection.bin").write_bytes(boot_data(slot))
+            args.flash_plan.with_name("boot-selection.bin").write_bytes(boot_data(initial_boot_slot(plan)))
         elif args.prepare:
             prepare_config(args.profile, profiles[args.profile], args.sdkconfig, args.reset_config)
         elif args.validate:

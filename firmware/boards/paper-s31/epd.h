@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "sdkconfig.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,8 +22,12 @@ extern "C" {
 #define EPD_PANEL_3IN6  2
 #define EPD_PANEL_4IN0  3
 
-/* ↓↓↓ 换屏改这里：EPD_PANEL_7IN3 / EPD_PANEL_3IN6 / EPD_PANEL_4IN0 ↓↓↓ */
+/* The selected board profile owns the panel; keep the six-color profile compatible. */
+#if CONFIG_BOARD_TYPE_PAPER_S31_4IN0_WIFI
+#define EPD_PANEL       EPD_PANEL_4IN0
+#else
 #define EPD_PANEL       EPD_PANEL_3IN6
+#endif
 
 /* 屏幕物理分辨率 + 显示方向
  * EPD_ROTATION：屏幕实际摆放相对默认方向（排线在下方）顺时针转了多少度（0 / 90 / 180 / 270）
@@ -39,10 +44,10 @@ extern "C" {
 /* 规格书写 528(H)x792(V) 是竖放时的观感。芯片（UC8179，栅极最多 600 行）实际是
  * 长边 792 列（源极，竖放时从上往下）x 短边 528 行（栅极）扫描。
  * 实测：按 528x792 设分辨率时只亮了上面 528/792，画面错乱。
- * 竖放、排线在下：EPD_ROTATION 90，应用层 528x792 */
+ * 4IN0 Board 相对原始竖屏方向再转 180 度：EPD_ROTATION 270，应用层仍为 528x792 */
 #define EPD_PANEL_W     792
 #define EPD_PANEL_H     528
-#define EPD_ROTATION    90
+#define EPD_ROTATION    270
 #define EPD_COLORS      2       /* 黑白 */
 /* 面板设置 PSR：0x1F = 黑白 OTP 波形。画面左右镜像改 0x17（反转栅极扫描），
  * 上下颠倒改 0x1B（反转源极扫描），两个都反改 0x13 */
@@ -118,6 +123,8 @@ void PIC_display_Clear(void);
  *        4 寸屏栅极奇偶分在左右两边，矩形会扩成左右各一条窗口一起刷（内容不变的部分刷完还是原样）。
  */
 void epd_partial(const unsigned char *picData, int x, int y, int w, int h);
+// A successful base image is required for differential old/new pixel data.
+bool epd_partial_ready(void);
 
 /**
  * @brief 全屏刷单色（原例程的 EPD_Display_White/Black/Yellow/blue/Green/red）

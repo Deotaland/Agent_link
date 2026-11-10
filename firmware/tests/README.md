@@ -12,6 +12,7 @@ and provide stubs only at host/device boundaries.
 | AMOLED board, audio, network modes and touch | `test_amoled_175.py`, `test_amoled_voice.py`, `test_amoled_network_mode.py`, `test_amoled_touch.py` and their C++ fixtures |
 | Shared UI and Factory carousel | `test_amoled_ui.py`; renders actual production LVGL sources |
 | Font assets | `test_cjk_font.py`, `test_raster_cjk.py` and font renderer checks |
+| Paper 4IN0 controls, refresh, shared resources, touch/IME, UI and panel transfers | `test_paper_refresh.py --paper4`, `test_paper4_display.py`, `paper_resources_test.cc`, `paper4_state_test.cc`, `paper4_panel_test.cc`, `paper4_input_test.cc`, `paper4_touch_test.cc` |
 | LAN application-store development service | [local_app_store/README.md](local_app_store/README.md), with its own HTTP tests and ignored user-supplied firmware/artwork |
 | Other protocol, SDK, audio and board checks | Remaining `test_*.py` entrypoints and named C/C++ fixtures/stub directories |
 

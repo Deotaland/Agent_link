@@ -38,7 +38,7 @@ includes = [root / 'tests/platform_api_stubs', root / 'components/agent_link/inc
 sources = [root / 'tests/platform_api_auth_test.cc',
            root / 'components/agent_link/src/transports/wifi/cloud/cloud_platform.cc']
 if args.chat:
-    includes.append(root / 'apps/paper-s31-wifi')
+    includes.append(root / 'apps/common/paper-services')
     sources = [root / 'tests/chat_api_test.cc',
                root / 'components/agent_link/src/transports/wifi/cloud/cloud_platform.cc',
                root / 'components/agent_link/src/transports/wifi/cloud/cloud_chat.cc']
