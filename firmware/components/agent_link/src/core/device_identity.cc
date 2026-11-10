@@ -10,6 +10,7 @@
 #include "esp_random.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "storage.h"
 
 namespace {
 constexpr const char* TAG = "agent_link.ident";
@@ -29,10 +30,10 @@ uint8_t    s_uuid[16] = {};
 char       s_sn[37] = {};
 
 esp_err_t EnsureNvs() {
-    esp_err_t r = nvs_flash_init();
+    esp_err_t r = agentlink::storage::Init();
     if (r == ESP_ERR_NVS_NO_FREE_PAGES || r == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        (void)nvs_flash_erase();
-        r = nvs_flash_init();
+        (void)agentlink::storage::Erase();
+        r = agentlink::storage::Init();
     }
     return r;
 }
@@ -71,7 +72,7 @@ bool Parse(const char* s, uint8_t out[16]) {
 
 bool ReadCanonical(uint8_t out[16]) {
     nvs_handle_t h;
-    if (nvs_open(kNs, NVS_READONLY, &h) != ESP_OK) return false;
+    if (agentlink::storage::Open(kNs, NVS_READONLY, &h) != ESP_OK) return false;
     size_t len = 16;
     const bool ok = (nvs_get_blob(h, kKeyUuid, out, &len) == ESP_OK) && len == 16;
     nvs_close(h);
@@ -80,7 +81,7 @@ bool ReadCanonical(uint8_t out[16]) {
 
 esp_err_t WriteCanonical(const uint8_t b[16]) {
     nvs_handle_t h;
-    esp_err_t r = nvs_open(kNs, NVS_READWRITE, &h);
+    esp_err_t r = agentlink::storage::Open(kNs, NVS_READWRITE, &h);
     if (r != ESP_OK) return r;
     r = nvs_set_blob(h, kKeyUuid, b, 16);
     if (r == ESP_OK) r = nvs_commit(h);
@@ -90,7 +91,7 @@ esp_err_t WriteCanonical(const uint8_t b[16]) {
 
 bool ReadLegacy(uint8_t out[16], char* raw, size_t cap) {
     nvs_handle_t h;
-    if (nvs_open(kLegacyNs, NVS_READONLY, &h) != ESP_OK) return false;
+    if (agentlink::storage::Open(kLegacyNs, NVS_READONLY, &h) != ESP_OK) return false;
     size_t len = cap;
     const bool got = (nvs_get_str(h, kLegacyKeySn, raw, &len) == ESP_OK);
     nvs_close(h);
@@ -99,7 +100,7 @@ bool ReadLegacy(uint8_t out[16], char* raw, size_t cap) {
 
 void EraseLegacy() {
     nvs_handle_t h;
-    if (nvs_open(kLegacyNs, NVS_READWRITE, &h) != ESP_OK) return;
+    if (agentlink::storage::Open(kLegacyNs, NVS_READWRITE, &h) != ESP_OK) return;
     if (nvs_erase_key(h, kLegacyKeySn) == ESP_OK) (void)nvs_commit(h);
     nvs_close(h);
 }

@@ -28,16 +28,19 @@ struct Descriptor {
     char sdk[16];
 };
 static_assert(sizeof(Descriptor) == 176);
+enum class ImageFormat { kAgentLink, kSdgoods };
 struct App {
     Descriptor descriptor{};
     char version[32]{};
     char slot[17]{};
     uint32_t size = 0;
+    ImageFormat format = ImageFormat::kAgentLink;
 };
 struct CatalogApp {
     char app_id[32]{}, name[64]{}, version[32]{};
     char url[256]{}, sha256[65]{};
     uint32_t size = 0;
+    ImageFormat format = ImageFormat::kAgentLink;
     char cover_url[256]{}, cover_sha256[65]{};
     char cover_format[32]{};
     uint32_t cover_size = 0;
@@ -64,7 +67,11 @@ struct CoverStatus {
 };
 using Progress = void (*)(uint32_t received, uint32_t total, void* context);
 const Descriptor& Current();
-esp_err_t Init();  // Initializes shared NVS without erasing it on errors.
+uint32_t Revision();  // Changes after an installed-app list mutation.
+const char* SettingsPartition();
+// Initializes system settings. SDGOODS compatibility may reinitialize invalid
+// vendor default NVS; Agent Link settings remain in their separate partition.
+esp_err_t Init();
 // USB apps run independently in the factory boot partition. OTA-slot apps
 // confirm rollback readiness and arm a verified launcher when one is present.
 esp_err_t Ready();

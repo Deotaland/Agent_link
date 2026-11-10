@@ -64,7 +64,7 @@ void Update(const amoled_ui::Screen& screen) {
     const int edge = actions ? 152 : 198;
     lv_obj_set_pos(card, (360-edge)/2, actions ? 68 : 70); lv_obj_set_size(card, edge, edge);
     if (actions) lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE); else lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
-    Text(eyebrow, amoled_ui::Tr("应用空间", "APPLICATIONS"));
+    Text(eyebrow, "Agent_link Launcher");
     Text(name, screen.title); lv_obj_set_y(name, actions ? 231 : 280);
     Text(subtitle, actions ? screen.detail : amoled_ui::Tr("左右滑动 · 轻触打开", "Swipe to browse · Tap to open"));
     lv_obj_set_y(subtitle, actions ? 319 : 306);

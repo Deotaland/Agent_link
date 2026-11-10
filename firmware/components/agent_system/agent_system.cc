@@ -1,5 +1,6 @@
 #include "agent_system.h"
 #include "cover_cache.h"
+#include "image_identity.h"
 
 #include <algorithm>
 #include <atomic>
@@ -39,6 +40,7 @@ const Descriptor descriptor __attribute__((used, section(".rodata_custom_desc"),
 std::mutex operation_mutex;
 httpd_handle_t settings_server = nullptr;
 std::atomic<bool> launcher_available{false};
+std::atomic<uint32_t> app_revision{0};
 
 bool Terminated(const char* text, size_t size) {
     return memchr(text, 0, size) != nullptr;
@@ -111,6 +113,15 @@ esp_err_t Marker(const char* label, uint8_t* state, bool write = false) {
     nvs_close(h);
     return err;
 }
+esp_err_t StoredCatalog(const char* partition, char* out, size_t capacity) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open_from_partition(partition, "al_system", NVS_READONLY, &h);
+    if (err != ESP_OK)
+        return err;
+    err = nvs_get_str(h, "catalog", out, &capacity);
+    nvs_close(h);
+    return err;
+}
 esp_err_t ReadApp(const esp_partition_t* p, App* app) {
     uint8_t state = 0;
     esp_err_t err = Marker(p->label, &state);
@@ -122,15 +133,18 @@ esp_err_t ReadApp(const esp_partition_t* p, App* app) {
     if (esp_ota_get_partition_description(p, &idf) != ESP_OK)
         return ESP_ERR_NOT_FOUND;
     Descriptor d{};
-    if (esp_partition_read(p, 0x120, &d, sizeof d) != ESP_OK || !Compatible(d) ||
+    ImageFormat format;
+    if (!ReadIdentity(p, &d, &format) ||
         !strcmp(d.app_id, "agent.launcher"))
         return ESP_ERR_NOT_FOUND;
     esp_partition_pos_t position{p->address, p->size};
     esp_image_metadata_t image{};
-    if (esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &position, &image) != ESP_OK)
+    if (esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &position, &image) != ESP_OK ||
+        image.image_len > p->size - kCoverReserveBytes)
         return ESP_ERR_NOT_FOUND;
     *app = {};
     app->descriptor = d;
+    app->format = format;
     app->size = image.image_len;
     snprintf(app->version, sizeof app->version, "%.*s", 31, idf.version);
     snprintf(app->slot, sizeof app->slot, "%s", p->label);
@@ -207,8 +221,8 @@ esp_err_t SettingsGet(httpd_req_t* request) {
     (void)CatalogUrl(url, sizeof url);
     const std::string page =
         "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'><title>Agent "
-        "Link</title>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'><title>" +
+        Escape(IsLauncher() ? Current().name : "Agent Link") + "</title>"
         "<body style='font:18px sans-serif;max-width:600px;margin:40px auto;padding:16px'>"
         "<h1>应用服务设置</h1><p>填写应用服务的完整列表地址。局域网测试可使用 HTTP；正式服务请使用 "
         "HTTPS。</p>"
@@ -272,6 +286,42 @@ esp_err_t SettingsPost(httpd_req_t* request) {
 const Descriptor& Current() {
     return descriptor;
 }
+uint32_t Revision() { return app_revision.load(); }
+const char* SettingsPartition() {
+#if defined(AGENT_SYSTEM_SDGOODS_COMPAT)
+    return "agent_nvs";
+#else
+    return "nvs";
+#endif
+}
+bool DecodeIdentity(const esp_app_desc_t& idf, const Descriptor& raw,
+                    Descriptor* out, ImageFormat* format) {
+    if (!Terminated(idf.version, sizeof idf.version) || !idf.version[0])
+        return false;
+    if (!memcmp(raw.magic, "AGSYS", 5)) {
+        if (!Compatible(raw))
+            return false;  // Never bypass a native image's board/layout/SDK checks.
+        *out = raw;
+        *format = ImageFormat::kAgentLink;
+        return true;
+    }
+#if defined(AGENT_SYSTEM_SDGOODS_COMPAT)
+    if (!VendorProject(idf.project_name, sizeof idf.project_name))
+        return false;
+    *out = {};
+    memcpy(out->magic, kMagic, sizeof kMagic);
+    out->schema = 1;
+    out->layout = kLayout;
+    snprintf(out->app_id, sizeof out->app_id, "%s", idf.project_name);
+    snprintf(out->name, sizeof out->name, "%s", idf.project_name);
+    snprintf(out->board, sizeof out->board, "%s", kBoard);
+    snprintf(out->sdk, sizeof out->sdk, "sdgoods");
+    *format = ImageFormat::kSdgoods;
+    return true;
+#else
+    return false;
+#endif
+}
 bool IsLauncher() {
     return strcmp(descriptor.app_id, "agent.launcher") == 0;
 }
@@ -279,7 +329,20 @@ bool CanReturnToLauncher() {
     return !IsLauncher() && launcher_available.load();
 }
 esp_err_t Init() {
+#if defined(AGENT_SYSTEM_SDGOODS_COMPAT)
+    esp_err_t err = nvs_flash_init_partition("agent_nvs");
+    if (err != ESP_OK)
+        return err;
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW("agent_system", "Reinitializing vendor NVS; private Agent Link settings preserved");
+        err = nvs_flash_erase_partition("nvs");
+        if (err == ESP_OK)
+            err = nvs_flash_init();
+    }
+#else
     esp_err_t err = nvs_flash_init();
+#endif
     if (err != ESP_OK)
         return err;
     err = nvs_flash_init_partition("app_nvs");
@@ -380,7 +443,8 @@ esp_err_t ReadCover(const char* label, Cover* cover) {
     if (state == 2)
         return ESP_ERR_NOT_FOUND;
     Descriptor app{};
-    if (esp_partition_read(p, 0x120, &app, sizeof app) != ESP_OK || !Compatible(app))
+    ImageFormat format;
+    if (!ReadIdentity(p, &app, &format))
         return ESP_ERR_NOT_FOUND;
     return cover_cache::Read(label, app.app_id, cover);
 }
@@ -414,6 +478,8 @@ esp_err_t Remove(const char* label) {
         err = esp_partition_erase_range(p, 0, p->size);
     if (err == ESP_OK)
         cover_cache::Forget(label);
+    if (err == ESP_OK)
+        ++app_revision;
     return err;  // Keep marker unavailable; successful installs explicitly commit it.
 }
 bool ValidServiceUrl(const char* url) {
@@ -446,21 +512,28 @@ esp_err_t CatalogUrl(char* out, size_t capacity) {
     if (!out || !capacity)
         return ESP_ERR_INVALID_ARG;
     out[0] = 0;
-    nvs_handle_t h;
-    esp_err_t err = nvs_open("al_system", NVS_READONLY, &h);
-    if (err == ESP_ERR_NVS_NOT_FOUND)
-        return ESP_OK;
-    if (err != ESP_OK)
-        return err;
-    err = nvs_get_str(h, "catalog", out, &capacity);
-    nvs_close(h);
+    esp_err_t err = StoredCatalog(SettingsPartition(), out, capacity);
+#if defined(AGENT_SYSTEM_SDGOODS_COMPAT)
+    // Preserve a catalog configured by an earlier V3 build. Explicitly clearing
+    // the new key returns an empty string above, so this never re-enables it.
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = StoredCatalog("nvs", out, capacity);
+        if (err == ESP_OK) {
+            if (!ValidServiceUrl(out)) {
+                out[0] = 0;
+                return ESP_OK;
+            }
+            err = SetCatalogUrl(out);
+        }
+    }
+#endif
     return err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err;
 }
 esp_err_t SetCatalogUrl(const char* url) {
     if (!url || (url[0] && !ValidServiceUrl(url)))
         return ESP_ERR_INVALID_ARG;
     nvs_handle_t h;
-    esp_err_t err = nvs_open("al_system", NVS_READWRITE, &h);
+    esp_err_t err = nvs_open_from_partition(SettingsPartition(), "al_system", NVS_READWRITE, &h);
     if (err != ESP_OK)
         return err;
     err = nvs_set_str(h, "catalog", url);
@@ -535,6 +608,24 @@ esp_err_t FetchCatalog(CatalogApp* apps, size_t capacity, size_t* count) {
             return ESP_ERR_INVALID_RESPONSE;
         }
         app.size = static_cast<uint32_t>(bytes->valuedouble);
+        if (cJSON_GetObjectItemCaseSensitive(item, "image_format")) {
+            char format[24]{};
+            if (!CopyString(item, "image_format", format, sizeof format)) {
+                cleanup();
+                return ESP_ERR_INVALID_RESPONSE;
+            }
+            if (!strcmp(format, "sdgoods")) {
+#if defined(AGENT_SYSTEM_SDGOODS_COMPAT)
+                app.format = ImageFormat::kSdgoods;
+#else
+                cleanup();
+                return ESP_ERR_INVALID_RESPONSE;
+#endif
+            } else if (strcmp(format, "agent-link")) {
+                cleanup();
+                return ESP_ERR_INVALID_RESPONSE;
+            }
+        }
         const auto resolve = [&](char* address, size_t capacity) {
             if (address[0] == '/' && address[1] != '/') {
                 const char* host = strstr(url, "://") + 3;
@@ -618,6 +709,10 @@ esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
         !Terminated(app.sha256, sizeof app.sha256) || !Digest(app.sha256, expected) || !app.size ||
         app.size > kAppImageMaxBytes)
         return ESP_ERR_INVALID_ARG;
+#if !defined(AGENT_SYSTEM_SDGOODS_COMPAT)
+    if (app.format != ImageFormat::kAgentLink)
+        return ESP_ERR_INVALID_ARG;
+#endif
     const esp_partition_t* target = nullptr;
     for (int i = 0; i < kAppSlotCount; ++i) {
         char label[8];
@@ -685,8 +780,9 @@ esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
         err = ESP_ERR_INVALID_CRC;
     Descriptor d{};
     esp_app_desc_t idf{};
+    ImageFormat format;
     if (err == ESP_OK &&
-        (esp_partition_read(target, 0x120, &d, sizeof d) != ESP_OK || !Compatible(d) ||
+        (!ReadIdentity(target, &d, &format) || format != app.format ||
          strcmp(d.app_id, app.app_id) || !strcmp(d.app_id, "agent.launcher") ||
          esp_ota_get_partition_description(target, &idf) != ESP_OK ||
          strncmp(idf.version, app.version, sizeof idf.version)))
@@ -701,8 +797,10 @@ esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
     // Cover errors fall back to a placeholder; firmware validation stays independent.
     (void)cover_cache::Update(target->label, app);
     uint8_t ready = 1;
-    return Marker(target->label, &ready,
-                  true);  // Commit last. Installation does not change the boot target.
+    err = Marker(target->label, &ready, true);  // Commit last; boot target stays unchanged.
+    if (err == ESP_OK)
+        ++app_revision;
+    return err;
 }
 esp_err_t StartSettingsServer() {
     if (settings_server)

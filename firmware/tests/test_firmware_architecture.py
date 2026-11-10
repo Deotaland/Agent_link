@@ -63,17 +63,20 @@ class FirmwareArchitectureTests(unittest.TestCase):
     def test_sdgoods_all_images_and_font_fit_24bit_flash_mapping(self):
         profile = self.profiles['sdgoods-wifi']
         plan = flash_plan(profile, 'standard')
-        self.assertEqual((plan['layout'], plan['layout_version']), ('sdgoods-v2', 2))
-        self.assertEqual(plan['app_slots'], ['ota_0', 'ota_1', 'ota_2'])
-        self.assertEqual(plan['app_max_bytes'], 0x300000 - 0xE000)
+        self.assertEqual((plan['layout'], plan['layout_version']), ('sdgoods-v3', 3))
+        self.assertEqual(plan['app_slots'], ['ota_0', 'ota_1'])
+        self.assertEqual(plan['app_max_bytes'], 0x500000 - 0xE000)
         entries = plan['partitions']
         for name, entry in entries.items():
             with self.subTest(partition=name):
-                self.assertLessEqual(entry['offset'] + entry['size'], 1 << 24)
+                if name != 'appdata':
+                    self.assertLessEqual(entry['offset'] + entry['size'], 1 << 24)
         for slot in plan['app_slots']:
-            self.assertEqual(entries[slot]['size'], 0x300000)
+            self.assertEqual(entries[slot]['size'], 0x500000)
+        self.assertEqual((entries['appdata']['offset'], entries['appdata']['size']), (0x1000000, 0x1000000))
+        self.assertNotEqual(entries['agent_nvs']['offset'], entries['nvs']['offset'])
         font = entries['font_cjk']
-        self.assertEqual(font['offset'], 0xC22000)
+        self.assertEqual(font['offset'], 0xD32000)
         self.assertLessEqual((ROOT / profile['flash_assets'][0]['file']).stat().st_size, font['size'])
         settings = build.expected_settings(profile)
         self.assertEqual(settings['CONFIG_ESPTOOLPY_FLASHSIZE_32MB'], 'y')
@@ -81,12 +84,12 @@ class FirmwareArchitectureTests(unittest.TestCase):
         self.assertEqual(initial_boot_slot(plan), 0)
         self.assertIsNone(initial_boot_slot(flash_plan(profile, 'factory')))
 
-    def test_sdgoods_old_apps_are_rejected_on_v2(self):
+    def test_sdgoods_old_apps_are_rejected_on_v3(self):
         path = self.folder / 'sdgoods-old.bin'
         self.addCleanup(lambda: path.unlink(missing_ok=True))
         path.write_bytes(image(model='SDGOODS-ESP32S3'))
         with self.assertRaisesRegex(ValueError, 'Incompatible'):
-            image_info(path, 'SDGOODS-ESP32S3', layout=2)
+            image_info(path, 'SDGOODS-ESP32S3', layout=3)
 
     def test_paper_reserved_factory_boot_and_shared_resources(self):
         profile = self.profiles['paper-s31-4in0-wifi']

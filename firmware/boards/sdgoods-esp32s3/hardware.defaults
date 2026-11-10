@@ -1,6 +1,6 @@
 # Physical SDGOODS ESP32-S3 hardware, verified with the vendor BSP.
 CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
-# sdgoods-v2 keeps all executable images and mmap assets below 16 MB.
+# sdgoods-v3 keeps all executable images and mmap assets below 16 MB.
 # CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH is not set
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=n
@@ -9,3 +9,12 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_RTC_CLK_SRC_INT_RC=y
+# Unmodified vendor apps do not confirm Agent Link's first-boot rollback state.
+# Recovery uses the hardware key at boot, clearing only OTA selection.
+# CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is not set
+CONFIG_BOOTLOADER_FACTORY_RESET=y
+CONFIG_BOOTLOADER_NUM_PIN_FACTORY_RESET=6
+CONFIG_BOOTLOADER_FACTORY_RESET_PIN_LOW=y
+CONFIG_BOOTLOADER_HOLD_TIME_GPIO=3
+CONFIG_BOOTLOADER_OTA_DATA_ERASE=y
+CONFIG_BOOTLOADER_DATA_FACTORY_RESET=""

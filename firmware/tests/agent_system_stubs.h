@@ -19,12 +19,13 @@ using esp_err_t = int;
 constexpr int ESP_OK=0, ESP_FAIL=-1, ESP_ERR_NO_MEM=1, ESP_ERR_INVALID_ARG=2,
     ESP_ERR_INVALID_STATE=3, ESP_ERR_INVALID_SIZE=4, ESP_ERR_NOT_FOUND=5,
     ESP_ERR_INVALID_RESPONSE=6, ESP_ERR_INVALID_CRC=7, ESP_ERR_INVALID_VERSION=8,
-    ESP_ERR_NVS_NOT_FOUND=9;
+    ESP_ERR_NVS_NOT_FOUND=9, ESP_ERR_NVS_NO_FREE_PAGES=10, ESP_ERR_NVS_NEW_VERSION_FOUND=11;
 using esp_partition_subtype_t = int;
 constexpr int ESP_PARTITION_TYPE_APP=0, ESP_PARTITION_SUBTYPE_APP_FACTORY=0,
     ESP_PARTITION_SUBTYPE_APP_OTA_0=16;
 struct esp_partition_t { uint32_t address, size; int type, subtype; char label[17]; };
-struct esp_app_desc_t { uint8_t prefix[16]; char version[32]; char padding[208]; };
+constexpr uint32_t ESP_APP_DESC_MAGIC_WORD=0xABCD5432;
+struct esp_app_desc_t { uint32_t magic_word; uint8_t prefix[12]; char version[32], project_name[32]; char padding[176]; };
 struct esp_partition_pos_t { uint32_t offset, size; };
 using esp_partition_mmap_handle_t = uint32_t;
 constexpr int ESP_PARTITION_MMAP_DATA = 0;
@@ -85,7 +86,8 @@ inline int esp_partition_write(const esp_partition_t* p,size_t offset,const void
     return fixture::partition_write_error;
 }
 inline int esp_ota_get_partition_description(const esp_partition_t* p,esp_app_desc_t* d) {
-    return esp_partition_read(p,32,d,sizeof *d);
+    const int err=esp_partition_read(p,32,d,sizeof *d);
+    return err==ESP_OK && d->magic_word==ESP_APP_DESC_MAGIC_WORD ? ESP_OK : ESP_ERR_INVALID_VERSION;
 }
 inline int esp_image_verify(int,const esp_partition_pos_t* p,esp_image_metadata_t* image) {
     image->image_len=fixture::image_lengths[p->offset];
@@ -113,11 +115,26 @@ inline int esp_ota_write(int,const void* data,size_t size) {
     fixture::image_lengths[fixture::writing->address]=fixture::write_offset;return ESP_OK;
 }
 inline int esp_ota_abort(int){return ESP_OK;}
-inline int esp_ota_end(int){if(fixture::end_error)return fixture::end_error;fixture::valid[fixture::writing->address]=true;return ESP_OK;}
+inline int esp_ota_end(int){
+    if(fixture::end_error)return fixture::end_error;
+    const auto& data=fixture::flash[fixture::writing->address];
+    if(data.size()<24 || data[0]!=0xE9 || data[12]!=9 || data[13])return ESP_ERR_INVALID_VERSION;
+    fixture::valid[fixture::writing->address]=true;return ESP_OK;
+}
 using nvs_handle_t=int;
+using nvs_open_mode_t=int;
 constexpr int NVS_READONLY=0,NVS_READWRITE=1;
 inline int nvs_flash_init(){return fixture::init_error;}
 inline int nvs_flash_init_partition(const char*){return ESP_OK;}
+inline int nvs_flash_erase_partition(const char* partition){
+    if(!strcmp(partition,"nvs"))fixture::init_error=ESP_OK;
+    const std::string prefix=std::string(partition)+"/";
+    for(auto i=fixture::store.begin();i!=fixture::store.end();) {
+        if(i->first.compare(0,prefix.size(),prefix)==0)i=fixture::store.erase(i);else ++i;
+    }
+    return ESP_OK;
+}
+inline int nvs_flash_erase(){return nvs_flash_erase_partition("nvs");}
 inline int nvs_open_from_partition(const char* p,const char* ns,int,int* h){*h=fixture::next_handle++;fixture::handles[*h]=std::string(p)+"/"+ns+"/";return ESP_OK;}
 inline int nvs_open(const char* ns,int mode,int* h){return nvs_open_from_partition("nvs",ns,mode,h);}
 inline int nvs_get_u8(int h,const char* key,uint8_t* out){auto i=fixture::store.find(fixture::handles[h]+key);if(i==fixture::store.end())return ESP_ERR_NVS_NOT_FOUND;*out=i->second[0];return ESP_OK;}
@@ -156,6 +173,9 @@ inline void esp_http_client_cleanup(HttpClient* c){delete c;}
 constexpr int MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 inline void* heap_caps_malloc(size_t size,int){return malloc(size);}
 inline void heap_caps_free(void* p){free(p);}
+#if defined(AGENT_SYSTEM_REAL_SHA256)
+#include "agent_system_real_sha256.h"
+#else
 // Deterministic hash double: tests verify digest enforcement and transaction order,
 // while the firmware uses mbedTLS SHA-256. Cryptographic primitives are not reimplemented here.
 struct mbedtls_sha256_context {uint8_t sum=0;};
@@ -164,6 +184,7 @@ inline int mbedtls_sha256_starts(mbedtls_sha256_context* c,int){c->sum=0;return 
 inline int mbedtls_sha256_update(mbedtls_sha256_context* c,const uint8_t* p,size_t size){for(size_t i=0;i<size;++i)c->sum+=p[i];return 0;}
 inline int mbedtls_sha256_finish(mbedtls_sha256_context* c,uint8_t out[32]){memset(out,c->sum,32);return 0;}
 inline void mbedtls_sha256_free(mbedtls_sha256_context*){}
+#endif
 using httpd_handle_t=void*;
 struct httpd_req_t {int content_len;};
 struct httpd_config_t {int server_port,ctrl_port,max_uri_handlers,stack_size;bool lru_purge_enable;};

@@ -1,4 +1,4 @@
-# Agent Link Factory for Sugarat Button
+# Agent_link Launcher for Sugarat Button
 
 This Factory also supports the same Sugarat Button hardware sold by SDGOODS.
 
@@ -12,8 +12,15 @@ and explicit launch/remove actions. It supports Chinese and English.
 - Pull down from the top for WiFi, app service, device, language and cover settings.
 - Swipe up from the bottom, or press the GPIO6 key, to return home.
 - Join `Sugarat-Button-XXXX` and open `http://192.168.4.1` for initial WiFi setup.
-- Configure an Agent Link application service in the system menu. Catalog images
-  must target `SDGOODS-ESP32S3` and layout version 2. Vendor app images are incompatible.
+- Configure an Agent Link application service in the system menu. Catalogs
+  target `SDGOODS-ESP32S3` and layout 3. Entries with `image_format: "sdgoods"`
+  accept original vendor pure application images; native entries keep strict
+  Agent Link identity checks. Both kinds are downloaded from the operator's own
+  reviewed catalog. `http://DEVICE_IP:8081` configures that service; it does not
+  upload application files or browse the official SDGOODS market.
+- Two 5 MiB application slots are available (5,185,536 image bytes each).
+  Vendor `appdata` occupies the upper 16 MiB. Hold GPIO6 at power-on for three
+  seconds to recover Factory without erasing application files or settings.
 
 ## Memory and transfers
 

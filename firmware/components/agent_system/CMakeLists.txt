@@ -26,3 +26,6 @@ target_compile_definitions(${COMPONENT_LIB} PUBLIC AGENT_SYSTEM_ENABLED=1
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     AGENT_SYSTEM_APP_ID="${IMAGE_app_id}" AGENT_SYSTEM_APP_NAME="${IMAGE_name}")
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
+if(PROFILE_hardware STREQUAL "sdgoods-esp32s3")
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC AGENT_SYSTEM_SDGOODS_COMPAT=1)
+endif()

@@ -22,6 +22,50 @@ CACHE.mkdir(parents=True, exist_ok=True)
 
 
 class TestLocalStore(unittest.TestCase):
+    def test_sdgoods_profile_and_catalog_pages(self):
+        sys.path.insert(0, str(ROOT.parents[0]))
+        from test_sdgoods_image import image as vendor_image
+        with tempfile.TemporaryDirectory(dir=CACHE) as temporary:
+            bundle=Path(temporary)
+            data=bytearray(1024);data[0]=0xE9;data[12]=9;data[0x30:0x36]=b'2.0.0\0'
+            struct.pack_into('<8sII32s64s48s16s',data,0x120,b'AGSYS001',1,3,
+                             b'agent.status',b'Device status',b'SDGOODS-ESP32S3',b'0.1.0')
+            (bundle/'native.bin').write_bytes(data)
+            for index in range(8):
+                (bundle/f'raw-{index}.bin').write_bytes(vendor_image('CLOCK_'+str(index)))
+            apps=store.load_apps(bundle,profile='sdgoods-wifi')
+            self.assertEqual(len(apps),9)
+            self.assertEqual(sum(app['image_format']=='agent-link' for app in apps),1)
+            self.assertEqual(store.load_apps(bundle),[])
+            service=ThreadingHTTPServer(('127.0.0.1',0),store.make_handler(apps,'sdgoods-wifi'))
+            worker=threading.Thread(target=service.serve_forever,daemon=True);worker.start()
+            origin=f'http://127.0.0.1:{service.server_address[1]}'
+            client=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            try:
+                pages=[]
+                for number in (1,2):
+                    with client.open(origin+f'/api/apps?page={number}',timeout=5) as response:
+                        page=json.load(response)
+                    self.assertEqual((page['board'],page['layout']),('SDGOODS-ESP32S3',3))
+                    self.assertLessEqual(len(page['apps']),8)
+                    pages.extend(page['apps'])
+                self.assertEqual(len(pages),9)
+                self.assertEqual(len({app['app_id'] for app in pages}),9)
+                self.assertEqual(pages[0]['image_format'],'agent-link')
+                self.assertTrue(all(app['image_format']=='sdgoods' for app in pages[1:]))
+                for app in pages:
+                    with client.open(origin+app['url'],timeout=5) as response:
+                        self.assertEqual(hashlib.sha256(response.read()).hexdigest(),app['sha256'])
+                with client.open(origin+'/',timeout=5) as response:
+                    self.assertIn(b'Agent_link Launcher',response.read())
+                for query,code in (('0',404),('3',404),('invalid',400)):
+                    with self.assertRaises(urllib.error.HTTPError) as error:
+                        client.open(origin+'/api/apps?page='+query,timeout=5)
+                    self.assertEqual(error.exception.code,code)
+            finally:
+                service.shutdown();service.server_close();worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+
     def test_user_cover_contract(self):
         source=ROOT/'assets/voice.png'
         if not source.is_file(): self.skipTest('No user-provided image available locally')

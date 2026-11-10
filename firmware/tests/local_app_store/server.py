@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local development app catalog and firmware downloads; no platform account required."""
 import argparse
+import html
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -8,10 +9,10 @@ from pathlib import Path
 import socket
 import sys
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 from paths import BASE_DIR, local_path
-from multi_app_image import BOARD, image_info
+from multi_app_image import BOARD, image_info, target, DEFAULT_PROFILE, PROFILES
 from make_app_cover import convert_cover, validate_cover, FORMAT, BLOCK_BYTES
 
 
@@ -39,7 +40,7 @@ def prepare_cover(cover, app_id, cache, source_root=BASE_DIR):
     return data, info
 
 
-def load_apps(bundle, covers=None, source_root=BASE_DIR, cover_cache=None):
+def load_apps(bundle, covers=None, source_root=BASE_DIR, cover_cache=None, profile=DEFAULT_PROFILE):
     bundle = local_path(bundle)
     if not bundle.is_dir():
         raise ValueError(f"Firmware directory not found: {bundle}. Create it and copy application .bin files into it.")
@@ -52,7 +53,7 @@ def load_apps(bundle, covers=None, source_root=BASE_DIR, cover_cache=None):
         if path.parent != bundle:
             raise ValueError("App files must be directly inside the bundle")
         try:
-            info = image_info(path)
+            info = image_info(path, profile)
         except ValueError as error:
             print(f"Skipped {path.name}: {error}", file=sys.stderr)
             continue
@@ -79,22 +80,43 @@ def load_apps(bundle, covers=None, source_root=BASE_DIR, cover_cache=None):
     return apps
 
 
-def make_handler(apps):
+def make_handler(apps, profile=DEFAULT_PROFILE):
+    selected = target(profile)
+    page_count = max(1, (len(apps)+7)//8)
     allowed = {"/firmware/" + app["app_id"] + ".bin": app for app in apps}
     covers = {app['cover_url']:app['cover_data'] for app in apps if 'cover_data' in app}
-    catalog = dict(schema=1, layout=1, board=BOARD, apps=[
-        {**{key: app[key] for key in ("app_id", "name", "version", "size", "sha256", "cover_url", "cover_size", "cover_sha256", "cover_format") if key in app},
-         "url": "/firmware/" + app["app_id"] + ".bin"} for app in apps])
+    entries = [
+        {**{key: app[key] for key in ("app_id", "name", "version", "size", "sha256", "image_format", "cover_url", "cover_size", "cover_sha256", "cover_format") if key in app},
+         "url": "/firmware/" + app["app_id"] + ".bin"} for app in apps]
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             route = urlsplit(self.path).path
             if route in ("/api/apps", "/catalog.json"):
+                try:
+                    page = int(parse_qs(urlsplit(self.path).query).get('page',['1'])[0])
+                except ValueError:
+                    self.send_error(400, 'Invalid catalog page'); return
+                if not 1 <= page <= page_count:
+                    self.send_error(404, 'Catalog page not found'); return
+                catalog = dict(schema=1, layout=selected['layout']['version'], board=selected['board'],
+                               apps=entries[(page-1)*8:page*8])
                 body = json.dumps(catalog, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers(); self.wfile.write(body)
+            elif route == '/':
+                groups = ''.join('<li><a href="/api/apps?page='+str(page)+'">Catalog '+str(page)+
+                                 '</a>: '+html.escape(', '.join(app['name'] for app in entries[(page-1)*8:page*8]))+
+                                 '</li>' for page in range(1,page_count+1))
+                body = ('<!doctype html><meta charset="utf-8"><title>Agent_link Launcher test store</title>'
+                        '<h1>Agent_link Launcher test store</h1><p>'+html.escape(profile)+
+                        ' · '+str(len(apps))+' apps · up to 8 per catalog</p><ul>'+groups+'</ul>').encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type','text/html; charset=utf-8')
+                self.send_header('Content-Length',str(len(body)))
+                self.end_headers();self.wfile.write(body)
             elif route in covers:
                 data=covers[route]
                 self.send_response(200)
@@ -129,22 +151,26 @@ def main():
                         help="application .bin directory, relative to this service (default: packages)")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument('--profile', default=DEFAULT_PROFILE,
+                        choices=sorted(name for name,entry in PROFILES.items() if entry['layout_info']['mode']=='managed'))
     parser.add_argument("--covers-config",type=local_path,default="covers.json")
     args = parser.parse_args()
     try:
         covers=json.loads(args.covers_config.read_text(encoding='utf-8')) if args.covers_config.is_file() else {}
-        apps = load_apps(args.bundle,covers,source_root=args.covers_config.parent)
+        apps = load_apps(args.bundle,covers,source_root=args.covers_config.parent,profile=args.profile)
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(apps))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(apps,args.profile))
     print(f"Firmware directory: {args.bundle} ({len(apps)} installable applications)", flush=True)
+    print(f"Target: {args.profile}; layout {target(args.profile)['layout']['version']}", flush=True)
     if not apps:
         print("Copy application .bin files here, then restart the server. No package.json is required.", flush=True)
     addresses = sorted(set(socket.gethostbyname_ex(socket.gethostname())[2]))
     print("Local test app store. Use the PC address on the same WiFi as the device:", flush=True)
     for address in addresses:
         if not address.startswith("127."):
-            print(f"  http://{address}:{args.port}/api/apps", flush=True)
+            for page in range(1,max(1,(len(apps)+7)//8)+1):
+                print(f"  http://{address}:{args.port}/api/apps?page={page}", flush=True)
     print("Set this URL at http://DEVICE_IP:8081, then open Online apps. Ctrl+C stops the server.", flush=True)
     try:
         server.serve_forever()

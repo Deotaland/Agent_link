@@ -1,4 +1,5 @@
 #include "cover_cache.h"
+#include "image_identity.h"
 #include "sha256.h"
 #include <algorithm>
 #include <cstdio>
@@ -52,7 +53,11 @@ const CoverHeader& Header(const CoverPixels& image) {
     return *reinterpret_cast<const CoverHeader*>(image.blob.get());
 }
 bool ValidHeader(const CoverHeader& h, const char* app_id) {
-    return !memcmp(h.magic, kMagic, 8) && h.version == 1 && h.format == 1 &&
+    bool magic = !memcmp(h.magic, kMagic, 8);
+#if defined(AGENT_SYSTEM_SDGOODS_COMPAT)
+    magic = magic || !memcmp(h.magic, "SDGCOVER", 8);
+#endif
+    return magic && h.version == 1 && h.format == 1 &&
            h.width == kCoverEdge && h.height == kCoverEdge && !h.reserved &&
            h.data_len == kCoverPixelBytes && memchr(h.app_id, 0, sizeof h.app_id) &&
            !strcmp(h.app_id, app_id);
@@ -92,10 +97,8 @@ esp_err_t Load(const esp_partition_t* part, const char* app_id,
     esp_err_t err = esp_partition_read(part, offset, &header, sizeof header);
     if (err != ESP_OK)
         return err;
-    if (memcmp(header.magic, kMagic, 8))
-        return ESP_ERR_NOT_FOUND;
     if (!ValidHeader(header, app_id))
-        return ESP_ERR_INVALID_RESPONSE;
+        return ESP_ERR_NOT_FOUND;
     auto image = Allocate();
     if (!image)
         return ESP_ERR_NO_MEM;
@@ -106,6 +109,17 @@ esp_err_t Load(const esp_partition_t* part, const char* app_id,
     if (!ValidHeader(Header(*image), app_id) ||
         Crc(image->Data(), kCoverPixelBytes) != Header(*image).crc32)
         return ESP_ERR_INVALID_CRC;
+#if defined(AGENT_SYSTEM_SDGOODS_COMPAT)
+    if (!memcmp(header.magic, "SDGCOVER", 8)) {
+        // Vendor LVGL8 covers store RGB565 byte-swapped. Normalize the PSRAM
+        // snapshot for our LVGL9 renderer; keep on-flash vendor bytes untouched.
+        for (size_t i = kCoverHeaderBytes; i < kCoverHeaderBytes + kCoverEdge*kCoverEdge*2; i += 2)
+            std::swap(data[i], data[i + 1]);
+        auto* normalized = reinterpret_cast<CoverHeader*>(data);
+        memcpy(normalized->magic, kMagic, 8);
+        normalized->crc32 = Crc(image->Data(), kCoverPixelBytes);
+    }
+#endif
     out = std::move(image);
     return ESP_OK;
 }
@@ -126,8 +140,8 @@ void SetStatus(int index, CoverState state, CoverStage stage, esp_err_t error) {
 }
 esp_err_t CheckApp(const esp_partition_t* part, const char* id) {
     Descriptor d{};
-    if (esp_partition_read(part, 0x120, &d, sizeof d) != ESP_OK ||
-        !memchr(d.app_id, 0, sizeof d.app_id) || strcmp(d.app_id, id))
+    ImageFormat format;
+    if (!ReadIdentity(part, &d, &format) || strcmp(d.app_id, id))
         return ESP_ERR_INVALID_VERSION;
     esp_partition_pos_t pos{part->address, part->size};
     esp_image_metadata_t meta{};
@@ -239,7 +253,7 @@ esp_err_t Update(const char* slot, const CatalogApp& app) {
     if (!esp_http_client_is_complete_data_received(client.value))
         return fail(CoverStage::kReceive, ESP_ERR_INVALID_SIZE);
     SetStatus(index, CoverState::kDownloading, CoverStage::kValidate, ESP_OK);
-    if (!ValidHeader(Header(*image), app.app_id) ||
+    if (memcmp(Header(*image).magic, kMagic, 8) || !ValidHeader(Header(*image), app.app_id) ||
         Crc(image->Data(), kCoverPixelBytes) != Header(*image).crc32 ||
         !Hash(*image, app.cover_sha256))
         return fail(CoverStage::kValidate, ESP_ERR_INVALID_CRC);

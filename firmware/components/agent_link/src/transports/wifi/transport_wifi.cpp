@@ -44,6 +44,7 @@
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
+#include "storage.h"
 #include "nvs.h"
 
 #include "freertos/FreeRTOS.h"
@@ -128,17 +129,17 @@ void ReportStatus();
 
 // NVS credential store
 esp_err_t EnsureNvs() {
-    esp_err_t r = nvs_flash_init();
+    esp_err_t r = agentlink::storage::Init();
     if (r == ESP_ERR_NVS_NO_FREE_PAGES || r == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        (void)nvs_flash_erase();
-        r = nvs_flash_init();
+        (void)agentlink::storage::Erase();
+        r = agentlink::storage::Init();
     }
     return r;
 }
 
 bool LoadCreds(char* ssid, size_t ssid_sz, char* pass, size_t pass_sz) {
     nvs_handle_t h;
-    if (nvs_open(kNvsNs, NVS_READONLY, &h) != ESP_OK) return false;
+    if (agentlink::storage::Open(kNvsNs, NVS_READONLY, &h) != ESP_OK) return false;
     size_t sl = ssid_sz, pl = pass_sz;
     const bool have_ssid = (nvs_get_str(h, kNvsSsid, ssid, &sl) == ESP_OK) && ssid[0];
     if (nvs_get_str(h, kNvsPass, pass, &pl) != ESP_OK) pass[0] = '\0';   // password may be absent (open network)
@@ -148,7 +149,7 @@ bool LoadCreds(char* ssid, size_t ssid_sz, char* pass, size_t pass_sz) {
 
 void SaveCreds(const char* ssid, const char* pass) {
     nvs_handle_t h;
-    if (nvs_open(kNvsNs, NVS_READWRITE, &h) != ESP_OK) { ESP_LOGW(TAG, "nvs open failed — creds not saved"); return; }
+    if (agentlink::storage::Open(kNvsNs, NVS_READWRITE, &h) != ESP_OK) { ESP_LOGW(TAG, "nvs open failed — creds not saved"); return; }
     nvs_set_str(h, kNvsSsid, ssid);
     nvs_set_str(h, kNvsPass, pass ? pass : "");
     nvs_commit(h);

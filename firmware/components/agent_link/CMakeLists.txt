@@ -71,3 +71,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     AGENT_LINK_BUILD_BLE=${_ble} AGENT_LINK_BUILD_WIFI=${_wifi} AGENT_LINK_BUILD_MUSE=${_muse}
     AGENT_LINK_DESKTOP_BLE=${_desktop_ble})
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
+if("$ENV{AGENT_LINK_BUILD_PROFILE}" STREQUAL "sdgoods-wifi")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE AGENT_LINK_NVS_PARTITION="agent_nvs")
+endif()

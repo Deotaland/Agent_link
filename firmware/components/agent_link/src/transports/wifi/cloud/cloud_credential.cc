@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "storage.h"
 
 namespace {
 constexpr const char* TAG = "agent_link.cred";
@@ -20,7 +21,7 @@ char s_auth[CLOUD_AUTH_KEY_MAX] = {0};
 
 esp_err_t StoreStr(const char* value) {
     nvs_handle_t h;
-    esp_err_t r = nvs_open(kNs, NVS_READWRITE, &h);
+    esp_err_t r = agentlink::storage::Open(kNs, NVS_READWRITE, &h);
     if (r != ESP_OK) return r;
     r = (value && value[0]) ? nvs_set_str(h, kKeyAuth, value) : nvs_erase_key(h, kKeyAuth);
     if (r == ESP_ERR_NVS_NOT_FOUND) r = ESP_OK;   // nothing to erase
@@ -33,7 +34,7 @@ esp_err_t StoreStr(const char* value) {
 esp_err_t cloud_cred_load(void) {
     s_auth[0] = '\0';
     nvs_handle_t h;
-    if (nvs_open(kNs, NVS_READONLY, &h) != ESP_OK) return ESP_OK;   // no namespace yet: not bound
+    if (agentlink::storage::Open(kNs, NVS_READONLY, &h) != ESP_OK) return ESP_OK;   // no namespace yet: not bound
     size_t len = sizeof s_auth;
     if (nvs_get_str(h, kKeyAuth, s_auth, &len) != ESP_OK) s_auth[0] = '\0';
     nvs_close(h);

@@ -28,7 +28,7 @@ class AmoledFactoryApplication : public Application {
     AmoledFactoryApplication() {
         nvs_handle_t h;
         int8_t language = 0;
-        if (nvs_open("amoled175", NVS_READONLY, &h) == ESP_OK) {
+        if (nvs_open_from_partition(agent_system::SettingsPartition(), "amoled175", NVS_READONLY, &h) == ESP_OK) {
             (void)nvs_get_i8(h, "language", &language);
             nvs_close(h);
         }
@@ -113,7 +113,7 @@ class AmoledFactoryApplication : public Application {
         amoled_ui::SetScreen(screen_);
     }
     void RefreshLocal() {
-        if (!Check(agent_system::List(apps_, 3, &app_count_)))
+        if (!Check(agent_system::List(apps_, agent_system::kAppSlotCount, &app_count_)))
             app_count_ = 0;
         carousel_.SetCount(app_count_);
         RefreshCover();
@@ -356,6 +356,12 @@ class AmoledFactoryApplication : public Application {
         }
     }
     void TickCoverSync() {
+        const uint32_t app_revision = agent_system::Revision();
+        if (app_revision != seen_app_revision_) {
+            seen_app_revision_ = app_revision;
+            RefreshLocal();
+            Home();
+        }
         if (!cover_task_)
             return;
         const int64_t now = esp_timer_get_time();
@@ -516,7 +522,8 @@ class AmoledFactoryApplication : public Application {
     agent_system::Cover cover_;
     amoled_ui::VolumeMailbox volume_;
     amoled_ui::Screen screen_;
-    agent_system::App apps_[3]{};
+    agent_system::App apps_[agent_system::kAppSlotCount]{};
+    uint32_t seen_app_revision_ = 0;
     agent_system::CatalogApp catalog_[agent_system::kMaxApps]{};
     size_t app_count_ = 0, catalog_count_ = 0, selected_ = 0;
     uint32_t view_ = 1, navigation_ = 1;

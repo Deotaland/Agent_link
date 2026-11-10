@@ -13,6 +13,7 @@ namespace {
 std::vector<uint8_t> Image(const char* id,const char* board=agent_system::kBoard) {
     std::vector<uint8_t> bytes(1024,0);
     bytes[0]=0xE9;bytes[12]=9;
+    const uint32_t magic=ESP_APP_DESC_MAGIC_WORD;memcpy(bytes.data()+0x20,&magic,sizeof magic);
     memcpy(bytes.data()+0x30,"2.0.0",6);
     agent_system::Descriptor d{{'A','G','S','Y','S','0','0','1'},1,1,{},{},{},{}};
     snprintf(d.app_id,sizeof d.app_id,"%s",id);snprintf(d.name,sizeof d.name,"Example");

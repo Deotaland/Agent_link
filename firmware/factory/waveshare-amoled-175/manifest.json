@@ -3,7 +3,7 @@
   "board": "waveshare-amoled-175",
   "image": {
     "app_id": "agent.launcher",
-    "name": "Agent Link Launcher",
+    "name": "Agent_link Launcher",
     "shared_app": "",
     "sources": [
       "ui/factory_view.cc"

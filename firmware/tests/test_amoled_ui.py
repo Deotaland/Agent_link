@@ -376,6 +376,7 @@ bool menu_launcher=false, menu_return=false;
 bool IsLauncher() {return menu_launcher;}
 bool CanReturnToLauncher() {return menu_return;}
 const Descriptor& Current() {static Descriptor value{};return value;}
+const char* SettingsPartition() {return "nvs";}
 esp_err_t CatalogUrl(char* value,size_t) {value[0]=0;return ESP_OK;}
 }
 struct agent_link_wifi_info_t {bool connected=false;char ssid[33]{},ip[16]{},setup_ssid[33]{};int rssi=0;};
@@ -388,6 +389,7 @@ const char* esp_err_to_name(esp_err_t) {return "test-error";}
 using nvs_handle_t=int;
 constexpr int NVS_READONLY=0,NVS_READWRITE=1;
 esp_err_t nvs_open(const char*,int,nvs_handle_t*) {return ESP_ERR_INVALID_STATE;}
+esp_err_t nvs_open_from_partition(const char*,const char*,int,nvs_handle_t*) {return ESP_ERR_INVALID_STATE;}
 esp_err_t nvs_get_i8(nvs_handle_t,const char*,int8_t*) {return ESP_ERR_INVALID_STATE;}
 esp_err_t nvs_set_i8(nvs_handle_t,const char*,int8_t) {return ESP_OK;}
 esp_err_t nvs_commit(nvs_handle_t) {return ESP_OK;}

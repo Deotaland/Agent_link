@@ -49,18 +49,104 @@ status application package sequentially in the same `firmware/build` directory:
 python firmware/tools/package_firmware.py sdgoods-wifi --jobs 2
 ```
 
-The **sdgoods-v2** partition table (layout version 2) has a 3 MB Factory,
-three 3 MB app slots and shared settings/font partitions. Each app reserves
-56 KiB for its raw cover, leaving 3,088,384 bytes for the application image.
+The **sdgoods-v3** partition table (layout version 3) has a 3 MiB Factory,
+two 5 MiB app slots and shared settings/font partitions. Each app reserves
+56 KiB for its raw cover, leaving **5,185,536 bytes** for the application image.
 All apps and the memory-mapped font are below 16 MB; physical flash capacity
-remains 32 MB and the rest is unallocated. Experimental 32-bit cache mapping
-is not enabled.
+is 32 MiB. The upper 16 MiB is the vendor-compatible `appdata` FAT partition;
+it uses flash reads/writes, not memory mapping. Experimental 32-bit cache
+mapping is not enabled. `agent_nvs` isolates Agent Link WiFi credentials,
+device identity, platform binding and app-catalog URL from vendor default-NVS
+cleanup. An app-catalog URL stored by an earlier V3 build is migrated when read.
+If default vendor NVS has an unsupported version or no usable pages, Factory
+reinitializes only that vendor NVS so it can boot; private Agent Link settings
+and `appdata` remain intact. Third-party WiFi/account setup follows that
+application's own flow; Factory does not inject platform credentials into it.
 
-Application images must use layout descriptor 2; older layout images are
-rejected. Changing from a different partition layout or vendor firmware requires
+Native Agent Link images must use layout descriptor 3; older native layouts are
+rejected. Original SDGOODS applications use their standard IDF `project_name`
+and do not require an Agent Link descriptor. Changing from layout 2 or vendor firmware requires
 the full USB package and replaces settings and installed applications. Updating
 only an app is insufficient. The full package starts Factory. No full-chip erase
 is required.
+
+## Agent_link Launcher and the reviewed application catalog
+
+The public launcher name is **Agent_link Launcher**. For Sugarat Button, Factory
+and all native Agent Link applications use **sdgoods-v3**. Other boards keep their
+own layouts. Vendor pure applications keep their original bytes and use runtime
+partition discovery; they are not rebuilt or given a fabricated native descriptor.
+
+All applications are reviewed and published by the operator to the operator's own
+backend catalog. The device's Add application page downloads both native Agent Link
+apps and approved original SDGOODS apps from that same service. There is no official
+SDGOODS market browser and no local binary upload/import endpoint.
+
+Configure the operator's catalog URL in the system app-service settings at
+`http://DEVICE_IP:8081` (or `http://192.168.4.1:8081` on the setup hotspot).
+The JSON contract is schema 1, target board `SDGOODS-ESP32S3`, layout 3:
+
+```json
+{
+  "schema": 1,
+  "board": "SDGOODS-ESP32S3",
+  "layout": 3,
+  "apps": [
+    {
+      "app_id": "CLOCK",
+      "name": "Clock",
+      "version": "1.2.3",
+      "image_format": "sdgoods",
+      "url": "/firmware/CLOCK.bin",
+      "size": 123456,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}
+```
+
+Replace the example size and digest with the published file's actual byte count
+and SHA-256. URLs may be absolute HTTPS or relative to the catalog's origin.
+Private-LAN HTTP remains available for testing. Up to eight catalog entries are
+supported; two applications can be installed at once.
+
+- Native apps: `image_format: "agent-link"` (also the default when omitted).
+  `app_id` and version must match the native image descriptor; board, chip, layout
+  3 and SDK compatibility are checked before publishing the installation.
+- Reviewed original apps: `image_format: "sdgoods"`. `app_id` must be the original
+  IDF `project_name`, and version must match IDF `version`. The backend serves the
+  original pure application `.bin` unchanged. Download size, SHA-256, image/chip
+  validation and the 5,185,536-byte slot limit are enforced. Merged USB packages,
+  bootloaders and vendor launchers are not application catalog entries.
+- Covers are optional. The backend can supply `cover_url`, `cover_size`,
+  `cover_sha256` and `cover_format: "alcover-rgb565a8-le-v1"`. The publishing helper
+  library [sdgoods_image.py](../../tools/sdgoods_image.py) performs read-only vendor
+  image validation and converts original `SDGCOVER` pixels to the backend cover
+  format. Firmware bytes are not rewritten. Apps without covers use placeholders.
+
+Installation chooses an empty OTA slot, commits availability only after validation,
+refreshes the home page and never implicitly overwrites an installed application.
+The user then selects the application to start it; updates require removing the
+previous version first.
+
+The Factory's standard IDF project name remains `SDGOODS_LAUNCHER` solely as a
+vendor SDK compatibility identifier. This lets approved original applications
+recognize their host and use their normal return action; it does not change the
+public **Agent_link Launcher** name, Sugarat Button hardware name, hotspot
+`Sugarat-Button-XXXX`, or Agent Link OTA model `SDGOODS-ESP32S3`.
+
+Unmodified vendor applications do not confirm Agent Link rollback readiness;
+this board therefore disables bootloader automatic rollback. For recovery,
+hold GPIO6/side key while powering on, for at least three seconds. This clears
+**only OTA selection**, boots Factory and preserves settings, installed apps
+and `appdata`. Battery-power latch behavior still requires device acceptance.
+
+Compatibility targets the vendor SDK contract at commit
+`dae46766aa345c680691420691d3d7170f0c6372`. Applications above the slot limit,
+applications requiring their own fixed partition addresses or custom bootloader,
+and vendor standalone firmware updaters are outside this contract. Do not use
+an application's full-device updater to replace the Agent Link partition table.
+Source/host checks do not establish that every vendor application works on hardware.
 
 The package directory includes `Sugarat-Button-full.bin` (Factory + Device
 status) and `Sugarat-Button-factory-full.bin` (Factory only). These are named
@@ -76,5 +162,8 @@ copyright attribution. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 Verify battery-only boot and retained power, all four touch quadrants, key
 debounce, orientation, RGB colors, brightness and dim/wake. Then verify WiFi
 setup, service configuration, cover download while rendering, install/launch/
-return/remove across all three slots, reboot persistence and USB recovery.
+return/remove across both slots, vendor file persistence, private WiFi/binding
+preservation, reboot persistence and GPIO6 boot recovery. Test representative
+vendor apps (display/input, file-backed media and networking), including power
+loss during install, before describing them as device-verified.
 Desktop rendering and a successful build do not establish these device results.

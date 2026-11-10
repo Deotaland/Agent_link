@@ -26,7 +26,7 @@ void AmoledSystemMenu::Open() {
     exit_ = false;
     nvs_handle_t h;
     int8_t value = 70;
-    if (nvs_open("voice", NVS_READONLY, &h) == ESP_OK) {
+    if (nvs_open_from_partition(agent_system::SettingsPartition(), "voice", NVS_READONLY, &h) == ESP_OK) {
         (void)nvs_get_i8(h, "vol", &value);
         nvs_close(h);
     }
@@ -55,7 +55,7 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
         amoled_ui::SetVolume(value);
         if (input.commit) {
             nvs_handle_t h;
-            esp_err_t err = nvs_open("voice", NVS_READWRITE, &h);
+            esp_err_t err = nvs_open_from_partition(agent_system::SettingsPartition(), "voice", NVS_READWRITE, &h);
             if (err == ESP_OK) {
                 err = nvs_set_i8(h, "vol", value);
                 if (err == ESP_OK)
@@ -104,7 +104,7 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
         amoled_ui::language.store(input.row ? amoled_ui::Language::kEnglish
                                             : amoled_ui::Language::kChinese);
         nvs_handle_t h;
-        esp_err_t err = nvs_open("amoled175", NVS_READWRITE, &h);
+        esp_err_t err = nvs_open_from_partition(agent_system::SettingsPartition(), "amoled175", NVS_READWRITE, &h);
         if (err == ESP_OK) {
             err = nvs_set_i8(h, "language", input.row);
             if (err == ESP_OK)

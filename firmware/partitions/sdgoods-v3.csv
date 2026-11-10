@@ -1,0 +1,15 @@
+# Sugarat Button: SDGOODS application compatibility, layout 3.
+# USB full-package migration required; executable images/font remain below 16 MiB.
+# Last 56 KiB of each OTA slot belongs to the cover, not the application.
+# Name,Type,SubType,Offset,Size,Flags
+nvs,data,nvs,0x9000,0x5000,
+otadata,data,ota,0xE000,0x2000,
+factory,app,factory,0x10000,0x300000,
+ota_0,app,ota_0,0x310000,0x500000,
+ota_1,app,ota_1,0x810000,0x500000,
+nvs_keys,data,nvs_keys,0xD10000,0x1000,
+phy_init,data,phy,0xD11000,0x1000,
+app_nvs,data,nvs,0xD12000,0x10000,
+agent_nvs,data,nvs,0xD22000,0x10000,
+font_cjk,data,0x99,0xD32000,0x230000,
+appdata,data,fat,0x1000000,0x1000000,

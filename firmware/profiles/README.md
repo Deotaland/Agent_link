@@ -75,8 +75,9 @@ with it. Initial merged packages replace settings and installed apps. Applicatio
 builds deliberately do not leave `build/merged.bin`: its padding would erase the
 launcher. See the [factory guide](../factory/waveshare-amoled-175/README.md).
 The Sugarat Button profile (`sdgoods-wifi`, also for units bought from SDGOODS)
-uses managed layout sdgoods-v2, with three 3 MB app slots
-and its shared font below 16 MB in the physical 32 MB flash. Migration from a different layout
+uses managed layout sdgoods-v3, with two 5 MiB app slots. Executable images and
+the shared font stay below 16 MiB; a vendor file partition occupies the upper
+16 MiB of the physical 32 MiB flash. Migration from a different layout
 requires a full USB package. See its [Factory guide](../factory/sdgoods-esp32s3/README.md).
 Other boards retain their existing single-app A/B layouts and flash behavior.
 
