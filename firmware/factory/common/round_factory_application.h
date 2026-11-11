@@ -8,6 +8,7 @@
 #include "amoled_system_menu.h"
 #include "amoled_launcher_model.h"
 #include "factory_view.h"
+#include "factory_hardware_services.h"
 #include "agent_system.h"
 #include "agent_link_network.h"
 #include "esp_log.h"
@@ -35,6 +36,16 @@ class AmoledFactoryApplication : public Application {
         amoled_ui::language.store(language == 1 ? amoled_ui::Language::kEnglish
                                                 : amoled_ui::Language::kChinese);
         hardware_.InitDisplayAndTouch(32);
+        menu_.SetDefaultVolume(AUDIO_DEFAULT_VOLUME);
+        hardware_services_ = CreateFactoryHardwareServices(hardware_);
+        if (hardware_services_) {
+            menu_.SetExtraPage(hardware_services_->Menu());
+            menu_.SetVolumeHandler(
+                [](int value, void* context) {
+                    return static_cast<FactoryHardwareServices*>(context)->SetVolume(value);
+                },
+                hardware_services_.get());
+        }
         events_ = xQueueCreate(8, sizeof(amoled_ui::Input));
         ESP_ERROR_CHECK(events_ ? ESP_OK : ESP_ERR_NO_MEM);
         ESP_ERROR_CHECK(amoled_ui::StartUi(&hardware_.panel_, &hardware_.touch_, OnInput, this,
@@ -129,6 +140,8 @@ class AmoledFactoryApplication : public Application {
         snprintf(screen_.title, sizeof screen_.title, "%s", text);
         snprintf(screen_.detail, sizeof screen_.detail, "%s",
                  Tr("请稍候，完成后可继续操作", "Please wait for completion"));
+        if (hardware_services_)
+            hardware_services_->Decorate(screen_);
         amoled_ui::SetScreen(screen_);
     }
     void RefreshLocal() {
@@ -299,6 +312,8 @@ class AmoledFactoryApplication : public Application {
                 }
             }
         }
+        if (hardware_services_)
+            hardware_services_->Decorate(screen_);
         amoled_ui::SetScreen(screen_);
     }
     void ControlLoop() {
@@ -360,6 +375,20 @@ class AmoledFactoryApplication : public Application {
                 ++view_;
                 ++navigation_;
                 Publish();
+            }
+            if (hardware_services_) {
+                if (hardware_services_->Button(hardware_.ButtonDown(), esp_timer_get_time())) {
+                    menu_.OpenExtraPage();
+                    ++view_;
+                    ++navigation_;
+                    Publish();
+                }
+                if (hardware_services_->Tick(!sync_busy_.load())) {
+                    char info[384]{};
+                    hardware_services_->DeviceInfo(info, sizeof info);
+                    menu_.SetDeviceInfo(info);
+                    Publish();
+                }
             }
             if (esp_timer_get_time() >= next_update) {
                 int battery = -1;
@@ -535,6 +564,7 @@ class AmoledFactoryApplication : public Application {
         static_cast<AmoledFactoryApplication*>(context)->CoverLoop();
     }
     AmoledHardware hardware_;
+    std::unique_ptr<FactoryHardwareServices> hardware_services_;
     QueueHandle_t events_ = nullptr;
     AmoledSystemMenu menu_;
     AmoledLauncherModel carousel_;

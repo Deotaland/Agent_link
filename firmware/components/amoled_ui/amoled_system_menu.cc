@@ -9,6 +9,9 @@
 #include <cstdio>
 
 using amoled_ui::Tr;
+void AmoledSystemMenu::SetDeviceInfo(const char* text) {
+    snprintf(device_info_, sizeof device_info_, "%s", text);
+}
 void AmoledSystemMenu::SetCoverSummary(const char* text) {
     snprintf(cover_summary_, sizeof cover_summary_, "%s", text);
 }
@@ -22,15 +25,19 @@ void Error(esp_err_t error) {
 }
 }  // namespace
 void AmoledSystemMenu::Open() {
+    if (extra_.close)
+        extra_.close(extra_.context);
     page_ = Page::kRoot;
     exit_ = false;
     nvs_handle_t h;
-    int8_t value = 70;
+    int8_t value = default_volume_;
     if (nvs_open_from_partition(agent_system::SettingsPartition(), "voice", NVS_READONLY, &h) == ESP_OK) {
         (void)nvs_get_i8(h, "vol", &value);
         nvs_close(h);
     }
     volume_ = value < 0 ? 0 : value > 100 ? 100 : value;
+    if (volume_handler_)
+        (void)volume_handler_(volume_, context_);
     amoled_ui::SetVolume(volume_);
 }
 bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
@@ -38,11 +45,21 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
         return false;
     using amoled_ui::TouchAction;
     if (input.action == TouchAction::kSystem) {
+        if (extra_.close)
+            extra_.close(extra_.context);
         page_ = Page::kRoot;
         return true;
     }
     if (input.action == TouchAction::kBack || input.action == TouchAction::kHome) {
+        if (page_ == Page::kExtra && extra_.handle && extra_.handle(input, extra_.context))
+            return true;
+        if (extra_.close)
+            extra_.close(extra_.context);
         page_ = page_ == Page::kRoot ? Page::kClosed : Page::kRoot;
+        return true;
+    }
+    if (page_ == Page::kExtra && extra_.handle) {
+        extra_.handle(input, extra_.context);
         return true;
     }
     if (input.action == TouchAction::kVolume && page_ == Page::kVolume) {
@@ -94,6 +111,10 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
                 else if (agent_system::CanReturnToLauncher())
                     exit_ = true;
                 break;
+            case 7:
+                if (extra_.render)
+                    page_ = Page::kExtra;
+                break;
         }
     } else if (page_ == Page::kNetwork && input.row == 0)
         Error(agent_link_wifi_setup());
@@ -143,6 +164,8 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
             row(Tr("应用封面与同步", "App covers and sync"));
         else if (agent_system::CanReturnToLauncher())
             row(Tr("返回应用选择器", "Return to launcher"));
+        if (extra_.render)
+            row(Tr("硬件与电源", "Hardware and power"));
     } else if (page_ == Page::kNetwork) {
         snprintf(s.title, sizeof s.title, "%s", Tr("网络与配网", "Network"));
         snprintf(s.info, sizeof s.info,
@@ -158,13 +181,17 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
                  esp_app_get_description()->version, d.sdk, d.board);
     } else if (page_ == Page::kDevice) {
         snprintf(s.title, sizeof s.title, "%s", Tr("设备状态", "Device status"));
-        snprintf(
-            s.info, sizeof s.info,
-            Tr("电量：%d%%\n充电：%s\n可用内存：%lu KB\n应用槽：3 × 3 MB\n网络：%s",
-               "Battery: %d%%\nCharging: %s\nFree heap: %lu KB\nApp slots: 3 x 3 MB\nNetwork: %s"),
-            battery, charging ? Tr("充电中", "Charging") : Tr("未充电", "Not charging"),
-            static_cast<unsigned long>(esp_get_free_heap_size() / 1024),
-            wifi.connected ? wifi.ssid : Tr("未连接", "Disconnected"));
+        if (device_info_[0]) {
+            snprintf(s.info, sizeof s.info, "%s", device_info_);
+            return;
+        }
+        snprintf(s.info, sizeof s.info,
+                 Tr("电量：%d%%\n充电：%s\n可用内存：%lu KB\n应用编号：%d\n网络：%s",
+                    "Battery: %d%%\nCharging: %s\nFree heap: %lu KB\nApp slots: %d\nNetwork: %s"),
+                 battery, charging ? Tr("充电中", "Charging") : Tr("未充电", "Not charging"),
+                 static_cast<unsigned long>(esp_get_free_heap_size() / 1024),
+                 agent_system::kAppSlotCount,
+                 wifi.connected ? wifi.ssid : Tr("未连接", "Disconnected"));
     } else if (page_ == Page::kService) {
         snprintf(s.title, sizeof s.title, "%s", Tr("应用服务", "App service"));
         char url[256]{};
@@ -188,6 +215,8 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
         snprintf(s.info, sizeof s.info, "%s",
                  cover_summary_[0] ? cover_summary_ : Tr("等待联网同步", "Waiting for network"));
         row(Tr("重新同步封面", "Retry cover sync"));
+    } else if (page_ == Page::kExtra && extra_.render) {
+        extra_.render(s, extra_.context);
     }
 }
 #endif

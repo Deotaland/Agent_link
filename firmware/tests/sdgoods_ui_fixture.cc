@@ -48,6 +48,7 @@ int main(int argc, char** argv) {
     card_renderer_=&amoled_factory::Renderer();
     Screen state{}; state.kind=View::kCarousel; state.launcher_shell=true;
     state.view=1; state.navigation=1; state.card_count=2; state.add_card=true;
+    snprintf(state.hardware_status,sizeof state.hardware_status,"72%% · WiFi");
     snprintf(state.title,sizeof state.title,"添加应用"); SetScreen(state); Frame("sdgoods-add.ppm");
     assert(fonts_.Ready() && LayoutFits());
     Cst9217Touch touch; touch_=&touch;
@@ -111,6 +112,15 @@ int main(int argc, char** argv) {
     touch.sample.x=180; touch.sample.y=325; touch.sample.pressed=true;
     clock_us+=40000; Render(nullptr); touch.sample.y=260; clock_us+=40000; Render(nullptr);
     assert(last_input.action==TouchAction::kHome);
+    SetBacklight(42);
+    Frame("sdgoods-backlight.ppm");
+    assert(applied_backlight_ == (42*255+50)/100);
+    sleep_requested_.store(true);
+    Frame("sdgoods-sleep.ppm");
+    assert(sleep_ready_.load() && applied_backlight_ == 0);
+    CancelSleep();
+    Frame("sdgoods-resume.ppm");
+    assert(!sleep_ready_.load() && applied_backlight_ == (42*255+50)/100);
     lv_indev_delete(pointer_); pointer_=nullptr; display_transfer_.Stop();
     puts("SDGOODS: native 360px layout, fonts, cover cache, app actions, list taps and edge gestures passed.");
     return 0;

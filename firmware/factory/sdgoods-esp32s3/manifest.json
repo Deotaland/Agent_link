@@ -5,7 +5,9 @@
     "app_id": "agent.launcher",
     "name": "Agent_link Launcher",
     "shared_app": "",
+    "requires": ["app_update", "esp_wifi"],
     "sources": [
+      "factory_services.cc",
       "ui/factory_view.cc"
     ],
     "include_dirs": [

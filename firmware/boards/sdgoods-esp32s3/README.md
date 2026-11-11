@@ -14,17 +14,40 @@ hardware table. PSRAM is initialized and checked at boot.
 | --- | --- |
 | LCD QSPI | SCK 40; D0/D1/D2/D3 46/45/42/41; CS 21; 80 MHz |
 | LCD power / reset / backlight | 12 (active low) / 9 / 13; PWM backlight |
-| LCD TE | 18; synchronization not enabled |
+| LCD TE | 18; bounded interrupt-driven synchronization for stationary large frames |
 | CST816 touch | I2C1 SDA 11, SCL 10, address 0x15; reset 5; interrupt 4 |
 | User key | 6, active low; release after boot to arm |
 | Battery power latch | 7, high keeps power on |
-| Microphone (reserved) | BCLK 16, WS 2, DIN 17 |
-| Speaker (reserved) | BCLK 48, WS 38, DOUT 47, MCLK 15; PA 3 |
+| Battery voltage | GPIO8 / ADC1 channel 7, 12 dB attenuation, 3:1 divider |
+| Six-axis IMU | QMI8658, address 0x6B on the touch I2C bus |
+| Microphone | I2S1, 32-bit mono left; BCLK 16, WS 2, DIN 17 |
+| Speaker | I2S0, 16-bit stereo; BCLK 48, WS 38, DOUT 47, MCLK 15 (384 x Fs); PA 3 |
 | USB | Native USB-C, GPIO19/20 |
 
 Touch uses the vendor mapping `(raw_y, 359 - raw_x)` and LCD MADCTL 0x60.
-No PMU, battery ADC or charging telemetry is established by this BSP. The
-firmware reports battery level as unknown and keeps the amplifier disabled.
+Battery voltage and the six-axis sensor follow the upstream
+[hardware implementation](https://github.com/SDGOODS/SDGOODS-ESP32S3/blob/dae46766aa345c680691420691d3d7170f0c6372/components/sdgoods_board/src/sdgoods_hw_info.c).
+ADC calibration is preferred; when unavailable, the vendor's uncalibrated
+conversion is explicitly labelled. A nine-sample median and smoothing stabilize
+the reading; failures display unavailable. Percentage uses the vendor UI's
+3.00–4.28 V linear estimate, not a fuel gauge. No charger-status input is documented;
+**charging remains unknown**, as agreed, rather than inferred from voltage or USB.
+
+Factory's **Hardware and power** page provides battery/voltage, six-axis readings,
+a speaker tone, explicit three-second microphone recording/playback, brightness,
+deep sleep, power off/restart and display/touch status. Recorded PCM uses 96,000
+bytes of PSRAM and is freed after each test; I2S/DMA channels are released too.
+The amplifier stays off outside playback, on mute and after cancellation/errors.
+The microphone self-test keeps WiFi connected and does not upload or save audio.
+The common volume slider controls these tests. This does not enable Agent voice
+sessions in Factory or the Device status app.
+
+Brightness is stored in private `agent_nvs/button_hw/bright`. Short key press
+returns home; holding it for 1.2 seconds opens power controls. Sleep/off requires
+confirmation, an idle cover worker and released key. Audio stops and UI/DMA drain
+before peripheral rails change; deep sleep holds the GPIO7 latch and wakes from
+GPIO6. Power off releases the latch, using deep sleep when USB keeps power on.
+Settings and installed application partitions are not erased by these actions.
 
 The public hardware name is **Sugarat Button**. The existing build profile
 `sdgoods-wifi` and image compatibility model `SDGOODS-ESP32S3` remain stable so
@@ -175,7 +198,9 @@ copyright attribution. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 Verify battery-only boot and retained power, all four touch quadrants, key
 debounce, orientation, RGB colors, brightness and dim/wake. Then verify WiFi
-setup, service configuration, cover download while rendering, install/launch/
+setup, calibrated battery readings against a meter, six-axis signs/units,
+speaker/microphone quality and mute/cancel, saved brightness, battery/USB power-off,
+deep-sleep current and key wake; then service configuration, cover download while rendering, install/launch/
 return/remove across more than two apps, vendor file persistence, private WiFi/binding
 preservation, reboot persistence and GPIO6 boot recovery. Test representative
 vendor apps (display/input, file-backed media and networking), including power

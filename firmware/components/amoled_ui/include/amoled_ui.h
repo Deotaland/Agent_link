@@ -27,6 +27,7 @@ struct Screen {
     Activity activity = Activity::kIdle;
     uint32_t view = 0;
     char pair_code[7] = {};
+    char hardware_status[64] = {};
     char title[96] = {}, detail[192] = {}, rows[kListRows][112] = {}, footer[128] = {}, info[384] = {};
 };
 using InputHandler = bool (*)(const Input&, void*);
@@ -46,5 +47,8 @@ void SetVolume(int percent);
 void SetAnswer(const char* text);
 void Toast(const char* text, uint32_t ms = 2500);
 void Wake();
+void SetBacklight(int percent);
+bool PrepareForSleep();  // Drain display DMA on its owner task before switching off rails.
+void CancelSleep();
 void ReportUiDiagnostics();
 }  // namespace amoled_ui

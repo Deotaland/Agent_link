@@ -33,7 +33,9 @@
 #define TOUCH_INT_PIN GPIO_NUM_4
 #define CALL_BUTTON_PIN GPIO_NUM_6
 #define BATTERY_LATCH_PIN GPIO_NUM_7
-// Audio wiring reserved for a later audio application; Factory never drives I2S.
+#define BATTERY_ADC_PIN GPIO_NUM_8
+#define IMU_I2C_ADDRESS 0x6B
+// Separate microphone and speaker I2S buses; vendor speaker MCLK is 384 * Fs.
 #define AUDIO_MIC_BCLK GPIO_NUM_16
 #define AUDIO_MIC_WS GPIO_NUM_2
 #define AUDIO_MIC_DIN GPIO_NUM_17

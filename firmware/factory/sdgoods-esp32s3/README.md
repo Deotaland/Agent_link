@@ -10,6 +10,14 @@ and explicit launch/remove actions. It supports Chinese and English.
 - Swipe horizontally to browse installed apps and the final Add application card.
 - Tap an app to open its actions; removal requires confirmation.
 - Pull down from the top for WiFi, app service, device, language and cover settings.
+- Open **Hardware and power** for battery voltage/estimated level, six-axis sensor
+  readings, speaker tone, three-second record/playback, persistent brightness and
+  sleep/power/restart controls. The existing volume page controls self-test audio.
+- Hold the key for 1.2 seconds to open power controls. Sleep/off asks for confirmation,
+  waits for idle background work and drains the display before changing power.
+  GPIO6 wakes deep sleep; USB-powered off uses deep sleep as a fallback.
+- The home page shows real estimated battery level and WiFi state. Charging is
+  explicitly **unknown** because no charger-status signal is documented.
 - Swipe up from the bottom, or press the GPIO6 key, to return home.
 - Join `Sugarat-Button-XXXX` and open `http://192.168.4.1` for initial WiFi setup.
 - Configure an Agent Link application service in the system menu. Catalogs
@@ -34,7 +42,7 @@ framebuffer is performed. Only dirty regions are transmitted.
 
 Three recent cover sizes use bounded PSRAM caching and alpha-aware bilinear
 resampling. At the largest 198px size, their pixel storage is at most 352,836
-bytes, plus immutable source snapshots. Fonts also cache glyphs in PSRAM.
+bytes, plus immutable source snapshots (184px home covers use less). Fonts also cache glyphs in PSRAM.
 WiFi/LwIP and TLS prefer external memory; 64 KiB of internal memory is reserved
 for tasks, radio and DMA needs.
 
@@ -42,9 +50,14 @@ The QSPI transport owns one permanent **8,640-byte internal DMA stripe** and
 its transaction descriptor. Each stripe has a complete window command; it
 never lends a PSRAM pointer to DMA. A timed-out descriptor remains owned until
 SPI returns it. The existing bounded recovery mechanism then reinitializes the
-glass and requests a full redraw. CST816 polls are throttled with slow-read
+glass and requests a full redraw. GPIO18 TE synchronizes stationary large frames
+with a 40 ms bound; four missing-signal timeouts disable waiting, preserving UI
+responsiveness. CST816 GPIO4 interrupts reduce idle reads with polling fallback.
+CST816 polls are throttled with slow-read
 backoff so flash/network work cannot create a tight I2C retry loop.
 
 See the [board guide](../../boards/sdgoods-esp32s3/README.md) for build/package
-commands, pins, first-install migration and pending device checks. Factory
-does not initialize audio or claim battery telemetry.
+commands, pins, first-install migration and pending device checks. Audio is
+initialized on an explicit test request. A three-second recording consumes
+96,000 PSRAM bytes temporarily; it is not persisted or uploaded. ADC, I2S/PA,
+touch and power behavior still need on-device acceptance.

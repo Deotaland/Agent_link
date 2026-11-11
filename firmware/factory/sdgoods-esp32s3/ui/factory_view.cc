@@ -8,7 +8,7 @@
 namespace amoled_factory {
 namespace {
 // Native 360px layout; text and controls stay inside the round safe area.
-lv_obj_t *root, *card, *picture, *glyph, *name, *subtitle, *eyebrow;
+lv_obj_t *root, *card, *picture, *glyph, *name, *subtitle, *eyebrow, *hardware_status;
 lv_obj_t *launch, *remove, *back, *launch_text, *remove_text, *dots[4];
 std::shared_ptr<const agent_system::CoverPixels> image;
 AmoledCoverCache covers;
@@ -42,6 +42,7 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     root = Box(parent, 0, 0, 360, 360, 0, 0x080D16);
     Box(root, 163, 24, 34, 3, 2, 0x526173);
     eyebrow = Label(root, fonts.Small(), 90, 38, 180, 20, 0x68D9D1);
+    hardware_status = Label(root, fonts.Small(), 90, 60, 180, 19, 0x8B9DB1);
     card = Box(root, 81, 70, 198, 198, LV_RADIUS_CIRCLE, 0x172738);
     lv_obj_set_style_border_width(card, 2, 0); lv_obj_set_style_border_color(card, lv_color_hex(0x3E6B7A), 0);
     bind(card, 0);
@@ -61,10 +62,12 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
 void Update(const amoled_ui::Screen& screen) {
     Show(root, true);
     const bool actions = screen.kind == amoled_ui::View::kAppActions;
-    const int edge = actions ? 152 : 198;
-    lv_obj_set_pos(card, (360-edge)/2, actions ? 68 : 70); lv_obj_set_size(card, edge, edge);
+    const int edge = actions ? 140 : 184;
+    lv_obj_set_pos(card, (360 - edge) / 2, 86);
+    lv_obj_set_size(card, edge, edge);
     if (actions) lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE); else lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
     Text(eyebrow, "Agent_link Launcher");
+    Text(hardware_status, screen.hardware_status);
     Text(name, screen.title); lv_obj_set_y(name, actions ? 231 : 280);
     Text(subtitle, actions ? screen.detail : amoled_ui::Tr("左右滑动 · 轻触打开", "Swipe to browse · Tap to open"));
     lv_obj_set_y(subtitle, actions ? 319 : 306);

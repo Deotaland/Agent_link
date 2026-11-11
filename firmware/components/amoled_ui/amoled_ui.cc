@@ -48,6 +48,9 @@ agent_link_status_t status_ = {};
 char answer_[1536] = {}, toast_[128] = {};
 int battery_ = -1, volume_ = AUDIO_DEFAULT_VOLUME;
 bool charging_ = false;
+std::atomic<int> backlight_{(DISPLAY_BRIGHTNESS * 100 + 127) / 255};
+std::atomic<bool> sleep_requested_{false}, sleep_ready_{false};
+uint8_t applied_backlight_ = DISPLAY_BRIGHTNESS;
 int64_t toast_until_ = 0;
 std::atomic<uint32_t> revision_{1}, wake_{0}, applied_{0}, flushes_{0}, max_flush_us_{0};
 std::atomic<int64_t> heartbeat_{0};
@@ -128,6 +131,8 @@ void Brightness(uint8_t level) {
     CompleteTransfer(true);  // Keep panel commands outside an outstanding pixel window.
     const esp_err_t err = panel_->SetBrightness(level);
     if (err != ESP_OK) PanelFailed(err, "brightness");
+    else
+        applied_backlight_ = level;
 }
 void Flush(lv_display_t* display, const lv_area_t* area, uint8_t* pixels) {
     // Complete LVGL's flush even when the transport is faulted. Touch, BOOT and
@@ -399,8 +404,20 @@ void Render(void*) {
     static Screen screen;
     static char shown_answer[sizeof answer_] = {}, text[sizeof answer_];
     while (true) {
+        if (sleep_requested_.load()) {
+            CompleteTransfer(true);
+            if (!sleep_ready_.load())
+                Brightness(0);
+            sleep_ready_.store(true);
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        sleep_ready_.store(false);
         const int64_t now = esp_timer_get_time(); heartbeat_.store(now);
         CompleteTransfer(false);
+        const uint8_t backlight = (backlight_.load() * 255 + 50) / 100;
+        if (!dim && !panel_fault_ && backlight != applied_backlight_)
+            Brightness(backlight);
         if (panel_fault_ && now >= panel_retry_at_) {
             Mark(UiStage::kPanel);
             bool recovered = false;
@@ -436,7 +453,12 @@ void Render(void*) {
             }
             if (next.pressed) {
                 activity_at = now;
-                if (dim) { dim = false; swallow_ = true; Mark(UiStage::kBrightness); Brightness(DISPLAY_BRIGHTNESS); }
+                if (dim) {
+                    dim = false;
+                    swallow_ = true;
+                    Mark(UiStage::kBrightness);
+                    Brightness(backlight);
+                }
                 if (shown_kind_ != View::kHome && contact_y_ >= kList.y && contact_y_ < kList.y + kList.h &&
                     std::abs(next.y - contact_y_) > 12 && std::abs(next.y - contact_y_) > std::abs(next.x - contact_x_)) {
                     list_gesture_ = true; list_direction_ = next.y - contact_y_;
@@ -457,7 +479,11 @@ void Render(void*) {
         }
         if (seen_wake != wake_.load()) {
             seen_wake = wake_.load(); activity_at = now;
-            if (dim) { dim = false; Mark(UiStage::kBrightness); Brightness(DISPLAY_BRIGHTNESS); }
+            if (dim) {
+                dim = false;
+                Mark(UiStage::kBrightness);
+                Brightness(backlight);
+            }
         }
         const uint32_t revision = revision_.load(std::memory_order_acquire);
         if (revision != seen || was_toast) {
@@ -489,7 +515,8 @@ void Render(void*) {
             lv_obj_set_style_text_color(heading_, lv_color_hex(ActivityColor(state)), 0);
             char info[80];
             if (battery >= 0) snprintf(info, sizeof info, "AGENT LINK   %d%%%s", battery, charging ? " " LV_SYMBOL_CHARGE : "");
-            else snprintf(info, sizeof info, "AGENT LINK   USB");
+            else
+                snprintf(info, sizeof info, "AGENT LINK   --%%");
             Text(battery_label_, info);
             const char* setup_title = status.phase == AGENT_LINK_PHASE_PAIRING ? Tr("激活设备", "Activate device") :
                 status.phase == AGENT_LINK_PHASE_SETUP ? Tr("连接 WiFi", "Connect WiFi") : Tr("设备需要处理", "Needs attention");
@@ -579,7 +606,11 @@ void Render(void*) {
         // poll by hundreds of milliseconds. State colors need only one redraw.
         const uint32_t color = ActivityColor(state);
         if (color != ring_color) { ring_color = color; lv_obj_set_style_border_color(ring_, lv_color_hex(color), 0); }
-        if (!dim && now - activity_at > 60000000) { dim = true; Mark(UiStage::kBrightness); Brightness(DISPLAY_BRIGHTNESS_DIM); }
+        if (!dim && now - activity_at > 60000000) {
+            dim = true;
+            Mark(UiStage::kBrightness);
+            Brightness(std::min<uint8_t>(backlight, DISPLAY_BRIGHTNESS_DIM));
+        }
         Mark(UiStage::kTimers); const uint32_t next_timer_ms = lv_timer_handler();
         if (now >= memory_at) {
             Mark(UiStage::kMemory);
@@ -642,7 +673,8 @@ esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, 
         lv_indev_set_display(pointer_, display); lv_indev_set_read_cb(pointer_, ReadTouch);
         if (fast_ui_) lv_timer_set_period(lv_indev_get_read_timer(pointer_), 5);
     }
-    Mark(UiStage::kBrightness); Brightness(DISPLAY_BRIGHTNESS);
+    Mark(UiStage::kBrightness);
+    Brightness((backlight_.load() * 255 + 50) / 100);
     if (xTaskCreatePinnedToCore(Render, "amoled_ui", 8192, nullptr, 4, nullptr, portNUM_PROCESSORS - 1) != pdPASS) {
         if (pointer_) { lv_indev_delete(pointer_); pointer_ = nullptr; }
         lv_display_delete(display); free_buffers(); return ESP_ERR_NO_MEM;
@@ -650,13 +682,18 @@ esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, 
     return ESP_OK;
 }
 bool SameScreen(const Screen& a, const Screen& b) {
-    if (a.kind != b.kind || a.busy != b.busy || a.calling != b.calling || a.local_mode != b.local_mode ||
-        a.previous != b.previous || a.next != b.next || a.ended != b.ended || a.volume_control != b.volume_control ||
-        a.launcher_shell != b.launcher_shell || a.add_card != b.add_card || a.card_index != b.card_index ||
-        a.card_count != b.card_count || a.cover_slot != b.cover_slot || a.cover_revision != b.cover_revision || strcmp(a.app_id,b.app_id) ||
-        a.row_count != b.row_count || a.row_offset != b.row_offset || a.navigation != b.navigation ||
-        a.activity != b.activity || a.view != b.view || strcmp(a.pair_code, b.pair_code) ||
-        strcmp(a.title, b.title) || strcmp(a.detail, b.detail) || strcmp(a.footer, b.footer) || strcmp(a.info, b.info)) return false;
+    if (a.kind != b.kind || a.busy != b.busy || a.calling != b.calling ||
+        a.local_mode != b.local_mode || a.previous != b.previous || a.next != b.next ||
+        a.ended != b.ended || a.volume_control != b.volume_control ||
+        a.launcher_shell != b.launcher_shell || a.add_card != b.add_card ||
+        a.card_index != b.card_index || a.card_count != b.card_count ||
+        a.cover_slot != b.cover_slot || a.cover_revision != b.cover_revision ||
+        strcmp(a.app_id, b.app_id) || a.row_count != b.row_count || a.row_offset != b.row_offset ||
+        a.navigation != b.navigation || a.activity != b.activity || a.view != b.view ||
+        strcmp(a.pair_code, b.pair_code) || strcmp(a.title, b.title) ||
+        strcmp(a.detail, b.detail) || strcmp(a.footer, b.footer) || strcmp(a.info, b.info) ||
+        strcmp(a.hardware_status, b.hardware_status))
+        return false;
     for (int i = 0; i < kListRows; ++i) if (strcmp(a.rows[i], b.rows[i])) return false;
     return true;
 }
@@ -684,6 +721,22 @@ void SetBattery(int percent, bool charging) {
     battery_ = percent; charging_ = charging;
     taskEXIT_CRITICAL(&lock_);
     if (changed) revision_.fetch_add(1, std::memory_order_release);
+}
+void SetBacklight(int percent) {
+    backlight_.store(std::clamp(percent, 5, 100));
+    Wake();
+}
+bool PrepareForSleep() {
+    sleep_ready_.store(false);
+    sleep_requested_.store(true);
+    for (unsigned n = 0; n < 100 && !sleep_ready_.load(); ++n)
+        vTaskDelay(pdMS_TO_TICKS(10));
+    return sleep_ready_.load();
+}
+void CancelSleep() {
+    sleep_requested_.store(false);
+    sleep_ready_.store(false);
+    Wake();
 }
 void SetVolume(int percent) {
     taskENTER_CRITICAL(&lock_);

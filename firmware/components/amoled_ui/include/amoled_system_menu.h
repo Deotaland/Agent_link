@@ -6,8 +6,25 @@
 class AmoledSystemMenu {
    public:
     using VolumeHandler = bool (*)(int, void*);
+    void SetDefaultVolume(int value) { default_volume_ = value; }
+    struct ExtraPage {
+        void* context = nullptr;
+        bool (*handle)(const amoled_ui::Input&, void*) = nullptr;
+        void (*render)(amoled_ui::Screen&, void*) = nullptr;
+        void (*close)(void*) = nullptr;
+    };
+    void SetExtraPage(ExtraPage page) {
+        extra_ = page;
+    }
+    void OpenExtraPage() {
+        page_ = Page::kExtra;
+        exit_ = false;
+    }
+    void SetDeviceInfo(const char* text);
     void Open();
     void Close() {
+        if (extra_.close)
+            extra_.close(extra_.context);
         page_ = Page::kClosed;
     }
     bool Active() const {
@@ -42,13 +59,17 @@ class AmoledSystemMenu {
         kService,
         kVolume,
         kLanguage,
-        kCovers
+        kCovers,
+        kExtra
     };
     Page page_ = Page::kClosed;
     bool exit_ = false;
     bool cover_retry_ = false;
     char cover_summary_[384]{};
+    char device_info_[384]{};
+    ExtraPage extra_{};
     int volume_ = 70;
+    int default_volume_ = 70;
     VolumeHandler volume_handler_ = nullptr;
     void* context_ = nullptr;
 };
