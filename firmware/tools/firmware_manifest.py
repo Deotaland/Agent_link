@@ -71,6 +71,16 @@ def layout_info(layout_id, root=ROOT):
         reserve = layout.get("cover_reserve", 0)
         if not isinstance(reserve, int) or reserve % 0x1000 or any(entries[s]["size"] <= reserve for s in slots):
             raise ValueError("Invalid app-slot reserve")
+    dynamic = layout.get("dynamic_slots")
+    if dynamic:
+        pool = entries.get(dynamic.get("pool_partition"), {})
+        guard = entries.get(dynamic.get("guard_partition"), {})
+        if (layout["mode"] != "managed" or slots != [dynamic.get("pool_partition")] or
+                dynamic.get("max_slots") != 16 or pool.get("offset", 1) % 0x10000 or
+                pool.get("size", 1) % 0x10000 or guard.get("type") != "data" or
+                guard.get("subtype") != "undefined" or guard.get("size") != 0x4000 or
+                not isinstance(layout.get("app_abi"), int) or layout["app_abi"] < 1):
+            raise ValueError("Invalid dynamic application pool or recovery journal")
     return layout
 
 
@@ -132,7 +142,8 @@ def system_images(profile, root=ROOT):
                 if not contained(directory, relative).exists():
                     raise ValueError(f"Missing image {field}: {relative}")
         image["offset"] = hex(layout["partitions"][image["partition"]]["offset"])
-    return dict(schema=2, board=profile["board"], model=profile["model"], layout=layout["version"], images=images)
+    return dict(schema=2, board=profile["board"], model=profile["model"],
+                layout=layout.get("app_abi", layout["version"]), images=images)
 
 
 def flash_plan(profile, role):
@@ -141,7 +152,7 @@ def flash_plan(profile, role):
     managed = layout["mode"] == "managed"
     image = system_images(profile)["images"][role] if managed else profile["application"]
     partition = "factory" if role == "factory" else layout["app_slots"][0]
-    return dict(schema=1, profile=profile["name"], board=profile["board"], model=profile["model"],
+    plan = dict(schema=1, profile=profile["name"], board=profile["board"], model=profile["model"],
                 chip=profile["target"], layout=layout["id"], layout_version=layout["version"],
                 mode=layout["mode"], role=role, app_id=image["app_id"], partition=partition,
                 app_offset=layout["partitions"][partition]["offset"],
@@ -151,6 +162,9 @@ def flash_plan(profile, role):
                 partition_table_offset=0x8000, partitions=layout["partitions"],
                 app_slots=layout["app_slots"], cover_reserve=layout.get("cover_reserve", 0),
                 flash_assets=profile.get("flash_assets", []))
+    if layout.get("dynamic_slots"):
+        plan.update(app_abi=layout["app_abi"], dynamic_slots=layout["dynamic_slots"])
+    return plan
 
 
 def initial_boot_slot(plan):

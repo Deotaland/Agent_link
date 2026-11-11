@@ -16,7 +16,7 @@ python -m pip install -r requirements.txt
 python server.py
 ```
 
-**Sugarat Button / SDGOODS V3 请使用：**
+**Sugarat Button / SDGOODS 请使用：**
 
 ```powershell
 python server.py --profile sdgoods-wifi
@@ -82,9 +82,10 @@ python tests/test_server.py
 
 ## 使用真实 SDGOODS 固件验证
 
-本次已将下载目录内 19 份符合 V3 容量和纯应用要求的官方文件原样复制到
-`packages`；原有 `agent_link.bin` 保持不变。恢复启动器、整机包及超过
-5,185,536 字节的应用没有加入可安装目录。
+本次已将下载目录内 20 份符合纯应用要求的官方文件原样复制到 `packages`，
+包括 9,171,904 字节的 PixMon；原有 `agent_link.bin` 保持不变。
+当前使用 V4 的 10 MiB 动态应用池，应用兼容标识仍为 3。恢复启动器、
+整机包以及依赖额外独立资源分区的固件没有加入可安装目录。
 
 在仓库根目录运行：
 
@@ -92,10 +93,12 @@ python tests/test_server.py
 python firmware/tests/local_app_store/tests/check_sdgoods_packages.py
 ```
 
-它会临时启动本机 HTTP 服务，下载全部分组并核对完整字节、文件 SHA-256、
+先用正式打包工具构建 `sdgoods-wifi` 的 Factory 和 standard 镜像。
+测试会临时启动本机 HTTP 服务，下载全部分组并核对完整字节、文件 SHA-256、
 ESP 镜像校验及镜像附带摘要。然后使用正式的 `agent_system.cc` 安装逻辑、
-操作系统真实 SHA-256 和模拟的 HTTP/Flash/NVS 适配器，验证每个文件在两个
-OTA 槽中的安装、列举、重复拦截、启动目标选择及卸载。Windows 需要现有的
+操作系统真实 SHA-256 和模拟的 HTTP/Flash/NVS 适配器，验证动态分配、
+五个应用共存、删除复用、旧版/新版原生应用编号限制、重复拦截、启动目标选择、
+整包首次启动收缩应用区及配置区保持。Windows 需要现有的
 MSVC；其他主机系统需要 OpenSSL 开发库。测试结束后自动关闭服务。
 
 结果在 `.cache/sdgoods-http-report.json`，排除项及市场版本与镜像版本差异在

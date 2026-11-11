@@ -63,16 +63,22 @@ class FirmwareArchitectureTests(unittest.TestCase):
     def test_sdgoods_all_images_and_font_fit_24bit_flash_mapping(self):
         profile = self.profiles['sdgoods-wifi']
         plan = flash_plan(profile, 'standard')
-        self.assertEqual((plan['layout'], plan['layout_version']), ('sdgoods-v3', 3))
-        self.assertEqual(plan['app_slots'], ['ota_0', 'ota_1'])
-        self.assertEqual(plan['app_max_bytes'], 0x500000 - 0xE000)
+        self.assertEqual((plan['layout'], plan['layout_version']), ('sdgoods-v4', 4))
+        self.assertEqual(plan['app_abi'], 3)
+        self.assertEqual(build.system_images(profile)['layout'], 3)
+        self.assertEqual(plan['app_slots'], ['ota_0'])
+        self.assertEqual(plan['dynamic_slots']['max_slots'], 16)
+        self.assertEqual(plan['app_max_bytes'], 0xA00000 - 0xE000)
         entries = plan['partitions']
         for name, entry in entries.items():
             with self.subTest(partition=name):
                 if name != 'appdata':
                     self.assertLessEqual(entry['offset'] + entry['size'], 1 << 24)
         for slot in plan['app_slots']:
-            self.assertEqual(entries[slot]['size'], 0x500000)
+            self.assertEqual(entries[slot]['size'], 0xA00000)
+        self.assertEqual((entries['pt_guard']['offset'], entries['pt_guard']['size']), (0xF62000, 0x4000))
+        for name, address in {'app_nvs':0xD12000, 'agent_nvs':0xD22000, 'nvs':0x9000}.items():
+            self.assertEqual(entries[name]['offset'], address)
         self.assertEqual((entries['appdata']['offset'], entries['appdata']['size']), (0x1000000, 0x1000000))
         self.assertNotEqual(entries['agent_nvs']['offset'], entries['nvs']['offset'])
         font = entries['font_cjk']
@@ -83,6 +89,13 @@ class FirmwareArchitectureTests(unittest.TestCase):
         self.assertEqual(settings.get('CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH', 'n'), 'n')
         self.assertEqual(initial_boot_slot(plan), 0)
         self.assertIsNone(initial_boot_slot(flash_plan(profile, 'factory')))
+
+    def test_dynamic_app_only_usb_update_is_refused_before_device_access(self):
+        plan=flash_plan(self.profiles['sdgoods-wifi'],'standard')
+        with self.assertRaisesRegex(ValueError,'full USB package'):
+            preflight(plan,['--chip','esp32s3','-p','COM_TEST','write-flash',
+                            hex(plan['app_offset']),'agent_link.bin'],self.folder,
+                      run=lambda *a,**k:self.fail('Must refuse before accessing a device'))
 
     def test_sdgoods_old_apps_are_rejected_on_v3(self):
         path = self.folder / 'sdgoods-old.bin'

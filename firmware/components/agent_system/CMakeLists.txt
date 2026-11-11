@@ -8,14 +8,35 @@ if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
 else()
     set(_json json)
 endif()
-idf_component_register(SRCS "agent_system.cc" "cover_cache.cc" INCLUDE_DIRS "include"
+set(_sources "agent_system.cc" "cover_cache.cc")
+string(JSON _dynamic ERROR_VARIABLE _dynamic_error GET "${BUILD_PROFILE}" layout_info dynamic_slots max_slots)
+if(NOT _dynamic_error)
+    list(APPEND _sources "dynamic_slots.cc")
+    execute_process(COMMAND "${PYTHON}" "${FIRMWARE_ROOT}/tools/dynamic_layout.py"
+        --profile "$ENV{AGENT_LINK_BUILD_PROFILE}" --header "${CMAKE_CURRENT_BINARY_DIR}/dynamic_layout_config.h"
+        RESULT_VARIABLE _result ERROR_VARIABLE _error)
+    if(NOT _result EQUAL 0)
+        message(FATAL_ERROR "${_error}")
+    endif()
+    string(JSON _dynamic_csv GET "${BUILD_PROFILE}" layout_info csv)
+    get_filename_component(_dynamic_csv_path "${FIRMWARE_ROOT}/${_dynamic_csv}" ABSOLUTE)
+    get_filename_component(_dynamic_tool_path "${FIRMWARE_ROOT}/tools/dynamic_layout.py" ABSOLUTE)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${_dynamic_csv_path}" "${_dynamic_tool_path}")
+endif()
+idf_component_register(SRCS ${_sources} INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "../agent_link/src/ota"
     REQUIRES esp_common esp_partition esp_app_format
     PRIV_REQUIRES app_update bootloader_support nvs_flash esp_http_client esp_http_server
-                  esp_netif esp_timer heap mbedtls ${_json})
+                  esp_netif esp_timer heap mbedtls spi_flash esp_rom ${_json})
 string(JSON _model GET "${SYSTEM_MANIFEST}" model)
 string(JSON _layout GET "${SYSTEM_MANIFEST}" layout)
 string(JSON _slots LENGTH "${BUILD_PROFILE}" layout_info app_slots)
+if(NOT _dynamic_error)
+    set(_slots ${_dynamic})
+    target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE AGENT_SYSTEM_DYNAMIC_SLOTS=1)
+endif()
 string(JSON _reserve GET "${BUILD_PROFILE}" layout_info cover_reserve)
 string(JSON _slot_size GET "${BUILD_PROFILE}" layout_info partitions ota_0 size)
 math(EXPR _app_limit "${_slot_size} - ${_reserve}")

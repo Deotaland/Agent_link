@@ -12,6 +12,8 @@ ignored. Firmware here is local test data and is ignored by Git.
 
 Select `--profile sdgoods-wifi` to serve the current native `agent_link.bin` and
 the copied SDGOODS pure applications. The native binary is kept unchanged.
-This profile uses V3 and two 5 MiB slots; each image is limited to 5,185,536 bytes.
+This profile uses physical V4 with a 10 MiB dynamic pool and application ABI 3.
+The per-image limit is 10,428,416 bytes; apps share the pool and each reserves
+56 KiB for its cover. Runtime allocation is aligned to 64 KiB.
 Bootloaders, partition tables, recovery launchers and full-device packages are
 not copied here. See the service README and `.cache` reports for test results.

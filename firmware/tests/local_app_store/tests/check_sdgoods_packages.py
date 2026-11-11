@@ -75,13 +75,15 @@ def main():
     print('Actual HTTP downloads and ESP image checks passed:', len(apps), 'apps,', len(report['pages']), 'catalogs', flush=True)
     try:
         subprocess.run([sys.executable, str(FIRMWARE/'tests/test_agent_system.py'),
-                        '--packages-report', str(path)], check=True)
+                        '--packages-report', str(path),
+                        *(['--dynamic'] if selected['layout'].get('dynamic_slots') else [])], check=True)
     except subprocess.CalledProcessError:
         report['sdk_installation']='failed'
         path.write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
         raise
     report['sdk_installation']='passed-with-simulated-flash-and-HTTP-adapters'
-    report['simulated_installs']=len(apps)*2
+    report['simulated_installs']=len(apps)+9 if selected['layout'].get('dynamic_slots') else len(apps)*2
+    report['simultaneously_installed']=5 if selected['layout'].get('dynamic_slots') else 2
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     print('Report:', path)
 

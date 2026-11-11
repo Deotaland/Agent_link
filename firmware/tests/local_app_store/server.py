@@ -98,7 +98,7 @@ def make_handler(apps, profile=DEFAULT_PROFILE):
                     self.send_error(400, 'Invalid catalog page'); return
                 if not 1 <= page <= page_count:
                     self.send_error(404, 'Catalog page not found'); return
-                catalog = dict(schema=1, layout=selected['layout']['version'], board=selected['board'],
+                catalog = dict(schema=1, layout=selected['layout'].get('app_abi', selected['layout']['version']), board=selected['board'],
                                apps=entries[(page-1)*8:page*8])
                 body = json.dumps(catalog, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)

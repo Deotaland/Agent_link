@@ -1,6 +1,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_system.h"
 
 #include "agent_link.h"
 #include "agent_link_ota.h"
@@ -50,7 +51,12 @@ void on_state(agent_state_t state, void*) {
 
 extern "C" void app_main(void) {
 #if defined(AGENT_SYSTEM_ENABLED)
-    ESP_ERROR_CHECK(agent_system::Init());
+    const esp_err_t system_init = agent_system::Init();
+    if (system_init == agent_system::kRestartRequired) {
+        esp_restart();
+        return;
+    }
+    ESP_ERROR_CHECK(system_init);
 #endif
     Application& board = Application::GetInstance();
     ESP_LOGI(TAG, "board = %s, model = %s, fw = %s, caps = 0x%04x", board.Name(), board.Model(),

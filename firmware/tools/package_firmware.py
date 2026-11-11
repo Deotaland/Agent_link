@@ -47,6 +47,12 @@ def package(profile, output):
     if (factory / "partition_table/partition-table.bin").read_bytes() != (app / "partition_table/partition-table.bin").read_bytes():
         raise ValueError("Factory and app use different partition tables")
     plan = app_record["plan"]
+    if plan.get("dynamic_slots"):
+        from dynamic_layout import verify_bootloader
+        for source in (factory, app):
+            verify_bootloader(source / 'bootloader/bootloader.bin', profile)
+            if (source / 'flash_assets/pt_guard.bin').read_bytes() != b'\xff' * 0x4000:
+                raise ValueError('Full USB package must reset the partition recovery journal')
     factory_info = image_info(factory / "agent_link.bin", profile["model"], bundle["layout"],
                               plan["partitions"]["factory"]["size"], chip=plan["chip"])
     app_info = image_info(app / "agent_link.bin", profile["model"], bundle["layout"], plan["app_max_bytes"], chip=plan["chip"])
@@ -101,11 +107,13 @@ def package(profile, output):
     metadata["app"]["file"] = "factory.bin"
     metadata[plan["partition"]] = dict(offset=hex(plan["app_offset"]), file=role + ".bin", encrypted="false")
     (output / "flasher_args.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    package_info = dict(schema=1, layout=bundle["layout"], layout_id=plan["layout"], board=profile["model"],
+    package_info = dict(schema=1, layout=plan["layout_version"], layout_id=plan["layout"], board=profile["model"],
                         display_name=hardware["product"], brand=hardware["vendor"],
                         hardware_model=hardware["model"], aliases=hardware["aliases"],
                         profile=profile["name"], boot="factory", apps=[dict(app_info, file=role + ".bin")],
                         settings_impact="Initial merged USB packages replace settings and installed apps.")
+    if plan.get("dynamic_slots"):
+        package_info.update(app_abi=bundle["layout"], dynamic_slots=plan["dynamic_slots"])
     package_files = set(full_files.values()) | {"merged.bin", "factory-only-merged.bin", "flasher_args.json",
                                                "factory.elf", "factory.map", role + ".elf", role + ".map", "fonts-OFL.txt"}
     package_files.update(notices)

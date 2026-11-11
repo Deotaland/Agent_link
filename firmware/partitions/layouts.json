@@ -61,6 +61,17 @@
     "cover_reserve": 57344,
     "defaults": "partitions/amoled-175-v1.defaults"
   },
+  "sdgoods-v4": {
+    "version": 4,
+    "app_abi": 3,
+    "mode": "managed",
+    "csv": "partitions/sdgoods-v4.csv",
+    "targets": ["esp32s3"],
+    "app_slots": ["ota_0"],
+    "cover_reserve": 57344,
+    "dynamic_slots": {"pool_partition": "ota_0", "guard_partition": "pt_guard", "max_slots": 16},
+    "defaults": "partitions/sdgoods-v4.defaults"
+  },
   "sdgoods-v3": {
     "version": 3,
     "mode": "managed",

@@ -36,7 +36,7 @@ def image_info(path, profile=DEFAULT_PROFILE):
         native = stream.read(5) == b'AGSYS'
     if selected['vendor'] and not native:
         return inspect_sdgoods(path, selected['maximum'])
-    value = inspect_image(path, selected['board'], layout['version'], chip=selected['chip'])
+    value = inspect_image(path, selected['board'], layout.get('app_abi', layout['version']), chip=selected['chip'])
     value['image_format'] = 'agent-link'
     maximum = layout['partitions']['factory']['size'] if value['app_id']=='agent.launcher' else selected['maximum']
     if value["size"] > maximum:

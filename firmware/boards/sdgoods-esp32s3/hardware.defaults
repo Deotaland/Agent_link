@@ -9,6 +9,10 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_RTC_CLK_SRC_INT_RC=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+# The guarded dynamic allocator updates the primary partition table.
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y
 # Unmodified vendor apps do not confirm Agent Link's first-boot rollback state.
 # Recovery uses the hardware key at boot, clearing only OTA selection.
 # CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is not set

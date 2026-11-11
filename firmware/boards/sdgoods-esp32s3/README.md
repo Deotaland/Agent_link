@@ -49,9 +49,12 @@ status application package sequentially in the same `firmware/build` directory:
 python firmware/tools/package_firmware.py sdgoods-wifi --jobs 2
 ```
 
-The **sdgoods-v3** partition table (layout version 3) has a 3 MiB Factory,
-two 5 MiB app slots and shared settings/font partitions. Each app reserves
-56 KiB for its raw cover, leaving **5,185,536 bytes** for the application image.
+The **sdgoods-v4** bootstrap partition table (physical version 4, application ABI 3)
+has a 3 MiB Factory and a **10 MiB dynamic application pool**. Factory allocates
+up to 16 OTA records on demand, using 64 KiB alignment and 56 KiB per-app cover
+reserve. A single image can be at most **10,428,416 bytes**; multiple apps share
+the pool. Deletion returns space. The largest contiguous gap limits an install;
+live apps are not moved to compact fragmented space.
 All apps and the memory-mapped font are below 16 MB; physical flash capacity
 is 32 MiB. The upper 16 MiB is the vendor-compatible `appdata` FAT partition;
 it uses flash reads/writes, not memory mapping. Experimental 32-bit cache
@@ -65,7 +68,7 @@ application's own flow; Factory does not inject platform credentials into it.
 
 Native Agent Link images must use layout descriptor 3; older native layouts are
 rejected. Original SDGOODS applications use their standard IDF `project_name`
-and do not require an Agent Link descriptor. Changing from layout 2 or vendor firmware requires
+and do not require an Agent Link descriptor. Changing from V2/V3 or vendor firmware requires
 the full USB package and replaces settings and installed applications. Updating
 only an app is insufficient. The full package starts Factory. No full-chip erase
 is required.
@@ -73,7 +76,7 @@ is required.
 ## Agent_link Launcher and the reviewed application catalog
 
 The public launcher name is **Agent_link Launcher**. For Sugarat Button, Factory
-and all native Agent Link applications use **sdgoods-v3**. Other boards keep their
+uses physical **sdgoods-v4**, retaining application ABI **3**. Other boards keep their
 own layouts. Vendor pure applications keep their original bytes and use runtime
 partition discovery; they are not rebuilt or given a fabricated native descriptor.
 
@@ -108,7 +111,10 @@ The JSON contract is schema 1, target board `SDGOODS-ESP32S3`, layout 3:
 Replace the example size and digest with the published file's actual byte count
 and SHA-256. URLs may be absolute HTTPS or relative to the catalog's origin.
 Private-LAN HTTP remains available for testing. Up to eight catalog entries are
-supported; two applications can be installed at once.
+supported per catalog. Up to 16 applications can coexist when space permits.
+Legacy native V3 applications require ota_0 or ota_1; newly compiled native apps
+advertise support for all 16 records. Reviewed compatible vendor SDK apps use
+runtime partition discovery. Their image bytes remain unchanged.
 
 - Native apps: `image_format: "agent-link"` (also the default when omitted).
   `app_id` and version must match the native image descriptor; board, chip, layout
@@ -116,7 +122,7 @@ supported; two applications can be installed at once.
 - Reviewed original apps: `image_format: "sdgoods"`. `app_id` must be the original
   IDF `project_name`, and version must match IDF `version`. The backend serves the
   original pure application `.bin` unchanged. Download size, SHA-256, image/chip
-  validation and the 5,185,536-byte slot limit are enforced. Merged USB packages,
+  validation and the 10,428,416-byte pool image limit are enforced. Merged USB packages,
   bootloaders and vendor launchers are not application catalog entries.
 - Covers are optional. The backend can supply `cover_url`, `cover_size`,
   `cover_sha256` and `cover_format: "alcover-rgb565a8-le-v1"`. The publishing helper
@@ -124,8 +130,9 @@ supported; two applications can be installed at once.
   image validation and converts original `SDGCOVER` pixels to the backend cover
   format. Firmware bytes are not rewritten. Apps without covers use placeholders.
 
-Installation chooses an empty OTA slot, commits availability only after validation,
-refreshes the home page and never implicitly overwrites an installed application.
+Installation chooses a free extent, verifies the image, commits a guarded partition
+table and restarts Factory to reload IDF's partition cache. Deletion also restarts
+Factory after releasing the extent. Installed applications are never overwritten implicitly.
 The user then selects the application to start it; updates require removing the
 previous version first.
 
@@ -148,6 +155,13 @@ and vendor standalone firmware updaters are outside this contract. Do not use
 an application's full-device updater to replace the Agent Link partition table.
 Source/host checks do not establish that every vendor application works on hardware.
 
+Dynamic table writes require the matching recovery bootloader and its two-bank
+`pt_guard` journal. Full USB packages initialize this journal. App-only USB flashing
+is refused; use Launcher for app downloads. Updating Factory alone over an old V3
+bootloader permits inspection/launch but refuses dynamic installs. First migration
+to V4 requires the full package and replaces settings/apps; no in-place migration
+is performed. Fixed NVS, font and appdata addresses remain those of V3.
+
 The package directory includes `Sugarat-Button-full.bin` (Factory + Device
 status) and `Sugarat-Button-factory-full.bin` (Factory only). These are named
 copies of the existing merged packages and use USB offset `0x0`. The package
@@ -162,7 +176,7 @@ copyright attribution. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 Verify battery-only boot and retained power, all four touch quadrants, key
 debounce, orientation, RGB colors, brightness and dim/wake. Then verify WiFi
 setup, service configuration, cover download while rendering, install/launch/
-return/remove across both slots, vendor file persistence, private WiFi/binding
+return/remove across more than two apps, vendor file persistence, private WiFi/binding
 preservation, reboot persistence and GPIO6 boot recovery. Test representative
 vendor apps (display/input, file-backed media and networking), including power
 loss during install, before describing them as device-verified.

@@ -15,6 +15,12 @@ constexpr uint32_t kLayout = AGENT_SYSTEM_LAYOUT;
 constexpr size_t kMaxApps = 8;
 constexpr esp_err_t kSlotsFull = 0x7F01;
 constexpr esp_err_t kAlreadyInstalled = 0x7F02;
+// Geometry was published (or needs journal recovery). Restart Factory before
+// any further install, removal or launch; IDF caches partition pointers.
+constexpr esp_err_t kRestartRequired = 0x7F03;
+constexpr esp_err_t kNeedsFullPackage = 0x7F04;
+constexpr esp_err_t kNoAppSpace = 0x7F05;
+constexpr esp_err_t kLegacySlotsFull = 0x7F06;
 constexpr const char* kBoard = AGENT_SYSTEM_BOARD_MODEL;
 constexpr const char* kSdk = "0.1.0";
 // Stored immediately after esp_app_desc at image offset 0x120. Keep this ABI stable.
@@ -28,6 +34,11 @@ struct Descriptor {
     char sdk[16];
 };
 static_assert(sizeof(Descriptor) == 176);
+struct SlotCapability {
+    char magic[8];
+    uint32_t version, slots, flags;
+};
+static_assert(sizeof(SlotCapability) == 20);
 enum class ImageFormat { kAgentLink, kSdgoods };
 struct App {
     Descriptor descriptor{};

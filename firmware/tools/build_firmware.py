@@ -559,6 +559,9 @@ def build(args, profile):
 def archive_build(profile, role, build_dir):
     metadata = json.loads((build_dir / "flasher_args.json").read_text(encoding="utf-8"))
     plan = flash_plan(profile, role)
+    if plan.get('dynamic_slots'):
+        from dynamic_layout import verify_bootloader
+        verify_bootloader(build_dir / 'bootloader/bootloader.bin', profile)
     files = metadata["flash_files"]
     app_offsets = [int(offset, 0) for offset, file in files.items() if file == "agent_link.bin"]
     if app_offsets != [plan["app_offset"]]:
@@ -567,7 +570,7 @@ def archive_build(profile, role, build_dir):
         raise ValueError("Application exceeds its usable partition size")
     if plan["mode"] == "managed":
         from firmware_image import image_info
-        info = image_info(build_dir / "agent_link.bin", plan["model"], plan["layout_version"], plan["app_max_bytes"], chip=plan["chip"])
+        info = image_info(build_dir / "agent_link.bin", plan["model"], plan.get("app_abi", plan["layout_version"]), plan["app_max_bytes"], chip=plan["chip"])
         if info["app_id"] != plan["app_id"]:
             raise ValueError("Built application identity differs from the selected target")
     output = build_dir / "images" / profile["name"] / role

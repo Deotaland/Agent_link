@@ -18,7 +18,10 @@ and explicit launch/remove actions. It supports Chinese and English.
   Agent Link identity checks. Both kinds are downloaded from the operator's own
   reviewed catalog. `http://DEVICE_IP:8081` configures that service; it does not
   upload application files or browse the official SDGOODS market.
-- Two 5 MiB application slots are available (5,185,536 image bytes each).
+- A 10 MiB dynamic pool supports up to 16 applications, subject to image sizes,
+  alignment, cover reserve and contiguous free space. Installing/removing an app
+  restarts Factory to refresh the partition list. The matching V4 full USB package
+  is required initially; application ABI remains 3 for existing native images.
   Vendor `appdata` occupies the upper 16 MiB. Hold GPIO6 at power-on for three
   seconds to recover Factory without erasing application files or settings.
 

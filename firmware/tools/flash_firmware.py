@@ -48,7 +48,7 @@ def write_images(arguments):
 def compatible_identity(data, plan, app_id):
     info = descriptor(data)
     if (info["app_id"] != app_id or info["board"] != plan["model"] or
-            info["layout"] != plan["layout_version"] or info["sdk"] != "0.1.0" or info["chip_id"] != CHIP_IDS.get(plan["chip"])):
+            info["layout"] != plan.get("app_abi", plan["layout_version"]) or info["sdk"] != "0.1.0" or info["chip_id"] != CHIP_IDS.get(plan["chip"])):
         raise ValueError("Incompatible application identity")
     return info
 
@@ -79,7 +79,12 @@ def preflight(plan, arguments, folder, run=subprocess.run):
         return
     if len(selected) != 1 or selected[0][0] != plan["app_offset"]:
         raise ValueError("Flash arguments do not match the generated application destination")
-    info = image_info(app_file, plan["model"], plan["layout_version"], plan["app_max_bytes"], chip=plan["chip"])
+    if plan.get("dynamic_slots"):
+        required = {0, plan['partition_table_offset'],
+                    plan['partitions'][plan['dynamic_slots']['guard_partition']]['offset']}
+        if not required.issubset(address for address, _ in images):
+            raise ValueError("Dynamic layouts require the matching full USB package. Install apps through Agent_link Launcher.")
+    info = image_info(app_file, plan["model"], plan.get("app_abi", plan["layout_version"]), plan["app_max_bytes"], chip=plan["chip"])
     if info["app_id"] != plan["app_id"]:
         raise ValueError("Build image does not match the selected firmware")
     prefix = arguments[:index]
@@ -117,7 +122,7 @@ def preflight(plan, arguments, folder, run=subprocess.run):
     if plan["role"] == "factory" and table == b"\xff" * len(table):
         if not any(address == plan["partition_table_offset"] for address, _ in images):
             raise ValueError("A blank device requires full Flash, not app-flash")
-    else:
+    elif not plan.get("dynamic_slots"):
         launcher = read(plan["partitions"]["factory"]["offset"], 0x200, "factory-header.bin") if plan["role"] != "factory" else b""
         target = read(plan["app_offset"], 0x200, "app-header.bin") if plan["role"] != "factory" else None
         check_device(plan, table, expected, launcher, target)

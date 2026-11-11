@@ -85,6 +85,13 @@ class AmoledFactoryApplication : public Application {
     bool Check(esp_err_t error) {
         if (error == ESP_OK)
             return true;
+        if (error == agent_system::kRestartRequired) {
+            amoled_ui::Toast(
+                Tr("正在刷新应用布局，即将返回主页", "Refreshing app layout. Restarting..."), 1500);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_restart();
+            return false;
+        }
         char text[128];
         snprintf(text, sizeof text, Tr("操作失败：%s", "Failed: %s"), esp_err_to_name(error));
         if (error == agent_system::kSlotsFull)
@@ -94,6 +101,18 @@ class AmoledFactoryApplication : public Application {
             snprintf(text, sizeof text, "%s",
                      Tr("此应用已安装，更新前请先卸载",
                         "App already installed. Remove it before updating."));
+        if (error == agent_system::kNoAppSpace)
+            snprintf(text, sizeof text, "%s",
+                     Tr("连续应用空间不足，请先卸载其他应用",
+                        "Not enough contiguous space. Remove another app."));
+        if (error == agent_system::kNeedsFullPackage)
+            snprintf(text, sizeof text, "%s",
+                     Tr("请先通过 USB 更新完整启动器固件",
+                        "Update the full launcher package over USB first."));
+        if (error == agent_system::kLegacySlotsFull)
+            snprintf(text, sizeof text, "%s",
+                     Tr("旧版应用需要前两个槽，请先释放或重新编译",
+                        "Legacy app needs slot 0/1. Free one or rebuild it."));
         if (error == ESP_ERR_NOT_FOUND && page_ == Page::kCatalog)
             snprintf(text, sizeof text, "%s",
                      Tr("请先在系统菜单设置应用服务", "Configure App service in System first"));

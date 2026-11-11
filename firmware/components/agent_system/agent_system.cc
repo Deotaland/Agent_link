@@ -1,6 +1,11 @@
 #include "agent_system.h"
 #include "cover_cache.h"
 #include "image_identity.h"
+#if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
+#include "dynamic_slots.h"
+#include <memory>
+#include <new>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -29,7 +34,7 @@ constexpr char kMagic[8] = {'A', 'G', 'S', 'Y', 'S', '0', '0', '1'};
 #if !defined(AGENT_SYSTEM_APP_ID)
 #error "Select an image role through build_firmware.py"
 #endif
-const Descriptor descriptor __attribute__((used, section(".rodata_custom_desc"), aligned(4))) = {
+constexpr Descriptor kImageDescriptor{
     {'A', 'G', 'S', 'Y', 'S', '0', '0', '1'},
     1,
     kLayout,
@@ -37,6 +42,20 @@ const Descriptor descriptor __attribute__((used, section(".rodata_custom_desc"),
     AGENT_SYSTEM_APP_NAME,
     AGENT_SYSTEM_BOARD_MODEL,
     "0.1.0"};
+#if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
+struct ExtendedDescriptor {
+    Descriptor base;
+    SlotCapability capability;
+};
+static_assert(offsetof(ExtendedDescriptor, capability) == 176);
+const ExtendedDescriptor extended_descriptor
+    __attribute__((used, section(".rodata_custom_desc"), aligned(4))) = {
+        kImageDescriptor, {{'A', 'G', 'L', 'C', 'A', 'P', '0', '1'}, 1, kAppSlotCount, 1}};
+const Descriptor& descriptor = extended_descriptor.base;
+#else
+const Descriptor descriptor __attribute__((used, section(".rodata_custom_desc"), aligned(4))) =
+    kImageDescriptor;
+#endif
 std::mutex operation_mutex;
 httpd_handle_t settings_server = nullptr;
 std::atomic<bool> launcher_available{false};
@@ -123,6 +142,8 @@ esp_err_t StoredCatalog(const char* partition, char* out, size_t capacity) {
     return err;
 }
 esp_err_t ReadApp(const esp_partition_t* p, App* app) {
+    if (!p || p->size <= kCoverReserveBytes)
+        return ESP_ERR_NOT_FOUND;
     uint8_t state = 0;
     esp_err_t err = Marker(p->label, &state);
     if (err != ESP_OK)
@@ -348,6 +369,10 @@ esp_err_t Init() {
     err = nvs_flash_init_partition("app_nvs");
     if (err == ESP_OK)
         cover_cache::Init();
+#if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
+    if (err == ESP_OK)
+        err = dynamic_slots::Init(IsLauncher());
+#endif
     return err;
 }
 esp_err_t Ready() {
@@ -417,7 +442,11 @@ esp_err_t List(App* apps, size_t capacity, size_t* count) {
         const auto* p = Slot(label);
         App app;
         if (!p)
+#if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
+            continue;
+#else
             return ESP_ERR_NOT_FOUND;
+#endif
         const esp_err_t err = ReadApp(p, &app);
         if (err == ESP_ERR_NOT_FOUND)
             continue;
@@ -472,6 +501,10 @@ esp_err_t Remove(const char* label) {
     const auto* p = Slot(label);
     if (!p || p == esp_ota_get_running_partition())
         return ESP_ERR_INVALID_ARG;
+#if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
+    if (!dynamic_slots::Writable())
+        return kNeedsFullPackage;
+#endif
     uint8_t state = 2;
     esp_err_t err = Marker(label, &state, true);
     if (err == ESP_OK)
@@ -480,6 +513,10 @@ esp_err_t Remove(const char* label) {
         cover_cache::Forget(label);
     if (err == ESP_OK)
         ++app_revision;
+#if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
+    if (err == ESP_OK)
+        return dynamic_slots::Release(label);
+#endif
     return err;  // Keep marker unavailable; successful installs explicitly commit it.
 }
 bool ValidServiceUrl(const char* url) {
@@ -713,6 +750,115 @@ esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
     if (app.format != ImageFormat::kAgentLink)
         return ESP_ERR_INVALID_ARG;
 #endif
+#if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
+    if (!dynamic_slots::Writable())
+        return kNeedsFullPackage;
+    if (app.size < 512)
+        return ESP_ERR_INVALID_SIZE;
+    uint32_t free_mask = 0;
+    for (int i = 0; i < kAppSlotCount; ++i) {
+        char label[8];
+        snprintf(label, sizeof label, "ota_%d", i);
+        App existing;
+        const auto* part = Slot(label);
+        const esp_err_t result = part ? ReadApp(part, &existing) : ESP_ERR_NOT_FOUND;
+        if (result == ESP_ERR_NOT_FOUND)
+            free_mask |= 1u << i;
+        else if (result != ESP_OK)
+            return result;
+        else if (!strcmp(existing.descriptor.app_id, app.app_id))
+            return kAlreadyInstalled;
+    }
+    if (!free_mask)
+        return kSlotsFull;
+    Client client;
+    esp_err_t err = client.Open(app.url);
+    if (err != ESP_OK)
+        return err;
+    if (esp_http_client_get_content_length(client.handle) != app.size)
+        return ESP_ERR_INVALID_SIZE;
+    agentlink::ota::Sha256 hash;
+    if (!hash.Start())
+        return ESP_FAIL;
+    uint8_t buffer[4096];
+    uint32_t total = 0;
+    while (total < 512) {
+        const int bytes = esp_http_client_read(
+            client.handle, reinterpret_cast<char*>(buffer + total), 512 - total);
+        if (bytes <= 0 || static_cast<uint32_t>(bytes) > 512 - total)
+            return ESP_ERR_INVALID_RESPONSE;
+        total += bytes;
+    }
+    esp_app_desc_t idf{};
+    Descriptor raw{}, identity{};
+    ImageFormat format;
+    memcpy(&idf, buffer + 0x20, sizeof idf);
+    memcpy(&raw, buffer + 0x120, sizeof raw);
+    if (buffer[0] != 0xE9 || buffer[12] != 9 || buffer[13] ||
+        idf.magic_word != ESP_APP_DESC_MAGIC_WORD ||
+        !DecodeIdentity(idf, raw, &identity, &format) || format != app.format ||
+        strcmp(identity.app_id, app.app_id) || !strcmp(identity.app_id, "agent.launcher") ||
+        strncmp(idf.version, app.version, sizeof idf.version))
+        return ESP_ERR_INVALID_VERSION;
+    unsigned limit = 16;
+    if (format == ImageFormat::kAgentLink) {
+        SlotCapability capability{};
+        memcpy(&capability, buffer + 0x120 + sizeof(Descriptor), sizeof capability);
+        if (memcmp(capability.magic, "AGLCAP01", 8) || capability.version != 1 ||
+            capability.slots != 16 || capability.flags != 1)
+            limit = 2;
+    }
+    std::unique_ptr<dynamic_slots::Plan> plan(new (std::nothrow) dynamic_slots::Plan);
+    if (!plan)
+        return ESP_ERR_NO_MEM;
+    err = dynamic_slots::Allocate(app.size, free_mask, limit, plan.get());
+    if (err != ESP_OK)
+        return err;
+    const auto* target = &plan->partition;
+    uint8_t writing = 2;
+    err = Marker(target->label, &writing, true);
+    if (err != ESP_OK)
+        return err;
+    err = esp_partition_erase_range(target, 0, target->size);
+    if (err != ESP_OK)
+        return err;
+    if (!hash.Update(buffer, total))
+        return ESP_FAIL;
+    err = esp_partition_write(target, 0, buffer, total);
+    while (err == ESP_OK && total < app.size) {
+        const int bytes = esp_http_client_read(client.handle, reinterpret_cast<char*>(buffer),
+                                               std::min<uint32_t>(sizeof buffer, app.size - total));
+        if (bytes <= 0)
+            return ESP_ERR_INVALID_RESPONSE;
+        if (!hash.Update(buffer, bytes))
+            return ESP_FAIL;
+        err = esp_partition_write(target, total, buffer, bytes);
+        total += bytes;
+        if (progress)
+            progress(total, app.size, context);
+    }
+    if (err != ESP_OK)
+        return err;
+    uint8_t actual[32];
+    if (!hash.Finish(actual) || memcmp(actual, expected, 32) ||
+        !esp_http_client_is_complete_data_received(client.handle))
+        return ESP_ERR_INVALID_CRC;
+    esp_partition_pos_t position{target->address, target->size};
+    esp_image_metadata_t metadata{};
+    err = esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &position, &metadata);
+    if (err != ESP_OK)
+        return err;
+    if (metadata.image_len > app.size || metadata.image_len > target->size - kCoverReserveBytes)
+        return ESP_ERR_INVALID_SIZE;
+    if (!ReadIdentity(target, &identity, &format) || strcmp(identity.app_id, app.app_id))
+        return ESP_ERR_INVALID_VERSION;
+    uint8_t ready = 1;
+    err = Marker(target->label, &ready, true);
+    if (err != ESP_OK)
+        return err;
+    // Reload IDF's cached partition list before publishing covers or launching.
+    return dynamic_slots::Commit(*plan);
+#else
     const esp_partition_t* target = nullptr;
     for (int i = 0; i < kAppSlotCount; ++i) {
         char label[8];
@@ -801,6 +947,7 @@ esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
     if (err == ESP_OK)
         ++app_revision;
     return err;
+#endif
 }
 esp_err_t StartSettingsServer() {
     if (settings_server)

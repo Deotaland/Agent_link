@@ -45,7 +45,7 @@ class ProfileHardwareTests(unittest.TestCase):
                     self.assertEqual(values['CONFIG_SPIRAM_IGNORE_NOTFOUND'], 'n')
                     expected_partition = {'paper-s31-wifi': 'partitions/paper-s31-v1.csv',
                                           'paper-s31-4in0-wifi': 'partitions/paper-4in0-v2.csv',
-                                          'sdgoods-wifi': 'partitions/sdgoods-v3.csv',
+                                          'sdgoods-wifi': 'partitions/sdgoods-v4.csv',
                                           'waveshare-amoled-175-wifi': 'partitions/amoled-175-v1.csv'}.get(name, 'partitions/standard-v1.csv')
                     self.assertEqual(values['CONFIG_PARTITION_TABLE_CUSTOM_FILENAME'], '"' + expected_partition + '"')
                     if profile['target'] == 'esp32s3':

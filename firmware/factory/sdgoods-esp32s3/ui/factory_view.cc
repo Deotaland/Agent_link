@@ -83,9 +83,13 @@ void Update(const amoled_ui::Screen& screen) {
     } else if (!next && image) { lv_image_set_src(picture, nullptr); image.reset(); }
     Text(glyph, screen.add_card ? LV_SYMBOL_PLUS : LV_SYMBOL_FILE); lv_obj_center(glyph);
     const int count = std::min<size_t>(4, screen.card_count);
+    const size_t first =
+        screen.card_count <= 4
+            ? 0
+            : std::min(screen.card_index > 1 ? screen.card_index - 1 : 0, screen.card_count - 4);
     int x = (360 - (count * 5 + (count-1)*8 + 11))/2;
     for (int i=0; i<4; ++i) {
-        const bool selected = size_t(i) == screen.card_index;
+        const bool selected = first + size_t(i) == screen.card_index;
         Show(dots[i], !actions && i<count); lv_obj_set_pos(dots[i], x, 334);
         lv_obj_set_width(dots[i], selected ? 16 : 5);
         lv_obj_set_style_bg_color(dots[i], lv_color_hex(selected ? 0x8DE5DB : 0x35465A), 0);

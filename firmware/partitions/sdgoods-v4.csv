@@ -1,0 +1,14 @@
+# Dynamic bootstrap layout. Fixed persistent regions match sdgoods-v3.
+# ota_0 initially spans the pool; Factory creates bounded dynamic OTA records.
+# Name,Type,SubType,Offset,Size,Flags
+nvs,data,nvs,0x9000,0x5000,
+otadata,data,ota,0xE000,0x2000,
+factory,app,factory,0x10000,0x300000,
+ota_0,app,ota_0,0x310000,0xA00000,
+nvs_keys,data,nvs_keys,0xD10000,0x1000,
+phy_init,data,phy,0xD11000,0x1000,
+app_nvs,data,nvs,0xD12000,0x10000,
+agent_nvs,data,nvs,0xD22000,0x10000,
+font_cjk,data,0x99,0xD32000,0x230000,
+pt_guard,data,undefined,0xF62000,0x4000,
+appdata,data,fat,0x1000000,0x1000000,

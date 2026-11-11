@@ -28,7 +28,7 @@ python -m pip install -r requirements.txt
 python server.py
 ```
 
-For Sugarat Button / SDGOODS V3, select its profile explicitly:
+For Sugarat Button / SDGOODS, select its profile explicitly:
 
 ```powershell
 python server.py --profile sdgoods-wifi
@@ -65,7 +65,9 @@ python tests/test_server.py
 The checks use temporary files and an ephemeral localhost port, and close the
 server afterward. They do not touch devices or flash firmware.
 
-For the supplied Sugarat binaries, run from the repository root:
+For the supplied Sugarat binaries, first build both roles with
+`python firmware/tools/package_firmware.py sdgoods-wifi --public --jobs 2`, then
+run from the repository root:
 
 ```powershell
 python firmware/tests/local_app_store/tests/check_sdgoods_packages.py
@@ -74,7 +76,11 @@ python firmware/tests/local_app_store/tests/check_sdgoods_packages.py
 This starts a bounded loopback HTTP service, downloads every catalog group and
 checks the full bytes, SHA-256, ESP checksum and appended image digest. It then
 uses the production `agent_system.cc` installer with the downloaded payloads,
-real OS SHA-256, and simulated HTTP/flash/NVS adapters to test both OTA slots.
+real OS SHA-256, and simulated HTTP/flash/NVS adapters. The V4 dynamic-pool tests
+cover all 21 supplied files, five apps together, deletion/reuse, old/new native
+subtype compatibility, USB seed normalization and unchanged persistent regions.
+The 20 vendor files include the unchanged 9,171,904-byte PixMon application.
+The native `packages/agent_link.bin` is preserved. Application ABI remains 3.
 MSVC is required on Windows (OpenSSL development libraries on other host systems).
 It closes its server and writes `.cache/sdgoods-http-report.json`. It neither
 executes ESP32 machine code nor verifies display, audio, app networking or the

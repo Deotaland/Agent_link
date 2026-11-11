@@ -68,6 +68,21 @@ int main(int argc, char** argv) {
     agent_system::supplied_pixels=pixels;
     state.view++; state.navigation++; state.add_card=false; state.cover_slot=0; state.cover_revision=1;
     snprintf(state.title,sizeof state.title,"日常对话"); SetScreen(state); Frame("sdgoods-cover.ppm");
+    state.card_count = 17;
+    for (size_t page : {size_t(4), size_t(8), size_t(16)}) {
+        state.view++;
+        state.navigation++;
+        state.card_index = page;
+        SetScreen(state);
+        Frame("sdgoods-many.ppm");
+        unsigned selected = 0;
+        for (auto* dot : amoled_factory::dots)
+            if (!lv_obj_has_flag(dot, LV_OBJ_FLAG_HIDDEN) && lv_obj_get_width(dot) == 16)
+                ++selected;
+        assert(selected == 1);
+    }
+    state.card_count = 2;
+    state.card_index = 0;
     const auto check_button=[](lv_obj_t* button) {
         lv_area_t box; lv_obj_get_coords(button,&box);
         for (int x : {box.x1,box.x2}) for (int y : {box.y1,box.y2})

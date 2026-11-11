@@ -33,7 +33,7 @@
       "ble_name": null,
       "fw_model": "SDGOODS-ESP32S3",
       "status": "supported",
-      "notes": "Brand Sugarat, model Button; the same hardware bought from SDGOODS uses this profile. Public names Sugarat, Button and SDGOODS all resolve here. The existing sdgoods-wifi profile and SDGOODS-ESP32S3 image compatibility model remain stable. Platform product sdgoods (id 13, enterprise 0), confirmed by developer. Hotspot Sugarat-Button-XXXX. Factory build: --image-role factory. Uses sdgoods-v3 (layout 3): 3 MiB Factory, two 5 MiB app slots (5,185,536 image bytes each), isolated Agent Link settings and upper-16-MiB vendor appdata; all executable images and the shared font stay below 16 MB without experimental 32-bit cache mapping. LCD GPIO12 supply enable is active low. Migrate from older layouts or vendor firmware with a full USB package; settings and installed applications are replaced. Hardware acceptance pending. Battery percentage/charging telemetry is not exposed by the upstream BSP; do not report invented battery values. Agent_link Launcher downloads native apps and reviewed original SDGOODS pure applications from the operator's own backend catalog; vendor SDK return-to-launcher compatibility is enabled in source; hardware acceptance remains pending. Automatic rollback is disabled for unmodified vendor apps. Hold GPIO6 at power-on for three seconds to recover Factory (only OTA selection is cleared). Custom vendor bootloaders, fixed-layout applications and full-device updaters are outside this compatibility contract. Audio and TE synchronization are not enabled in Factory.",
+      "notes": "Brand Sugarat, model Button; the same hardware bought from SDGOODS uses this profile. Public names Sugarat, Button and SDGOODS all resolve here. The existing sdgoods-wifi profile and SDGOODS-ESP32S3 image compatibility model remain stable. Platform product sdgoods (id 13, enterprise 0), confirmed by developer. Hotspot Sugarat-Button-XXXX. Factory build: --image-role factory. Uses sdgoods-v4 (physical layout 4, application ABI 3): 3 MiB Factory, a 10 MiB dynamic app pool with up to 16 records and a guarded recovery journal, isolated Agent Link settings and upper-16-MiB vendor appdata; all executable images and the shared font stay below 16 MB without experimental 32-bit cache mapping. LCD GPIO12 supply enable is active low. Migrate from older layouts or vendor firmware with a full USB package; settings and installed applications are replaced. Hardware acceptance pending. Battery percentage/charging telemetry is not exposed by the upstream BSP; do not report invented battery values. Agent_link Launcher downloads native apps and reviewed original SDGOODS pure applications from the operator's own backend catalog; vendor SDK return-to-launcher compatibility is enabled in source; hardware acceptance remains pending. Automatic rollback is disabled for unmodified vendor apps. Hold GPIO6 at power-on for three seconds to recover Factory (only OTA selection is cleared). Custom vendor bootloaders, fixed-layout applications and full-device updaters are outside this compatibility contract. Audio and TE synchronization are not enabled in Factory.",
       "build": {
         "hardware": "sdgoods-esp32s3",
         "drivers": [
@@ -45,7 +45,7 @@
           "sdgoods_panel_init.c"
         ],
         "defaults": "boards/sdgoods-esp32s3/hardware.defaults",
-        "layout": "sdgoods-v3",
+        "layout": "sdgoods-v4",
         "factory": "sdgoods-esp32s3",
         "ui_size": 360,
         "flash_assets": [
