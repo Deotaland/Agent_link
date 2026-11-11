@@ -1,4 +1,7 @@
 #include "cover_cache.h"
+#if defined(AGENT_SYSTEM_COMMUNITY)
+#include "community_cover.h"
+#endif
 #include "image_identity.h"
 #include "sha256.h"
 #include <algorithm>
@@ -184,7 +187,9 @@ esp_err_t Update(const char* slot, const CatalogApp& app) {
         SetStatus(index, CoverState::kNoImage, CoverStage::kMetadata, ESP_OK);
         return ESP_OK;
     }
-    if (app.cover_size != kCoverBytes || strcmp(app.cover_format, kCoverFormat) ||
+    const bool community_image = app.community_play && !strcmp(app.cover_format, "community-image");
+    if ((!community_image &&
+         (app.cover_size != kCoverBytes || strcmp(app.cover_format, kCoverFormat))) ||
         !ValidServiceUrl(app.cover_url))
         return fail(CoverStage::kMetadata, ESP_ERR_INVALID_ARG);
     const esp_err_t app_error = CheckApp(part, app.app_id);
@@ -193,7 +198,8 @@ esp_err_t Update(const char* slot, const CatalogApp& app) {
     {
         std::lock_guard<std::mutex> lock(mutex);
         std::shared_ptr<const CoverPixels> saved;
-        if (Load(part, app.app_id, saved) == ESP_OK && Hash(*saved, app.cover_sha256)) {
+        if (Load(part, app.app_id, saved) == ESP_OK &&
+            (community_image || Hash(*saved, app.cover_sha256))) {
             Publish(index, std::move(saved));
             statuses[index].state = CoverState::kReady;
             statuses[index].error = ESP_OK;
@@ -208,55 +214,65 @@ esp_err_t Update(const char* slot, const CatalogApp& app) {
     ESP_LOGI(kTag, "download start: slot=%s app=%s bytes=%lu", slot, app.app_id,
              static_cast<unsigned long>(kCoverBytes));
     SetStatus(index, CoverState::kDownloading, CoverStage::kConnect, ESP_OK);
-    esp_http_client_config_t config{};
-    config.url = app.cover_url;
-    config.timeout_ms = 15000;
-    config.user_agent = "Agent-Link-Development/1.0";
-    config.buffer_size = 2048;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
-    config.disable_auto_redirect = true;
-    Client client;
-    client.value = esp_http_client_init(&config);
-    if (!client.value)
-        return fail(CoverStage::kConnect, ESP_ERR_NO_MEM);
-    esp_err_t err = esp_http_client_open(client.value, 0);
-    if (err != ESP_OK) {
-        int tls = 0, flags = 0;
-        (void)esp_http_client_get_and_clear_last_tls_error(client.value, &tls, &flags);
-        ESP_LOGW(kTag, "slot=%s connect/TLS error=0x%x flags=0x%x", slot, tls, flags);
-        return fail(CoverStage::kConnect, err);
-    }
-    SetStatus(index, CoverState::kDownloading, CoverStage::kHeaders, ESP_OK);
-    const auto headers = esp_http_client_fetch_headers(client.value);
-    const int status = esp_http_client_get_status_code(client.value);
-    const auto length = esp_http_client_get_content_length(client.value);
-    ESP_LOGI(kTag, "slot=%s HTTP=%d length=%lld expected=%lu", slot, status,
-             static_cast<long long>(length), static_cast<unsigned long>(kCoverBytes));
-    if (headers < 0 || status != 200)
-        return fail(CoverStage::kHeaders, ESP_ERR_INVALID_RESPONSE);
-    if (length != kCoverBytes)
-        return fail(CoverStage::kHeaders, ESP_ERR_INVALID_SIZE);
-    SetStatus(index, CoverState::kDownloading, CoverStage::kReceive, ESP_OK);
     auto* bytes = const_cast<uint8_t*>(image->blob.get());
-    uint32_t received = 0;
-    while (received < kCoverBytes) {
-        const int count =
-            esp_http_client_read(client.value, reinterpret_cast<char*>(bytes + received),
-                                 std::min<uint32_t>(2048, kCoverBytes - received));
-        if (count <= 0) {
-            ESP_LOGW(kTag, "slot=%s receive stopped at %lu", slot,
-                     static_cast<unsigned long>(received));
-            return fail(CoverStage::kReceive, ESP_FAIL);
+    esp_err_t err;
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    if (community_image) {
+        err = community::FetchCover(app, bytes);
+        if (err != ESP_OK)
+            return fail(CoverStage::kValidate, err);
+    } else
+#endif
+    {
+        esp_http_client_config_t config{};
+        config.url = app.cover_url;
+        config.timeout_ms = 15000;
+        config.user_agent = "Agent-Link-Development/1.0";
+        config.buffer_size = 2048;
+        config.crt_bundle_attach = esp_crt_bundle_attach;
+        config.disable_auto_redirect = true;
+        Client client;
+        client.value = esp_http_client_init(&config);
+        if (!client.value)
+            return fail(CoverStage::kConnect, ESP_ERR_NO_MEM);
+        err = esp_http_client_open(client.value, 0);
+        if (err != ESP_OK) {
+            int tls = 0, flags = 0;
+            (void)esp_http_client_get_and_clear_last_tls_error(client.value, &tls, &flags);
+            ESP_LOGW(kTag, "slot=%s connect/TLS error=0x%x flags=0x%x", slot, tls, flags);
+            return fail(CoverStage::kConnect, err);
         }
-        received += count;
+        SetStatus(index, CoverState::kDownloading, CoverStage::kHeaders, ESP_OK);
+        const auto headers = esp_http_client_fetch_headers(client.value);
+        const int status = esp_http_client_get_status_code(client.value);
+        const auto length = esp_http_client_get_content_length(client.value);
+        ESP_LOGI(kTag, "slot=%s HTTP=%d length=%lld expected=%lu", slot, status,
+                 static_cast<long long>(length), static_cast<unsigned long>(kCoverBytes));
+        if (headers < 0 || status != 200)
+            return fail(CoverStage::kHeaders, ESP_ERR_INVALID_RESPONSE);
+        if (length != kCoverBytes)
+            return fail(CoverStage::kHeaders, ESP_ERR_INVALID_SIZE);
+        SetStatus(index, CoverState::kDownloading, CoverStage::kReceive, ESP_OK);
+        uint32_t received = 0;
+        while (received < kCoverBytes) {
+            const int count =
+                esp_http_client_read(client.value, reinterpret_cast<char*>(bytes + received),
+                                     std::min<uint32_t>(2048, kCoverBytes - received));
+            if (count <= 0) {
+                ESP_LOGW(kTag, "slot=%s receive stopped at %lu", slot,
+                         static_cast<unsigned long>(received));
+                return fail(CoverStage::kReceive, ESP_FAIL);
+            }
+            received += count;
+        }
+        if (!esp_http_client_is_complete_data_received(client.value))
+            return fail(CoverStage::kReceive, ESP_ERR_INVALID_SIZE);
+        SetStatus(index, CoverState::kDownloading, CoverStage::kValidate, ESP_OK);
+        if (memcmp(Header(*image).magic, kMagic, 8) || !ValidHeader(Header(*image), app.app_id) ||
+            Crc(image->Data(), kCoverPixelBytes) != Header(*image).crc32 ||
+            !Hash(*image, app.cover_sha256))
+            return fail(CoverStage::kValidate, ESP_ERR_INVALID_CRC);
     }
-    if (!esp_http_client_is_complete_data_received(client.value))
-        return fail(CoverStage::kReceive, ESP_ERR_INVALID_SIZE);
-    SetStatus(index, CoverState::kDownloading, CoverStage::kValidate, ESP_OK);
-    if (memcmp(Header(*image).magic, kMagic, 8) || !ValidHeader(Header(*image), app.app_id) ||
-        Crc(image->Data(), kCoverPixelBytes) != Header(*image).crc32 ||
-        !Hash(*image, app.cover_sha256))
-        return fail(CoverStage::kValidate, ESP_ERR_INVALID_CRC);
     SetStatus(index, CoverState::kDownloading, CoverStage::kPublish, ESP_OK);
     {
         std::lock_guard<std::mutex> lock(mutex);

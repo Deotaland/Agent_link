@@ -9,6 +9,14 @@ else()
     set(_json json)
 endif()
 set(_sources "agent_system.cc" "cover_cache.cc")
+set(_store_requires "")
+string(JSON _store_origin ERROR_VARIABLE _store_error GET "${BUILD_PROFILE}" community_store origin)
+if(NOT _store_error)
+    string(JSON _store_product GET "${BUILD_PROFILE}" community_store product_id)
+    string(JSON _store_revision GET "${BUILD_PROFILE}" community_store hardware_revision_id)
+    list(APPEND _sources "community_store.cc" "community_cover.cc")
+    list(APPEND _store_requires esp_jpeg webp_decoder png_decoder)
+endif()
 string(JSON _dynamic ERROR_VARIABLE _dynamic_error GET "${BUILD_PROFILE}" layout_info dynamic_slots max_slots)
 if(NOT _dynamic_error)
     list(APPEND _sources "dynamic_slots.cc")
@@ -28,7 +36,13 @@ idf_component_register(SRCS ${_sources} INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "../agent_link/src/ota"
     REQUIRES esp_common esp_partition esp_app_format
     PRIV_REQUIRES app_update bootloader_support nvs_flash esp_http_client esp_http_server
-                  esp_netif esp_timer heap mbedtls spi_flash esp_rom ${_json})
+                  esp_netif esp_timer heap mbedtls spi_flash esp_rom ${_json} ${_store_requires})
+if(NOT _store_error)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC AGENT_SYSTEM_COMMUNITY=1)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        AGENT_COMMUNITY_ORIGIN="${_store_origin}" AGENT_COMMUNITY_PRODUCT=${_store_product}
+        AGENT_COMMUNITY_REVISION=${_store_revision})
+endif()
 string(JSON _model GET "${SYSTEM_MANIFEST}" model)
 string(JSON _layout GET "${SYSTEM_MANIFEST}" layout)
 string(JSON _slots LENGTH "${BUILD_PROFILE}" layout_info app_slots)

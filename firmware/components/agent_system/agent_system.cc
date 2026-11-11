@@ -1,10 +1,11 @@
 #include "agent_system.h"
 #include "cover_cache.h"
 #include "image_identity.h"
+#if defined(AGENT_SYSTEM_COMMUNITY)
+#include "community_store.h"
+#endif
 #if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
 #include "dynamic_slots.h"
-#include <memory>
-#include <new>
 #endif
 
 #include <algorithm>
@@ -13,6 +14,8 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <memory>
+#include <new>
 #include <string>
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -169,8 +172,14 @@ esp_err_t ReadApp(const esp_partition_t* p, App* app) {
     app->size = image.image_len;
     snprintf(app->version, sizeof app->version, "%.*s", 31, idf.version);
     snprintf(app->slot, sizeof app->slot, "%s", p->label);
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    community::ReadBinding(app);
+#endif
     return ESP_OK;
 }
+#if defined(AGENT_SYSTEM_COMMUNITY)
+using Client = community::File;
+#else
 struct Client {
     esp_http_client_handle_t handle = nullptr;
     ~Client() {
@@ -200,6 +209,7 @@ struct Client {
         return ESP_OK;
     }
 };
+#endif
 bool CopyString(cJSON* object, const char* key, char* out, size_t capacity) {
     const cJSON* value = cJSON_GetObjectItemCaseSensitive(object, key);
     if (!cJSON_IsString(value) || !value->valuestring[0] || strlen(value->valuestring) >= capacity)
@@ -520,7 +530,11 @@ esp_err_t Remove(const char* label) {
     return err;  // Keep marker unavailable; successful installs explicitly commit it.
 }
 bool ValidServiceUrl(const char* url) {
-    if (!url || strlen(url) >= 256 || strpbrk(url, "\r\n\t @#\\") || strchr(url, '%'))
+#if !defined(AGENT_SYSTEM_COMMUNITY)
+    if (!url || strlen(url) >= 256 || strchr(url, '%'))
+        return false;
+#endif
+    if (!url || strlen(url) >= 1024 || strpbrk(url, "\r\n\t @#\\"))
         return false;
     for (const unsigned char* p = reinterpret_cast<const unsigned char*>(url); *p; ++p)
         if (*p < 0x21 || *p > 0x7E)
@@ -533,8 +547,23 @@ bool ValidServiceUrl(const char* url) {
     const size_t length = end ? static_cast<size_t>(end - host) : strlen(host);
     if (!length || length >= 128)
         return false;
+    for (const char* at = url; *at; ++at)
+        if (*at == '%') {
+            const auto hex = [](char c) {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            };
+            if (at < host + length || !at[1] || !at[2] || !hex(at[1]) || !hex(at[2]))
+                return false;
+            at += 2;
+        }
     if (https)
         return true;
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    // The operator explicitly configured this production HTTP origin. Keep the
+    // general public-HTTP restriction for all unrelated hosts.
+    if (community::IsOrigin(url))
+        return true;
+#endif
     char name[128]{};
     memcpy(name, host, length);
     unsigned a, b, c, d;
@@ -556,30 +585,103 @@ esp_err_t CatalogUrl(char* out, size_t capacity) {
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         err = StoredCatalog("nvs", out, capacity);
         if (err == ESP_OK) {
+#if defined(AGENT_SYSTEM_COMMUNITY)
+            if (!ValidServiceUrl(out) ||
+                (!strncmp(out, "http://", 7) && strstr(out, ":8765/api/apps"))) {
+                if (strlen(community::DefaultCatalog()) >= capacity)
+                    return ESP_ERR_INVALID_SIZE;
+                snprintf(out, capacity, "%s", community::DefaultCatalog());
+            }
+#else
             if (!ValidServiceUrl(out)) {
                 out[0] = 0;
                 return ESP_OK;
             }
+#endif
             err = SetCatalogUrl(out);
         }
     }
 #endif
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    // One-time switch of the old development store. Explicit settings saved
+    // after this migration (including an empty URL) remain under user control.
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
+        return err;
+    nvs_handle_t handle;
+    esp_err_t opened =
+        nvs_open_from_partition(SettingsPartition(), "al_system", NVS_READWRITE, &handle);
+    if (opened != ESP_OK)
+        return opened;
+    uint8_t migrated = 0;
+    const auto marker = nvs_get_u8(handle, "community_v1", &migrated);
+    nvs_close(handle);
+    if (marker == ESP_ERR_NVS_NOT_FOUND || !migrated) {
+        const bool old_test =
+            out[0] && !strncmp(out, "http://", 7) && strstr(out, ":8765/api/apps");
+        if (err == ESP_ERR_NVS_NOT_FOUND || !out[0] || old_test) {
+            if (strlen(community::DefaultCatalog()) >= capacity)
+                return ESP_ERR_INVALID_SIZE;
+            snprintf(out, capacity, "%s", community::DefaultCatalog());
+            const auto saved = SetCatalogUrl(out);
+            if (saved != ESP_OK)
+                return saved;
+            err = ESP_OK;
+        } else {
+            opened =
+                nvs_open_from_partition(SettingsPartition(), "al_system", NVS_READWRITE, &handle);
+            if (opened != ESP_OK)
+                return opened;
+            opened = nvs_set_u8(handle, "community_v1", 1);
+            if (opened == ESP_OK)
+                opened = nvs_commit(handle);
+            nvs_close(handle);
+            if (opened != ESP_OK)
+                return opened;
+        }
+    } else if (marker != ESP_OK)
+        return marker;
+#endif
     return err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err;
 }
 esp_err_t SetCatalogUrl(const char* url) {
-    if (!url || (url[0] && !ValidServiceUrl(url)))
+    if (!url || strlen(url) >= 256 || (url[0] && !ValidServiceUrl(url)))
         return ESP_ERR_INVALID_ARG;
     nvs_handle_t h;
     esp_err_t err = nvs_open_from_partition(SettingsPartition(), "al_system", NVS_READWRITE, &h);
     if (err != ESP_OK)
         return err;
     err = nvs_set_str(h, "catalog", url);
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    if (err == ESP_OK)
+        err = nvs_set_u8(h, "community_v1", 1);
+#endif
     if (err == ESP_OK)
         err = nvs_commit(h);
     nvs_close(h);
     return err;
 }
 esp_err_t FetchCatalog(CatalogApp* apps, size_t capacity, size_t* count) {
+    return FetchCatalogPage(apps, capacity, count, 1, nullptr);
+}
+bool CommunityCatalog() {
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    char url[256]{};
+    return CatalogUrl(url, sizeof url) == ESP_OK && community::IsCatalog(url);
+#else
+    return false;
+#endif
+}
+void LastStoreError(StoreError* error) {
+    if (!error)
+        return;
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    community::Error(error);
+#else
+    *error = {};
+#endif
+}
+esp_err_t FetchCatalogPage(CatalogApp* apps, size_t capacity, size_t* count, unsigned page,
+                           CatalogPage* pagination) {
     if (!apps || !count)
         return ESP_ERR_INVALID_ARG;
     *count = 0;
@@ -589,6 +691,14 @@ esp_err_t FetchCatalog(CatalogApp* apps, size_t capacity, size_t* count) {
         return err;
     if (!url[0])
         return ESP_ERR_NOT_FOUND;
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    if (community::IsCatalog(url))
+        return community::Fetch(url, page, apps, capacity, count, pagination);
+#endif
+    if (page != 1)
+        return ESP_ERR_NOT_SUPPORTED;
+    if (pagination)
+        *pagination = {};
     Client client;
     err = client.Open(url);
     if (err != ESP_OK) {
@@ -737,10 +847,52 @@ esp_err_t SyncCovers(const CatalogApp* apps, size_t count) {
     }
     return result;
 }
-esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
+esp_err_t SyncStoreCovers() {
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    if (CommunityCatalog()) {
+        std::unique_lock<std::mutex> lock(operation_mutex, std::try_to_lock);
+        if (!lock.owns_lock() || !IsLauncher())
+            return ESP_ERR_INVALID_STATE;
+        App installed[kAppSlotCount];
+        size_t count = 0;
+        auto error = List(installed, kAppSlotCount, &count);
+        if (error != ESP_OK)
+            return error;
+        esp_err_t result = ESP_OK;
+        for (size_t i = 0; i < count; ++i) {
+            if (!installed[i].community_play) {
+                cover_cache::NotListed(installed[i].slot);
+                continue;
+            }
+            CatalogApp app;
+            error = community::Detail(installed[i].community_play, installed[i].community_version,
+                                      &app);
+            if (error == ESP_OK) {
+                snprintf(app.app_id, sizeof app.app_id, "%s", installed[i].descriptor.app_id);
+                error = cover_cache::Update(installed[i].slot, app);
+            }
+            if (result == ESP_OK && error != ESP_OK)
+                result = error;
+        }
+        return result;
+    }
+#endif
+    auto catalog = std::unique_ptr<CatalogApp[]>(new (std::nothrow) CatalogApp[kMaxApps]);
+    if (!catalog)
+        return ESP_ERR_NO_MEM;
+    size_t count = 0;
+    auto error = FetchCatalog(catalog.get(), kMaxApps, &count);
+    return error == ESP_OK ? SyncCovers(catalog.get(), count) : error;
+}
+esp_err_t Install(const CatalogApp& requested, Progress progress, void* context) {
     std::unique_lock<std::mutex> lock(operation_mutex, std::try_to_lock);
     if (!lock.owns_lock() || !IsLauncher())
         return ESP_ERR_INVALID_STATE;
+    CatalogApp app = requested;
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    if (app.community_play && app.package != CatalogApp::Package::kApplication)
+        return kUnsupportedPackage;
+#endif
     unsigned char expected[32];
     if (!Terminated(app.app_id, sizeof app.app_id) || !app.app_id[0] ||
         !Terminated(app.sha256, sizeof app.sha256) || !Digest(app.sha256, expected) || !app.size ||
@@ -766,11 +918,19 @@ esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
             free_mask |= 1u << i;
         else if (result != ESP_OK)
             return result;
-        else if (!strcmp(existing.descriptor.app_id, app.app_id))
+        else if (!strcmp(existing.descriptor.app_id, app.app_id) ||
+                 (app.community_play && existing.community_play == app.community_play))
             return kAlreadyInstalled;
     }
     if (!free_mask)
         return kSlotsFull;
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    if (app.community_play) {
+        const auto prepared = community::PrepareDownload(&app);
+        if (prepared != ESP_OK)
+            return prepared;
+    }
+#endif
     Client client;
     esp_err_t err = client.Open(app.url);
     if (err != ESP_OK)
@@ -796,9 +956,25 @@ esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
     memcpy(&raw, buffer + 0x120, sizeof raw);
     if (buffer[0] != 0xE9 || buffer[12] != 9 || buffer[13] ||
         idf.magic_word != ESP_APP_DESC_MAGIC_WORD ||
-        !DecodeIdentity(idf, raw, &identity, &format) || format != app.format ||
-        strcmp(identity.app_id, app.app_id) || !strcmp(identity.app_id, "agent.launcher") ||
-        strncmp(idf.version, app.version, sizeof idf.version))
+        !DecodeIdentity(idf, raw, &identity, &format) || !strcmp(identity.app_id, "agent.launcher"))
+        return ESP_ERR_INVALID_VERSION;
+    if (app.community_play) {
+        if (!memchr(idf.version, 0, sizeof idf.version))
+            return ESP_ERR_INVALID_VERSION;
+        app.format = format;
+        snprintf(app.app_id, sizeof app.app_id, "%s", identity.app_id);
+        snprintf(app.version, sizeof app.version, "%s", idf.version);
+        for (int i = 0; i < kAppSlotCount; ++i) {
+            char label[8];
+            snprintf(label, sizeof label, "ota_%d", i);
+            App existing;
+            const auto* part = Slot(label);
+            if (part && ReadApp(part, &existing) == ESP_OK &&
+                !strcmp(existing.descriptor.app_id, app.app_id))
+                return kAlreadyInstalled;
+        }
+    } else if (format != app.format || strcmp(identity.app_id, app.app_id) ||
+               strncmp(idf.version, app.version, sizeof idf.version))
         return ESP_ERR_INVALID_VERSION;
     unsigned limit = 16;
     if (format == ImageFormat::kAgentLink) {
@@ -852,6 +1028,11 @@ esp_err_t Install(const CatalogApp& app, Progress progress, void* context) {
         return ESP_ERR_INVALID_SIZE;
     if (!ReadIdentity(target, &identity, &format) || strcmp(identity.app_id, app.app_id))
         return ESP_ERR_INVALID_VERSION;
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    err = community::SaveBinding(target->label, app);
+    if (err != ESP_OK)
+        return err;
+#endif
     uint8_t ready = 1;
     err = Marker(target->label, &ready, true);
     if (err != ESP_OK)

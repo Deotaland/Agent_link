@@ -27,7 +27,10 @@ def descriptor(data):
 
 
 def image_info(path, model, layout=1, app_max_bytes=None, chip="esp32s3"):
-    data = Path(path).read_bytes()
+    return image_info_data(Path(path).read_bytes(), model, layout, app_max_bytes, chip)
+
+
+def image_info_data(data, model, layout=1, app_max_bytes=None, chip="esp32s3"):
     info = descriptor(data)
     if info["board"] != model or info["layout"] != layout or info["sdk"] != "0.1.0" or info["chip_id"] != CHIP_IDS.get(chip):
         raise ValueError("Incompatible board, chip, layout or system SDK")

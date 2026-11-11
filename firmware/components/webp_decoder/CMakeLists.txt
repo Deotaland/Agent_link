@@ -1,0 +1,13 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/profile_build.cmake")
+string(JSON _store ERROR_VARIABLE _error GET "${BUILD_PROFILE}" community_store)
+if(_error)
+    idf_component_register()
+    return()
+endif()
+file(GLOB _sources "third_party/src/dec/*.c" "third_party/src/dsp/*.c" "third_party/src/utils/*.c")
+idf_component_register(SRCS ${_sources} "webp_memory.cc" INCLUDE_DIRS "third_party" PRIV_REQUIRES heap)
+set_source_files_properties(${_sources} PROPERTIES COMPILE_DEFINITIONS
+    "malloc=agl_webp_malloc;calloc=agl_webp_calloc;free=agl_webp_free")
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error=unused-function)
+configure_file("third_party/COPYING" "${CMAKE_BINARY_DIR}/webp-LICENSE.txt" COPYONLY)
+configure_file("third_party/PATENTS" "${CMAKE_BINARY_DIR}/webp-NOTICE.txt" COPYONLY)

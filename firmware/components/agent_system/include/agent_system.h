@@ -21,6 +21,8 @@ constexpr esp_err_t kRestartRequired = 0x7F03;
 constexpr esp_err_t kNeedsFullPackage = 0x7F04;
 constexpr esp_err_t kNoAppSpace = 0x7F05;
 constexpr esp_err_t kLegacySlotsFull = 0x7F06;
+constexpr esp_err_t kStoreError = 0x7F07;
+constexpr esp_err_t kUnsupportedPackage = 0x7F08;
 constexpr const char* kBoard = AGENT_SYSTEM_BOARD_MODEL;
 constexpr const char* kSdk = "0.1.0";
 // Stored immediately after esp_app_desc at image offset 0x120. Keep this ABI stable.
@@ -46,15 +48,31 @@ struct App {
     char slot[17]{};
     uint32_t size = 0;
     ImageFormat format = ImageFormat::kAgentLink;
+    uint64_t community_play = 0, community_version = 0;
+    char release_version[32]{};
 };
 struct CatalogApp {
     char app_id[32]{}, name[64]{}, version[32]{};
-    char url[256]{}, sha256[65]{};
+    char url[1024]{}, sha256[65]{};
     uint32_t size = 0;
     ImageFormat format = ImageFormat::kAgentLink;
-    char cover_url[256]{}, cover_sha256[65]{};
+    char cover_url[1024]{}, cover_sha256[65]{};
     char cover_format[32]{};
     uint32_t cover_size = 0;
+    uint64_t community_play = 0, community_version = 0;
+    enum class Package { kApplication, kFullPackage, kTooLarge } package = Package::kApplication;
+    char filename[96]{};
+    char release_version[32]{};
+};
+struct CatalogPage {
+    unsigned page = 1;
+    uint32_t total = 0;
+    bool has_more = false;
+};
+struct StoreError {
+    int http_status = 0;
+    unsigned retry_after = 0;
+    char code[48]{}, message[384]{}, request_id[80]{};
 };
 enum class CoverState { kPending, kDownloading, kReady, kNoImage, kNotListed, kFailed };
 enum class CoverStage {
@@ -96,8 +114,14 @@ esp_err_t Launch(const char* slot);
 esp_err_t Remove(const char* slot);
 esp_err_t CatalogUrl(char* out, size_t capacity);
 esp_err_t SetCatalogUrl(const char* url);
-bool ValidServiceUrl(const char* url);  // HTTPS, or explicit private-LAN HTTP test service.
+// HTTPS, private-LAN HTTP, or the board's explicitly configured production origin.
+bool ValidServiceUrl(const char* url);
 esp_err_t FetchCatalog(CatalogApp* apps, size_t capacity, size_t* count);
+esp_err_t FetchCatalogPage(CatalogApp* apps, size_t capacity, size_t* count, unsigned page,
+                           CatalogPage* pagination);
+bool CommunityCatalog();
+void LastStoreError(StoreError* error);
+esp_err_t SyncStoreCovers();
 esp_err_t SyncCovers(const CatalogApp* apps, size_t count);  // Call on a worker after FetchCatalog.
 esp_err_t Install(const CatalogApp& app, Progress progress = nullptr, void* context = nullptr);
 esp_err_t StartSettingsServer();  // Port 8081: catalog configuration, no WiFi passwords.

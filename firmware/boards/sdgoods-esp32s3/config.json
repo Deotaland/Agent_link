@@ -56,7 +56,12 @@
             "file": "boards/common/fonts/cjk_font.bin"
           }
         ],
-        "package_name": "Sugarat-Button"
+        "package_name": "Sugarat-Button",
+        "community_store": {
+          "origin": "http://3.144.1.190:9004",
+          "product_id": 1,
+          "hardware_revision_id": 1
+        }
       }
     }
   ]

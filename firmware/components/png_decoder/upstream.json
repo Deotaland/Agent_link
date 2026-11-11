@@ -1,0 +1,9 @@
+{
+  "source": "https://github.com/lvandeve/lodepng",
+  "commit": "7b2893e35891c0c85bee5595caafaf3c2044b409",
+  "sha256": {
+    "lodepng.cpp": "32cdd7a395b5476a3fe4615305a99066dc4d37aaea6988643cca8b4eccc352cc",
+    "lodepng.h": "a49b98b45ea603a05e2a77bd6b0320e7535a9c6e18aef8ce904692a3e02b87ab"
+  },
+  "changes": "Private symbol aliases in header; source body unchanged; PSRAM allocation supplied separately."
+}

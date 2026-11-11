@@ -90,6 +90,9 @@ Desktop.ini
 **/.vscode/ipch/
 .cache/
 
+# Local-only demos and experiments; never include in repository commits.
+/test/
+
 # Claude Code local settings
 .claude/
 **/.claude/

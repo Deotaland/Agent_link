@@ -20,12 +20,19 @@ and explicit launch/remove actions. It supports Chinese and English.
   explicitly **unknown** because no charger-status signal is documented.
 - Swipe up from the bottom, or press the GPIO6 key, to return home.
 - Join `Sugarat-Button-XXXX` and open `http://192.168.4.1` for initial WiFi setup.
-- Configure an Agent Link application service in the system menu. Catalogs
-  target `SDGOODS-ESP32S3` and layout 3. Entries with `image_format: "sdgoods"`
-  accept original vendor pure application images; native entries keep strict
-  Agent Link identity checks. Both kinds are downloaded from the operator's own
-  reviewed catalog. `http://DEVICE_IP:8081` configures that service; it does not
-  upload application files or browse the official SDGOODS market.
+- The default app service is the production community at `http://3.144.1.190:9004`,
+  product `1`, hardware revision `1`. Factory anonymously queries published plays,
+  pages through the list, reads version details and requests an expiring download
+  ticket when installing. No account ID, device authentication or binding is needed
+  for this store flow. These community IDs are separate from Agent platform product 13.
+  The previous port-8765 test catalog migrates once; subsequent explicit overrides
+  remain available at `http://DEVICE_IP:8081` and in the system menu.
+- Reviewed original SDGOODS pure applications and native Agent Link applications
+  keep their exact binary bytes. Installation discovers the actual image identity,
+  validates chip/ABI/size/full image/SHA-256 and records the community play/version
+  separately in `app_nvs`. ZIP, UF2 and full-device packages cannot be installed by
+  the launcher; the backend must publish a reviewed pure `.bin`. This does not
+  add an official SDGOODS browser or local firmware import endpoint on the device.
 - A 10 MiB dynamic pool supports up to 16 applications, subject to image sizes,
   alignment, cover reserve and contiguous free space. Installing/removing an app
   restarts Factory to refresh the partition list. The matching V4 full USB package
@@ -45,6 +52,15 @@ resampling. At the largest 198px size, their pixel storage is at most 352,836
 bytes, plus immutable source snapshots (184px home covers use less). Fonts also cache glyphs in PSRAM.
 WiFi/LwIP and TLS prefer external memory; 64 KiB of internal memory is reserved
 for tasks, radio and DMA needs.
+
+Community WebP, PNG and baseline JPEG covers are decoded into the existing
+132px RGB565LE+A8 cache. Input is bounded to 2 MiB, each dimension to 2048 and
+total pixels to 1024x1024. Decode buffers and codec allocations use PSRAM;
+animated images are rejected. No account headers accompany cover/download files.
+The legacy raw-cover/SHA catalog remains available for explicit local testing.
+
+See the [community upload contract](../../components/agent_system/README.md#community-upload-contract)
+for developer submission and administrator collection of SDGOODS applications.
 
 The QSPI transport owns one permanent **8,640-byte internal DMA stripe** and
 its transaction descriptor. Each stripe has a complete window command; it

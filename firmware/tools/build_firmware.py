@@ -576,6 +576,8 @@ def archive_build(profile, role, build_dir):
     output = build_dir / "images" / profile["name"] / role
     output.mkdir(parents=True, exist_ok=True)
     names = set(files.values()) | {"agent_link.elf", "agent_link.map", "flasher_args.json", "flash-plan.json"}
+    if profile.get("community_store"):
+        names.update({"webp-LICENSE.txt", "webp-NOTICE.txt", "lodepng-LICENSE.txt"})
     for filename in ("LICENSE", "NOTICE"):
         source = ROOT / "boards" / profile["board"] / filename
         if source.is_file():

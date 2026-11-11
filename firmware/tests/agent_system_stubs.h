@@ -19,7 +19,8 @@ using esp_err_t = int;
 constexpr int ESP_OK=0, ESP_FAIL=-1, ESP_ERR_NO_MEM=1, ESP_ERR_INVALID_ARG=2,
     ESP_ERR_INVALID_STATE=3, ESP_ERR_INVALID_SIZE=4, ESP_ERR_NOT_FOUND=5,
     ESP_ERR_INVALID_RESPONSE=6, ESP_ERR_INVALID_CRC=7, ESP_ERR_INVALID_VERSION=8,
-    ESP_ERR_NVS_NOT_FOUND=9, ESP_ERR_NVS_NO_FREE_PAGES=10, ESP_ERR_NVS_NEW_VERSION_FOUND=11;
+    ESP_ERR_NVS_NOT_FOUND=9, ESP_ERR_NVS_NO_FREE_PAGES=10, ESP_ERR_NVS_NEW_VERSION_FOUND=11,
+    ESP_ERR_NOT_SUPPORTED=12;
 using esp_partition_subtype_t = int;
 constexpr int ESP_PARTITION_TYPE_APP=0, ESP_PARTITION_SUBTYPE_APP_FACTORY=0,
     ESP_PARTITION_SUBTYPE_APP_OTA_0=16;
@@ -50,6 +51,10 @@ inline int restarts=0, confirms=0, erases=0, init_error=0;
 inline int ota_state=ESP_OTA_IMG_PENDING_VERIFY, confirm_error=ESP_OK, boot_error=ESP_OK;
 inline std::string response;
 inline std::map<std::string,std::string> responses;
+inline std::map<std::string,int> http_status;
+inline std::map<std::string,std::map<std::string,std::string>> http_headers;
+struct Request { std::string url; int method; std::map<std::string,std::string> headers; };
+inline std::vector<Request> requests;
 inline size_t fail_after=static_cast<size_t>(-1);
 inline int end_error=0;
 inline int status=200;
@@ -145,13 +150,23 @@ inline int nvs_set_blob(int h,const char* key,const void* value,size_t size){aut
 inline int nvs_get_blob(int h,const char* key,void* value,size_t* size){auto i=fixture::store.find(fixture::handles[h]+key);if(i==fixture::store.end())return ESP_ERR_NVS_NOT_FOUND;if(*size<i->second.size())return ESP_ERR_INVALID_SIZE;memcpy(value,i->second.data(),i->second.size());*size=i->second.size();return ESP_OK;}
 inline int nvs_commit(int){return fixture::commit_error;}
 inline void nvs_close(int){}
-struct HttpClient {size_t offset=0;std::string body;};
+struct esp_http_client_event_t;
+struct HttpClient {size_t offset=0;std::string body,url;int method=0;void* user_data=nullptr;
+    esp_err_t(*event)(esp_http_client_event_t*)=nullptr;std::map<std::string,std::string> headers;};
 using esp_http_client_handle_t=HttpClient*;
 inline void esp_crt_bundle_attach(){}
-struct esp_http_client_config_t {const char* url;const char* user_agent;int timeout_ms,buffer_size;void(*crt_bundle_attach)();bool disable_auto_redirect;};
-inline HttpClient* esp_http_client_init(const esp_http_client_config_t* c){auto* client=new HttpClient;auto i=fixture::responses.find(c->url);client->body=i==fixture::responses.end()?fixture::response:i->second;return client;}
-inline int esp_http_client_open(HttpClient*,int){
+constexpr int HTTP_EVENT_ON_HEADER=1, HTTP_METHOD_POST=1;
+struct esp_http_client_event_t {int event_id;void* user_data;const char* header_key;const char* header_value;};
+struct esp_http_client_config_t {const char* url;const char* user_agent;int timeout_ms,buffer_size;void(*crt_bundle_attach)();bool disable_auto_redirect;
+    esp_err_t(*event_handler)(esp_http_client_event_t*);void* user_data;};
+inline HttpClient* esp_http_client_init(const esp_http_client_config_t* c){auto* client=new HttpClient;auto i=fixture::responses.find(c->url);client->body=i==fixture::responses.end()?fixture::response:i->second;
+    client->url=c->url;client->event=c->event_handler;client->user_data=c->user_data;return client;}
+inline int esp_http_client_set_header(HttpClient* c,const char* key,const char* value){c->headers[key]=value;return ESP_OK;}
+inline int esp_http_client_set_method(HttpClient* c,int method){c->method=method;return ESP_OK;}
+inline void esp_fill_random(void* out,size_t size){static uint8_t seed=0;memset(out,++seed,size);}
+inline int esp_http_client_open(HttpClient* c,int){
     ++fixture::opens;
+    fixture::requests.push_back({c->url,c->method,c->headers});
     if(fixture::pause_open.load()) {
         fixture::open_entered.store(true);
         while(!fixture::release_open.load())std::this_thread::yield();
@@ -159,8 +174,9 @@ inline int esp_http_client_open(HttpClient*,int){
     return fixture::open_error;
 }
 inline int esp_http_client_get_and_clear_last_tls_error(HttpClient*,int* code,int* flags){*code=0;*flags=0;return ESP_OK;}
-inline int64_t esp_http_client_fetch_headers(HttpClient* c){return c->body.size();}
-inline int esp_http_client_get_status_code(HttpClient*){return fixture::status;}
+inline int64_t esp_http_client_fetch_headers(HttpClient* c){if(c->event) for(const auto& [key,value]:fixture::http_headers[c->url]){
+    esp_http_client_event_t e{HTTP_EVENT_ON_HEADER,c->user_data,key.c_str(),value.c_str()};c->event(&e);}return c->body.size();}
+inline int esp_http_client_get_status_code(HttpClient* c){auto i=fixture::http_status.find(c->url);return i==fixture::http_status.end()?fixture::status:i->second;}
 inline int64_t esp_http_client_get_content_length(HttpClient* c){return c->body.size();}
 inline int esp_http_client_read(HttpClient* client,char* out,size_t size){
     if(client->offset>=fixture::fail_after)return -1;
@@ -172,6 +188,8 @@ inline void esp_http_client_close(HttpClient*){}
 inline void esp_http_client_cleanup(HttpClient* c){delete c;}
 constexpr int MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 inline void* heap_caps_malloc(size_t size,int){return malloc(size);}
+inline void* heap_caps_realloc(void* p,size_t size,int){return realloc(p,size);}
+inline void* heap_caps_calloc(size_t n,size_t size,int){return calloc(n,size);}
 inline void heap_caps_free(void* p){free(p);}
 #if defined(AGENT_SYSTEM_REAL_SHA256)
 #include "agent_system_real_sha256.h"

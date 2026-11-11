@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <string>
 
 using amoled_ui::Tr;
 class AmoledFactoryApplication : public Application {
@@ -58,7 +59,7 @@ class AmoledFactoryApplication : public Application {
                                 pdPASS
                             ? ESP_OK
                             : ESP_ERR_NO_MEM);
-        ESP_ERROR_CHECK(xTaskCreate(ControlEntry, "system_ctrl", 16384, this, 4, nullptr) == pdPASS
+        ESP_ERROR_CHECK(xTaskCreate(ControlEntry, "system_ctrl", 24576, this, 4, nullptr) == pdPASS
                             ? ESP_OK
                             : ESP_ERR_NO_MEM);
     }
@@ -88,7 +89,7 @@ class AmoledFactoryApplication : public Application {
     }
 
    private:
-    enum class Page { kHome, kCatalog, kLocalDetail, kCatalogDetail, kRemove };
+    enum class Page { kHome, kCatalog, kLocalDetail, kCatalogDetail, kRemove, kServiceError };
     void Home() {
         page_ = Page::kHome;
         ++navigation_;
@@ -96,6 +97,11 @@ class AmoledFactoryApplication : public Application {
     bool Check(esp_err_t error) {
         if (error == ESP_OK)
             return true;
+        if (error == agent_system::kStoreError) {
+            agent_system::LastStoreError(&store_error_);
+            page_ = Page::kServiceError;
+            return false;
+        }
         if (error == agent_system::kRestartRequired) {
             amoled_ui::Toast(
                 Tr("正在刷新应用布局，即将返回主页", "Refreshing app layout. Restarting..."), 1500);
@@ -124,6 +130,10 @@ class AmoledFactoryApplication : public Application {
             snprintf(text, sizeof text, "%s",
                      Tr("旧版应用需要前两个槽，请先释放或重新编译",
                         "Legacy app needs slot 0/1. Free one or rebuild it."));
+        if (error == agent_system::kUnsupportedPackage)
+            snprintf(text, sizeof text, "%s",
+                     Tr("此版本不是可安装的纯应用，请联系发布者",
+                        "This release needs an installable application binary."));
         if (error == ESP_ERR_NOT_FOUND && page_ == Page::kCatalog)
             snprintf(text, sizeof text, "%s",
                      Tr("请先在系统菜单设置应用服务", "Configure App service in System first"));
@@ -155,17 +165,20 @@ class AmoledFactoryApplication : public Application {
         if (!carousel_.IsAdd())
             (void)agent_system::ReadCover(apps_[carousel_.Index()].slot, &cover_);
     }
-    void Catalog() {
+    void Catalog(unsigned page = 1) {
         page_ = Page::kCatalog;
         ++navigation_;
         Busy(Tr("正在获取在线应用", "Loading online apps"));
-        if (!Check(agent_system::FetchCatalog(catalog_, agent_system::kMaxApps, &catalog_count_)))
+        WaitForCoverSync();
+        if (!Check(agent_system::FetchCatalogPage(catalog_, agent_system::kMaxApps, &catalog_count_,
+                                                  page, &catalog_page_)))
             catalog_count_ = 0;
         retry_requested_ = true;
     }
-    bool Installed(const char* id) const {
+    bool Installed(const agent_system::CatalogApp& app) const {
         for (size_t i = 0; i < app_count_; ++i)
-            if (!strcmp(apps_[i].descriptor.app_id, id))
+            if (app.community_play ? apps_[i].community_play == app.community_play
+                                   : !strcmp(apps_[i].descriptor.app_id, app.app_id))
                 return true;
         return false;
     }
@@ -193,7 +206,19 @@ class AmoledFactoryApplication : public Application {
                 if (static_cast<size_t>(row) < catalog_count_) {
                     selected_ = row;
                     page_ = Page::kCatalogDetail;
+                } else if (catalog_page_.page > 1 && static_cast<size_t>(row) == catalog_count_) {
+                    Catalog(catalog_page_.page - 1);
+                } else if (catalog_page_.has_more &&
+                           static_cast<size_t>(row) ==
+                               catalog_count_ + (catalog_page_.page > 1 ? 1 : 0)) {
+                    Catalog(catalog_page_.page + 1);
                 }
+                break;
+            case Page::kServiceError:
+                if (row == 0)
+                    Catalog(catalog_page_.page);
+                else
+                    Home();
                 break;
             case Page::kLocalDetail:
                 if (row == 0)
@@ -213,8 +238,13 @@ class AmoledFactoryApplication : public Application {
                 }
                 break;
             case Page::kCatalogDetail:
+                if (catalog_[selected_].package !=
+                    agent_system::CatalogApp::Package::kApplication) {
+                    page_ = Page::kCatalog;
+                    break;
+                }
                 if (row == 0) {
-                    if (Installed(catalog_[selected_].app_id)) {
+                    if (Installed(catalog_[selected_])) {
                         Check(agent_system::kAlreadyInstalled);
                         break;
                     }
@@ -266,13 +296,20 @@ class AmoledFactoryApplication : public Application {
                     screen_.cover_revision = cover_.revision;
                 }
             } else if (page_ == Page::kCatalog) {
-                title(Tr("在线应用", "Online apps"));
+                char heading[64];
+                snprintf(heading, sizeof heading,
+                         Tr("在线应用 · 第 %u 页", "Online apps · page %u"), catalog_page_.page);
+                title(heading);
                 for (size_t i = 0; i < catalog_count_; ++i) {
                     char name[112];
                     snprintf(name, sizeof name, "%s%s", catalog_[i].name,
-                             Installed(catalog_[i].app_id) ? Tr(" · 已安装", " · Installed") : "");
+                             Installed(catalog_[i]) ? Tr(" · 已安装", " · Installed") : "");
                     row(name);
                 }
+                if (catalog_page_.page > 1)
+                    row(Tr("上一页", "Previous page"));
+                if (catalog_page_.has_more)
+                    row(Tr("下一页", "Next page"));
                 if (!catalog_count_)
                     snprintf(screen_.info, sizeof screen_.info, "%s",
                              Tr("暂无应用。检查网络和系统菜单中的应用服务地址。",
@@ -282,10 +319,36 @@ class AmoledFactoryApplication : public Application {
                 title(app.name);
                 snprintf(screen_.info, sizeof screen_.info, "%s\n%s\n%lu KB", app.app_id,
                          app.version, static_cast<unsigned long>(app.size / 1024));
-                row(Installed(app.app_id)
-                        ? Tr("已安装（更新前请先卸载）", "Installed (remove before updating)")
-                        : Tr("下载安装", "Download and install"));
-                row(Tr("返回列表", "Back to list"));
+                if (app.package != agent_system::CatalogApp::Package::kApplication) {
+                    snprintf(screen_.info, sizeof screen_.info, "%s\n%s\n%s", app.version,
+                             app.filename,
+                             app.package == agent_system::CatalogApp::Package::kTooLarge
+                                 ? Tr("应用超过当前设备容量，请联系发布者。",
+                                      "Application exceeds this device's capacity.")
+                                 : Tr("此版本为整机包或其他格式。启动器需要发布者提供纯应用 .bin。",
+                                      "This release requires a pure application .bin for launcher "
+                                      "installation."));
+                    row(Tr("返回列表", "Back to list"));
+                } else {
+                    row(Installed(app)
+                            ? Tr("已安装（更新前请先卸载）", "Installed (remove before updating)")
+                            : Tr("下载安装", "Download and install"));
+                    row(Tr("返回列表", "Back to list"));
+                }
+            } else if (page_ == Page::kServiceError) {
+                title(Tr("应用服务暂不可用", "App service unavailable"));
+                char header[192];
+                snprintf(header, sizeof header, "HTTP %d %.47s\nrequestId: %.79s\n%s %u s\n",
+                         store_error_.http_status, store_error_.code, store_error_.request_id,
+                         Tr("建议等待", "Retry after"), store_error_.retry_after);
+                std::string detail = std::string(header) + store_error_.message;
+                size_t length = std::min(detail.size(), sizeof screen_.info - 1);
+                while (length && (static_cast<unsigned char>(detail[length]) & 0xC0) == 0x80)
+                    --length;
+                memcpy(screen_.info, detail.data(), length);
+                screen_.info[length] = 0;
+                row(Tr("重新获取列表", "Reload list"));
+                row(Tr("返回主页", "Home"));
             } else if (page_ == Page::kLocalDetail) {
                 const auto& app = apps_[selected_];
                 title(app.descriptor.name);
@@ -293,7 +356,8 @@ class AmoledFactoryApplication : public Application {
                 screen_.card_index = carousel_.Index();
                 screen_.card_count = carousel_.Pages();
                 snprintf(screen_.app_id, sizeof screen_.app_id, "%s", app.descriptor.app_id);
-                snprintf(screen_.detail, sizeof screen_.detail, "%s", app.version);
+                snprintf(screen_.detail, sizeof screen_.detail, "%s",
+                         app.release_version[0] ? app.release_version : app.version);
                 screen_.cover_slot = cover_.slot;
                 screen_.cover_revision = cover_.revision;
             } else {
@@ -518,14 +582,7 @@ class AmoledFactoryApplication : public Application {
     void CoverLoop() {
         while (true) {
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-            auto catalog = std::unique_ptr<agent_system::CatalogApp[]>(
-                new (std::nothrow) agent_system::CatalogApp[agent_system::kMaxApps]);
-            size_t count = 0;
-            esp_err_t error =
-                catalog ? agent_system::FetchCatalog(catalog.get(), agent_system::kMaxApps, &count)
-                        : ESP_ERR_NO_MEM;
-            if (error == ESP_OK)
-                error = agent_system::SyncCovers(catalog.get(), count);
+            const esp_err_t error = agent_system::SyncStoreCovers();
             if (error == ESP_OK)
                 ESP_LOGI("amoled.cover", "background sync complete");
             else
@@ -574,6 +631,8 @@ class AmoledFactoryApplication : public Application {
     agent_system::App apps_[agent_system::kAppSlotCount]{};
     uint32_t seen_app_revision_ = 0;
     agent_system::CatalogApp catalog_[agent_system::kMaxApps]{};
+    agent_system::CatalogPage catalog_page_;
+    agent_system::StoreError store_error_;
     size_t app_count_ = 0, catalog_count_ = 0, selected_ = 0;
     uint32_t view_ = 1, navigation_ = 1;
     Page page_ = Page::kHome;

@@ -12,7 +12,11 @@ COVER_BYTES = 64 + 132 * 132 * 3
 
 
 def verify_application(path, maximum):
-    data = Path(path).read_bytes()
+    return verify_application_data(Path(path).read_bytes(), maximum)
+
+
+def verify_application_data(data, maximum):
+    """Validate an in-memory upload without persisting an untrusted payload."""
     if len(data) < 512 or len(data) > maximum:
         raise ValueError('Application size exceeds the selected OTA slot or image is truncated')
     if data[0] != 0xE9 or struct.unpack_from('<H', data, 12)[0] != 9:
@@ -47,11 +51,13 @@ def verify_application(path, maximum):
 
 
 def image_info(path, maximum):
-    value = verify_application(path, maximum)
-    with Path(path).open('rb') as stream:
-        stream.seek(0x120)
-        if stream.read(5) == b'AGSYS':
-            raise ValueError('Use the Agent Link image workflow for native applications')
+    return image_info_data(Path(path).read_bytes(), maximum)
+
+
+def image_info_data(data, maximum):
+    value = verify_application_data(data, maximum)
+    if data[0x120:0x125] == b'AGSYS':
+        raise ValueError('Use the Agent Link image workflow for native applications')
     app_id, version = value['project_name'], value['version']
     if not re.fullmatch(r'[A-Za-z0-9_.-]{1,31}', app_id) or app_id in {'.', '..', 'SDGOODS_LAUNCHER'} or not version:
         raise ValueError('Invalid application identity, or a launcher instead of an application')

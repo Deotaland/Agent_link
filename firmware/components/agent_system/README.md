@@ -2,8 +2,8 @@
 
 `agent_system` owns installation, discovery and switching for boards with a
 registered Factory and managed flash layout. It is separate from Agent platform
-connectivity and from the board's launcher pages. Currently the non-C AMOLED
-1.75 board enables it; ordinary single-app boards retain their existing A/B OTA.
+connectivity and from the board's launcher pages. The AMOLED factories and
+Sugarat Button use managed applications; ordinary single-app boards retain A/B OTA.
 
 | Path | Responsibility |
 | --- | --- |
@@ -11,6 +11,7 @@ connectivity and from the board's launcher pages. Currently the non-C AMOLED
 | `include/agent_cover.h` | Public cover format and retained pixel storage |
 | `agent_system.cc` | Verified app-slot operations, installation markers, catalog/settings HTTP and launcher return |
 | `cover_cache.cc`, `cover_cache.h` | Private download, validation and slot-tail cover storage |
+| `community_store.cc`, `community_cover.cc` | Board-selected anonymous production community, download tickets and PSRAM image decoding |
 | `CMakeLists.txt` | Dependencies and layout/identity constants resolved from manifests |
 | [cover-format.md](cover-format.md) | Backend cover encoding and delivery contract |
 
@@ -69,3 +70,42 @@ Menu checks need the activated ESP-IDF Python environment. Native tests exercise
 production sources using host boundary stubs; the local service checks the HTTP
 contract. They do not flash a device. Build only the selected board/profile before
 committing firmware changes; device acceptance remains a separate step.
+
+Sugarat Button production-store checks:
+
+```powershell
+python firmware/tests/test_agent_system.py --community --packages-report firmware/tests/local_app_store/.cache/sdgoods-http-report.json
+python firmware/tests/test_community_cover.py
+```
+
+The community fixture exercises actual native/vendor installers, anonymous
+pagination, fresh tickets, metadata mismatch, invalid images, ZIP rejection,
+error messages/request IDs and isolated settings. Codec fixtures use the actual
+WebP/PNG/JPEG sources; an available public cover snapshot is also decoded.
+These checks simulate flash and do not prove execution on physical hardware.
+
+## Community upload contract
+
+Publish one original pure application `.bin` (`application/octet-stream`) and
+upload its cover separately. The backend owns the title, release version,
+product/hardware compatibility, file size and SHA-256. It must validate the actual
+ESP application image; a `.bin` extension alone does not establish compatibility.
+USB full-flash packages, ZIP/UF2, bootloaders, partition tables and OTA selection
+records are not launcher applications. Keep full-device packages in a separately
+identified delivery flow.
+
+Native Sugarat Button applications require the `SDGOODS-ESP32S3` compatibility
+model, application ABI 3 and SDK 0.1.0. Reviewed original SDGOODS applications
+retain their IDF project/version and binary bytes. A download manifest's
+`0x10000` address identifies its application file; the launcher chooses the
+actual installation extent. Extra filesystems, fixed offsets and custom
+bootloaders require separate adaptation and device acceptance.
+
+Developers upload through `/api/v1/uploads`, save `/api/v1/me/plays` drafts and
+submit them for review. Administrators collecting reviewed applications use
+`/api/v1/admin/play-uploads` and `/api/v1/admin/plays` instead. Both flows request
+a storage URL, PUT the raw file and confirm it before referencing the ready file
+in a draft. User/admin files are not interchangeable. Storage PUTs carry only
+the returned storage headers; account identity belongs to the business API.
+The Factory's public list/detail/download-ticket flow requires no account or
+device authentication on the configured deployment.

@@ -8,3 +8,6 @@
 *.bin  binary
 *.a    binary
 *.ttf  binary
+
+# Keep the pinned upstream license verbatim, including its final blank line.
+firmware/components/webp_decoder/third_party/COPYING whitespace=-blank-at-eof
