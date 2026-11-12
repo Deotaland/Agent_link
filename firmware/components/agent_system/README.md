@@ -84,6 +84,7 @@ Sugarat Button production-store checks:
 
 ```powershell
 python firmware/tests/test_agent_system.py --community --packages-report firmware/tests/local_app_store/.cache/sdgoods-http-report.json
+python firmware/tests/test_agent_system.py --download-codes
 python firmware/tests/test_community_cover.py
 ```
 
@@ -116,5 +117,22 @@ submit them for review. Administrators collecting reviewed applications use
 a storage URL, PUT the raw file and confirm it before referencing the ready file
 in a draft. User/admin files are not interchangeable. Storage PUTs carry only
 the returned storage headers; account identity belongs to the business API.
-The Factory's public list/detail/download-ticket flow requires no account or
-device authentication on the configured deployment.
+The Sugarat Factory uses `https://sugapi.deotaland.cn`: enter the six-digit code
+from the web platform, read `GET /api/v1/community/download-codes/{code}` and
+confirm installation before `POST /api/v1/community/download-codes/{code}/downloads`.
+Codes stay strings to preserve leading zeroes. The device rechecks the displayed
+play/version/size/hash before obtaining a ticket and verifies the ticket against
+that metadata. Same-host HTTP cover/file URLs are upgraded to HTTPS. Code lookup
+and downloads use a worker; returning home does not cancel installation.
+The public store requires no account or device authentication on this deployment.
+For download diagnostics, installation logs the complete temporary file URL once.
+All metadata requests (including detail lookup and ticket POST) and installer file
+headers have a 60-second wait budget and up to two retries before firmware
+reading/flash writing begins; body reads retain a 15-second timeout. Metadata/header
+timeouts report `ESP_ERR_TIMEOUT`, with method/attempt/phase and elapsed time in logs.
+Each ticket POST generates one Idempotency-Key and reuses it across timeout retries;
+a new logical request gets a fresh key. Cancellation is checked between metadata
+I/O operations and retries. Connection failures and transient gateway errors may
+retry; long server cooldowns, invalid/expired tickets and image validation failures stop.
+Code assignment through `PATCH /api/v1/admin/plays/{playId}` remains an administrator
+action on the platform, including after submission approval; it is not a device API.

@@ -64,6 +64,7 @@ struct CatalogApp {
     enum class Package { kApplication, kFullPackage, kTooLarge } package = Package::kApplication;
     char filename[96]{};
     char release_version[32]{};
+    char download_code[7]{};
 };
 struct CatalogPage {
     unsigned page = 1;
@@ -145,6 +146,8 @@ esp_err_t FetchCatalog(CatalogApp* apps, size_t capacity, size_t* count);
 esp_err_t FetchCatalogPage(CatalogApp* apps, size_t capacity, size_t* count, unsigned page,
                            CatalogPage* pagination);
 bool CommunityCatalog();
+// Six ASCII digits, including leading zeroes. Metadata only; no download ticket.
+esp_err_t FetchDownloadCode(const char* code, CatalogApp* app);
 void LastStoreError(StoreError* error);
 esp_err_t SyncStoreCovers();
 esp_err_t SyncCovers(const CatalogApp* apps, size_t count);  // Call on a worker after FetchCatalog.

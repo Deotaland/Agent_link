@@ -16,7 +16,7 @@ esp_err_t FetchCover(const CatalogApp&, uint8_t*) {
 }  // namespace agent_system::community
 namespace {
 using namespace agent_system;
-const std::string origin = "http://3.144.1.190:9004", list = origin + "/api/v1/community/plays";
+const std::string origin = "https://sugapi.deotaland.cn", list = origin + "/api/v1/community/plays";
 std::string Read(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     assert(file);
@@ -101,7 +101,8 @@ int main(int argc, char** argv) {
            url == old);
     assert(SetCatalogUrl(community::DefaultCatalog()) == ESP_OK && CommunityCatalog());
     assert(ValidServiceUrl((origin + "/file?sig=a%2Fb").c_str()));
-    assert(!ValidServiceUrl("http://3.144.1.190:9004.evil/file"));
+    assert(!community::IsOrigin("https://sugapi.deotaland.cn.evil/file"));
+    assert(!ValidServiceUrl("http://sugapi.deotaland.cn.evil/file"));
     assert(!ValidServiceUrl("http://8.8.8.8/file"));
     assert(!ValidServiceUrl((origin + "/file?sig=%xx").c_str()));
     auto* report = cJSON_Parse(Read(std::filesystem::u8path(argv[1])).c_str());
@@ -177,20 +178,54 @@ int main(int argc, char** argv) {
     fixture::responses[detail] = Detail(native);
     fixture::responses[ticket] = Ticket(native, file_url);
     fixture::responses[file_url] = Read(std::filesystem::u8path(Text(native, "download_path")));
-    assert(FetchCatalog(apps, 8, &count) == ESP_OK && Install(apps[0]) == kRestartRequired);
+    const auto code_url = origin + "/api/v1/community/download-codes/000001";
+    auto code_detail = Detail(native);
+    code_detail.insert(code_detail.find("\"id\":1"), "\"downloadCode\":\"000001\",");
+    fixture::responses[code_url] = code_detail;
+    fixture::responses[code_url + "/downloads"] = Ticket(native, file_url);
+    assert(FetchDownloadCode("000001", &apps[0]) == ESP_OK);
+    const auto before_timeout = dynamic_fixture::flash;
+    fixture::header_results[code_url + "/downloads"] = {
+        -ESP_ERR_HTTP_EAGAIN, -ESP_ERR_HTTP_EAGAIN, -ESP_ERR_HTTP_EAGAIN};
+    InstallStatus ticket_timeout{};
+    assert(Install(apps[0], nullptr, nullptr, &ticket_timeout) == ESP_ERR_TIMEOUT);
+    assert(ticket_timeout.stage == InstallStage::kTicket && ticket_timeout.received == 0 &&
+           before_timeout == dynamic_fixture::flash && Count() == 0);
+    fixture::header_results[file_url] = {-ESP_ERR_HTTP_EAGAIN, -ESP_ERR_HTTP_EAGAIN,
+                                       -ESP_ERR_HTTP_EAGAIN};
+    InstallStatus timeout_status{};
+    assert(Install(apps[0], nullptr, nullptr, &timeout_status) == ESP_ERR_TIMEOUT);
+    assert(timeout_status.stage == InstallStage::kConnect && timeout_status.received == 0 &&
+           before_timeout == dynamic_fixture::flash && Count() == 0);
+    fixture::header_results[code_url] = {-ESP_ERR_HTTP_EAGAIN, -ESP_ERR_HTTP_EAGAIN};
+    fixture::header_results[code_url + "/downloads"] = {-ESP_ERR_HTTP_EAGAIN, -ESP_ERR_HTTP_EAGAIN};
+    fixture::header_results[file_url] = {-ESP_ERR_HTTP_EAGAIN, -ESP_ERR_HTTP_EAGAIN};
+    fixture::header_delay_ms[code_url] = fixture::header_delay_ms[code_url + "/downloads"] = 40000;
+    assert(Install(apps[0]) == kRestartRequired);
     Reboot();
     assert(List(installed, 16, &n) == ESP_OK && n == 1 &&
            installed[0].format == ImageFormat::kAgentLink && installed[0].community_play == 1);
     assert(fixture::store.at("agent_nvs/al_wifi/ssid") == wifi);
     std::string previous_key;
+    std::vector<std::string> used_keys;
+    bool previous_was_post = false;
+    std::string previous_url;
     for (const auto& request : fixture::requests) {
         assert(!request.headers.count("Authorization") && !request.headers.count("X-User-Info") &&
                !request.headers.count("X-Auth-Key"));
         if (request.method == HTTP_METHOD_POST) {
             const auto key = request.headers.at("Idempotency-Key");
-            assert(!key.empty() && key != previous_key);
+            assert(!key.empty());
+            if (key == previous_key)
+                assert(previous_was_post && previous_url == request.url);
+            else {
+                assert(std::find(used_keys.begin(), used_keys.end(), key) == used_keys.end());
+                used_keys.push_back(key);
+            }
             previous_key = key;
         }
+        previous_was_post = request.method == HTTP_METHOD_POST;
+        previous_url = request.url;
     }
     fixture::http_status[origin + "/redirect"] = 302;
     fixture::http_headers[origin + "/redirect"]["Location"] = file_url;
@@ -199,7 +234,7 @@ int main(int argc, char** argv) {
         assert(file.Open((origin + "/redirect").c_str()) == ESP_OK);
     }
     fixture::http_status["https://example.com/downgrade"] = 302;
-    fixture::http_headers["https://example.com/downgrade"]["Location"] = file_url;
+    fixture::http_headers["https://example.com/downgrade"]["Location"] = "http://sugapi.deotaland.cn/file";
     {
         community::File file;
         assert(file.Open("https://example.com/downgrade") == ESP_ERR_INVALID_ARG);

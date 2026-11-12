@@ -29,7 +29,8 @@ constexpr int ESP_OK=0, ESP_FAIL=-1, ESP_ERR_NO_MEM=1, ESP_ERR_INVALID_ARG=2,
     ESP_ERR_INVALID_STATE=3, ESP_ERR_INVALID_SIZE=4, ESP_ERR_NOT_FOUND=5,
     ESP_ERR_INVALID_RESPONSE=6, ESP_ERR_INVALID_CRC=7, ESP_ERR_INVALID_VERSION=8,
     ESP_ERR_NVS_NOT_FOUND=9, ESP_ERR_NVS_NO_FREE_PAGES=10, ESP_ERR_NVS_NEW_VERSION_FOUND=11,
-    ESP_ERR_NOT_SUPPORTED=12, ESP_ERR_TIMEOUT=13;
+    ESP_ERR_NOT_SUPPORTED=12, ESP_ERR_TIMEOUT=13,
+    ESP_ERR_HTTP_CONNECT=0x7002, ESP_ERR_HTTP_EAGAIN=0x7007;
 using esp_partition_subtype_t = int;
 constexpr int ESP_PARTITION_TYPE_APP=0, ESP_PARTITION_SUBTYPE_APP_FACTORY=0,
     ESP_PARTITION_SUBTYPE_APP_OTA_0=16;
@@ -62,6 +63,11 @@ inline std::string response;
 inline std::map<std::string,std::string> responses;
 inline std::map<std::string,int> http_status;
 inline std::map<std::string,std::map<std::string,std::string>> http_headers;
+inline std::map<std::string,std::vector<int64_t>> header_results;
+inline std::map<std::string,std::vector<int>> header_timeouts;
+inline std::map<std::string,int> header_delay_ms;
+inline std::map<std::string,std::vector<int>> read_results, read_timeouts;
+inline int active_http_clients = 0;
 struct Request { std::string url; int method; std::map<std::string,std::string> headers; };
 inline std::vector<Request> requests;
 inline size_t fail_after=static_cast<size_t>(-1);
@@ -160,16 +166,18 @@ inline int nvs_get_blob(int h,const char* key,void* value,size_t* size){auto i=f
 inline int nvs_commit(int){return fixture::commit_error;}
 inline void nvs_close(int){}
 struct esp_http_client_event_t;
-struct HttpClient {size_t offset=0;std::string body,url;int method=0;void* user_data=nullptr;
+struct HttpClient {size_t offset=0;std::string body,url;int method=0,timeout_ms=0;void* user_data=nullptr;
     esp_err_t(*event)(esp_http_client_event_t*)=nullptr;std::map<std::string,std::string> headers;};
 using esp_http_client_handle_t=HttpClient*;
 inline void esp_crt_bundle_attach(){}
-constexpr int HTTP_EVENT_ON_HEADER=1, HTTP_METHOD_POST=1;
+constexpr int HTTP_EVENT_ON_HEADER=1, HTTP_METHOD_GET=0, HTTP_METHOD_POST=1;
 struct esp_http_client_event_t {int event_id;void* user_data;const char* header_key;const char* header_value;};
 struct esp_http_client_config_t {const char* url;const char* user_agent;int timeout_ms,buffer_size;void(*crt_bundle_attach)();bool disable_auto_redirect;
     esp_err_t(*event_handler)(esp_http_client_event_t*);void* user_data;};
 inline HttpClient* esp_http_client_init(const esp_http_client_config_t* c){auto* client=new HttpClient;auto i=fixture::responses.find(c->url);client->body=i==fixture::responses.end()?fixture::response:i->second;
+    ++fixture::active_http_clients;client->timeout_ms=c->timeout_ms;
     client->url=c->url;client->event=c->event_handler;client->user_data=c->user_data;return client;}
+inline int esp_http_client_set_timeout_ms(HttpClient* c,int value){c->timeout_ms=value;return ESP_OK;}
 inline int esp_http_client_set_header(HttpClient* c,const char* key,const char* value){c->headers[key]=value;return ESP_OK;}
 inline int esp_http_client_set_method(HttpClient* c,int method){c->method=method;return ESP_OK;}
 inline void esp_fill_random(void* out,size_t size){static uint8_t seed=0;memset(out,++seed,size);}
@@ -183,19 +191,27 @@ inline int esp_http_client_open(HttpClient* c,int){
     return fixture::open_error;
 }
 inline int esp_http_client_get_and_clear_last_tls_error(HttpClient*,int* code,int* flags){*code=0;*flags=0;return ESP_OK;}
-inline int64_t esp_http_client_fetch_headers(HttpClient* c){if(c->event) for(const auto& [key,value]:fixture::http_headers[c->url]){
+inline int64_t esp_http_client_fetch_headers(HttpClient* c){
+    fixture::header_timeouts[c->url].push_back(c->timeout_ms);
+    if(fixture::header_delay_ms[c->url]>c->timeout_ms)return -ESP_ERR_HTTP_EAGAIN;
+    auto& results=fixture::header_results[c->url];
+    if(!results.empty()) {const auto result=results.front();results.erase(results.begin());if(result<0)return result;}
+    if(c->event) for(const auto& [key,value]:fixture::http_headers[c->url]){
     esp_http_client_event_t e{HTTP_EVENT_ON_HEADER,c->user_data,key.c_str(),value.c_str()};c->event(&e);}return c->body.size();}
 inline int esp_http_client_get_status_code(HttpClient* c){auto i=fixture::http_status.find(c->url);return i==fixture::http_status.end()?fixture::status:i->second;}
 inline int esp_http_client_get_errno(HttpClient*) {return 0;}
 inline int64_t esp_http_client_get_content_length(HttpClient* c){return c->body.size();}
 inline int esp_http_client_read(HttpClient* client,char* out,size_t size){
+    fixture::read_timeouts[client->url].push_back(client->timeout_ms);
+    auto& results=fixture::read_results[client->url];
+    if(!results.empty()) {const int result=results.front();results.erase(results.begin());if(result<0)return result;}
     if(client->offset>=fixture::fail_after)return -1;
     size=std::min({size,client->body.size()-client->offset,size_t(211),fixture::fail_after-client->offset});
     memcpy(out,client->body.data()+client->offset,size);client->offset+=size;return static_cast<int>(size);
 }
 inline bool esp_http_client_is_complete_data_received(HttpClient* c){return c->offset==c->body.size();}
 inline void esp_http_client_close(HttpClient*){}
-inline void esp_http_client_cleanup(HttpClient* c){delete c;}
+inline void esp_http_client_cleanup(HttpClient* c){--fixture::active_http_clients;delete c;}
 constexpr int MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 inline void* heap_caps_malloc(size_t size,int){return malloc(size);}
 inline void* heap_caps_realloc(void* p,size_t size,int){return realloc(p,size);}

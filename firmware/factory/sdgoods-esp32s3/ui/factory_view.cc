@@ -15,7 +15,7 @@ namespace {
 constexpr uint32_t kBg = 0x1D1D1B, kCard = 0x2B2925, kText = 0xF3F0E8;
 constexpr uint32_t kMuted = 0xAAA49B, kAccent = 0xC54B2C, kBrand = 0xF29A72;
 constexpr amoled_ui::CardRenderer::Palette kPalette{kBg, kCard, kText, kMuted, kBrand, 0x514B43};
-lv_obj_t *root, *home, *apps, *details, *busy;
+lv_obj_t *root, *home, *apps, *details, *busy, *download;
 lv_obj_t *installed_label, *count_label, *free_label, *usage_ring, *usage_label, *status;
 lv_obj_t *hero, *wifi_title, *wifi_step, *wifi_ap, *wifi_url, *wifi_arrow;
 lv_obj_t *home_tiles[3], *home_names[3], *grid_tiles[4], *grid_names[4];
@@ -23,6 +23,8 @@ lv_obj_t *grid_title, *empty, *empty_text, *empty_button, *empty_button_text;
 lv_obj_t *previous, *next, *page_label, *detail_name, *detail_version;
 lv_obj_t *launch, *remove, *launch_text, *remove_text, *detail_back;
 lv_obj_t *progress_ring, *progress_label, *busy_title, *busy_detail;
+lv_obj_t *download_title, *download_hint, *code_boxes[6], *code_labels[6];
+lv_obj_t *query_key, *query_text, *detail_hint;
 
 void Show(lv_obj_t* obj, bool on) {
     if (on) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -143,10 +145,34 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     detail_name = Label(details, fonts.Title(), 60, 201, 240, 40, kText);
     lv_label_set_long_mode(detail_name, LV_LABEL_LONG_WRAP);
     detail_version = Label(details, fonts.Small(), 80, 245, 200, 20, kMuted);
+    detail_hint = Label(details, fonts.Small(), 60, 214, 240, 48, kMuted);
+    lv_label_set_long_mode(detail_hint, LV_LABEL_LONG_WRAP);
     launch = Box(details, 64, 270, 112, 44, 22, kAccent); bind(launch, 0);
     remove = Box(details, 184, 270, 112, 44, 22, kCard); bind(remove, 1);
     launch_text = Label(launch, fonts.Body(), 0, 10, 112, 26, kText);
     remove_text = Label(remove, fonts.Body(), 0, 10, 112, 26, kMuted);
+
+    download = Box(root, 0, 0, 360, 360, 0, kBg); Back(download, bind);
+    download_title = Label(download, fonts.Title(), 111, 43, 140, 28, kText);
+    auto* help = Box(download, 254, 40, 36, 36, 18, kCard); bind(help, 12);
+    Text(Label(help, &lv_font_montserrat_20, 0, 7, 36, 26, kBrand), "?");
+    download_hint = Label(download, fonts.Small(), 52, 82, 256, 23, kMuted);
+    for (int i = 0; i < 6; ++i) {
+        code_boxes[i] = Box(download, 58 + i * 41, 111, 38, 44, 10, kCard);
+        lv_obj_set_style_border_width(code_boxes[i], 1, 0);
+        code_labels[i] = Label(code_boxes[i], &lv_font_montserrat_24, 0, 7, 38, 30, kText);
+    }
+    const int keys[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11};
+    for (int i = 0; i < 12; ++i) {
+        auto* key = Box(download, 67 + (i % 3) * 78, 168 + (i / 3) * 41, 70, 36, 16,
+                        keys[i] == 11 ? kAccent : kCard);
+        bind(key, keys[i]);
+        auto* label = Label(key, keys[i] == 11 ? fonts.Small() : &lv_font_montserrat_20,
+                            0, 5, 70, 27, kText);
+        char digit[2]{static_cast<char>('0' + keys[i]), 0};
+        Text(label, keys[i] == 10 ? LV_SYMBOL_BACKSPACE : keys[i] == 11 ? "" : digit);
+        if (keys[i] == 11) { query_key = key; query_text = label; }
+    }
 
     busy = Box(root, 0, 0, 360, 360, 0, kBg);
     progress_ring = Ring(busy, 46, 46, 268, 8, 0x38352F);
@@ -159,6 +185,8 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
 }
 bool Accepts(const amoled_ui::Screen& screen) {
     return screen.kind == amoled_ui::View::kFactoryHome || screen.kind == amoled_ui::View::kAppGrid ||
+           screen.kind == amoled_ui::View::kDownloadCode || screen.kind == amoled_ui::View::kDownloadDetail ||
+           screen.kind == amoled_ui::View::kAppActions ||
            (screen.kind == amoled_ui::View::kInfo && screen.busy);
 }
 void Update(const amoled_ui::Screen& screen) {
@@ -166,10 +194,25 @@ void Update(const amoled_ui::Screen& screen) {
     const bool is_home = screen.kind == amoled_ui::View::kFactoryHome;
     const bool is_grid = screen.kind == amoled_ui::View::kAppGrid;
     const bool is_busy = screen.kind == amoled_ui::View::kInfo && screen.busy;
+    const bool is_download = screen.kind == amoled_ui::View::kDownloadCode;
     Show(root, true); Show(home, is_home); Show(apps, is_grid);
-    Show(busy, is_busy); Show(details, !is_home && !is_grid && !is_busy);
+    Show(busy, is_busy); Show(download, is_download);
+    Show(details, !is_home && !is_grid && !is_busy && !is_download);
     char text[96];
-    if (is_home) {
+    if (is_download) {
+        Text(download_title, Tr("下载应用", "Download"));
+        Text(download_hint, Tr("输入平台上的六位下载码", "Enter the 6-digit download code"));
+        const size_t length = strlen(screen.download_code);
+        for (int i = 0; i < 6; ++i) {
+            char digit[2]{i < int(length) ? screen.download_code[i] : char(0), 0};
+            Text(code_labels[i], digit);
+            lv_obj_set_style_border_color(code_boxes[i], lv_color_hex(i == int(length) ? kBrand : kCard), 0);
+        }
+        Text(query_text, Tr("查询", "Find"));
+        lv_obj_set_style_bg_color(query_key, lv_color_hex(length == 6 ? kAccent : kCard), 0);
+        if (length == 6) lv_obj_remove_state(query_key, LV_STATE_DISABLED);
+        else lv_obj_add_state(query_key, LV_STATE_DISABLED);
+    } else if (is_home) {
         const bool guide = !screen.wifi_connected;
         for (auto* obj : {installed_label, count_label, free_label, usage_ring, usage_label}) Show(obj, !guide);
         for (auto* obj : {wifi_title, wifi_step, wifi_ap, wifi_url, wifi_arrow}) Show(obj, guide);
@@ -222,12 +265,15 @@ void Update(const amoled_ui::Screen& screen) {
         Text(progress_label, text); Text(busy_title, screen.title);
         Text(busy_detail, screen.progress >= 0 ? screen.info : screen.detail);
     } else {
-        Text(detail_name, screen.title); Text(detail_version, screen.detail);
-        detail_cover.Update(screen.add_card ? -1 : screen.cover_slot, screen.cover_revision, 104, screen.title);
         const bool actions = screen.kind == amoled_ui::View::kAppActions;
-        Show(remove, actions); Show(detail_back, actions);
-        Text(launch_text, actions ? Tr("启动", "Open") : Tr("下载应用", "Download"));
-        Text(remove_text, Tr("卸载", "Remove"));
+        Text(detail_name, screen.title); Text(detail_version, screen.detail);
+        detail_cover.Update(actions ? screen.cover_slot : -1, screen.cover_revision, 104, screen.title);
+        Show(detail_version, actions); Show(detail_hint, !actions);
+        lv_obj_set_y(detail_name, actions ? 201 : 184);
+        Text(detail_hint, screen.detail);
+        Show(remove, true); Show(detail_back, true);
+        Text(launch_text, actions ? Tr("启动", "Open") : screen.rows[0]);
+        Text(remove_text, actions ? Tr("卸载", "Remove") : Tr("返回", "Back"));
     }
 }
 void Hide() { Show(root, false); }

@@ -126,6 +126,28 @@ int main(int argc, char** argv) {
     Tap(touch,120,290); assert(last_input.action==TouchAction::kRow && last_input.row==0);
     state.view++; state.navigation++; SetScreen(state); Frame("sdgoods-actions.ppm");
     Tap(touch,240,290); assert(last_input.action==TouchAction::kRow && last_input.row==1);
+    state.kind=View::kDownloadCode; state.view++; state.navigation++;
+    SetScreen(state); Frame("sdgoods-download-code.ppm");
+    const unsigned disabled_clicks=clicks;
+    Tap(touch,258,309); assert(clicks==disabled_clicks);
+    for (int i=0;i<12;++i) {
+        if(i==11) snprintf(state.download_code,sizeof state.download_code,"000001");
+        state.view++; state.navigation++; SetScreen(state); Frame("sdgoods-download-code.ppm");
+        Tap(touch,102+(i%3)*78,186+(i/3)*41);
+        const int ids[]{1,2,3,4,5,6,7,8,9,10,0,11};
+        assert(last_input.action==TouchAction::kRow && last_input.row==ids[i]);
+    }
+    assert(!strcmp(lv_label_get_text(amoled_factory::code_labels[0]),"0"));
+    language.store(Language::kEnglish); state.view++; SetScreen(state);
+    Frame("sdgoods-download-code-en.ppm"); language.store(Language::kChinese);
+    state.kind=View::kDownloadDetail; state.view++; state.navigation++;
+    snprintf(state.title,sizeof state.title,"Sugarat 电台");
+    snprintf(state.detail,sizeof state.detail,"0.1.1 · 3.23 MB\n下载码 000001");
+    snprintf(state.rows[0],sizeof state.rows[0],"下载安装");
+    SetScreen(state); Frame("sdgoods-download-detail.ppm");
+    Tap(touch,120,290); assert(last_input.action==TouchAction::kRow && last_input.row==0);
+    state.view++; SetScreen(state); Frame("sdgoods-download-detail.ppm");
+    Tap(touch,240,290); assert(last_input.action==TouchAction::kRow && last_input.row==1);
     state.kind=View::kList; state.view++; state.navigation++; state.row_count=5;
     state.detail[0]=0;
     snprintf(state.title,sizeof state.title,"系统设置");

@@ -18,6 +18,13 @@ void Until(const std::function<bool()>& predicate) {
     }
 }
 namespace agent_system {
+esp_err_t FetchDownloadCode(const char* code, CatalogApp* app) {
+    assert(!strcmp(code, "000001"));
+    *app = {};
+    snprintf(app->download_code, sizeof app->download_code, "%s", code);
+    snprintf(app->name, sizeof app->name, "Code app");
+    return ESP_OK;
+}
 void LastStoreError(StoreError* out) {
     out->http_status = 403;
     snprintf(out->message, sizeof out->message, "Download link expired");
@@ -139,6 +146,17 @@ int main() {
     CatalogPage page;
     job.CopyCatalog(apps, &count, &page);
     assert(count == 1 && page.page == 2 && !strcmp(apps[0].name, "Catalog app"));
+    job.Acknowledge();
+    assert(job.StartLookupCode("12345") == ESP_ERR_INVALID_ARG);
+    assert(job.StartLookupCode("12/456") == ESP_ERR_INVALID_ARG);
+    hold_cover.store(true);
+    assert(job.StartLookupCode("000001") == ESP_OK);
+    assert(job.StartLookupCode("000001") == ESP_ERR_INVALID_STATE);
+    hold_cover.store(false);
+    Until([&] { return !job.Read().running; });
+    job.CopyCatalog(apps, &count, &page);
+    assert(count == 1 && !strcmp(apps[0].download_code, "000001") &&
+           job.Read().result.kind == Job::Kind::kLookupCode);
     StopFactoryTasks();
     puts(
         "Factory worker: nonblocking navigation, busy rejection, safe cancellation, durable "

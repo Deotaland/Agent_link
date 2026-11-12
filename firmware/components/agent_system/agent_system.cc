@@ -610,6 +610,19 @@ esp_err_t CatalogUrl(char* out, size_t capacity) {
     }
 #endif
 #if defined(AGENT_SYSTEM_COMMUNITY)
+    // Move saved production defaults to the confirmed HTTPS community service.
+    // Explicit LAN/test catalogs and an intentionally empty setting remain intact.
+    constexpr const char* old_origin = "http://3.144.1.190:9004";
+    const size_t old_length = strlen(old_origin);
+    if (err == ESP_OK && !strncmp(out, old_origin, old_length) &&
+        (!out[old_length] || out[old_length] == '/' || out[old_length] == '?')) {
+        if (strlen(community::DefaultCatalog()) >= capacity)
+            return ESP_ERR_INVALID_SIZE;
+        snprintf(out, capacity, "%s", community::DefaultCatalog());
+        err = SetCatalogUrl(out);
+        if (err != ESP_OK)
+            return err;
+    }
     // One-time switch of the old development store. Explicit settings saved
     // after this migration (including an empty URL) remain under user control.
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
@@ -685,6 +698,13 @@ void LastStoreError(StoreError* error) {
     community::Error(error);
 #else
     *error = {};
+#endif
+}
+esp_err_t FetchDownloadCode(const char* code, CatalogApp* app) {
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    return community::LookupCode(code, app);
+#else
+    return ESP_ERR_NOT_SUPPORTED;
 #endif
 }
 esp_err_t FetchCatalogPage(CatalogApp* apps, size_t capacity, size_t* count, unsigned page,
@@ -891,6 +911,19 @@ esp_err_t SyncStoreCovers() {
     auto error = FetchCatalog(catalog.get(), kMaxApps, &count);
     return error == ESP_OK ? SyncCovers(catalog.get(), count) : error;
 }
+static esp_err_t OpenInstallFile(Client& client, const char* url, InstallTrace& trace) {
+#if defined(AGENT_SYSTEM_COMMUNITY)
+    const auto error = client.OpenDownload(
+        url, [](void* context) { return static_cast<InstallTrace*>(context)->Cancelled(); }, &trace);
+#else
+    const auto error = client.Open(url);
+#endif
+    if (client.handle) {
+        trace.state.http_status = esp_http_client_get_status_code(client.handle);
+        trace.state.network_errno = esp_http_client_get_errno(client.handle);
+    }
+    return error;
+}
 static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, void* context,
                              InstallTrace& trace) {
     std::unique_lock<std::mutex> lock(operation_mutex, std::try_to_lock);
@@ -938,7 +971,9 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
     if (app.community_play) {
         if (!trace.Step(InstallStage::kTicket))
             return kCancelled;
-        const auto prepared = community::PrepareDownload(&app);
+        const auto prepared = community::PrepareDownload(
+            &app, [](void* context) { return static_cast<InstallTrace*>(context)->Cancelled(); },
+            &trace);
         if (prepared != ESP_OK)
             return prepared;
     }
@@ -946,9 +981,7 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
     if (!trace.Step(InstallStage::kConnect))
         return kCancelled;
     Client client;
-    esp_err_t err = client.Open(app.url);
-    if (client.handle)
-        trace.state.http_status = esp_http_client_get_status_code(client.handle);
+    esp_err_t err = OpenInstallFile(client, app.url, trace);
     if (err != ESP_OK)
         return err;
     if (esp_http_client_get_content_length(client.handle) != app.size)
@@ -1118,9 +1151,7 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
     if (!trace.Step(InstallStage::kConnect))
         return kCancelled;
     Client client;
-    esp_err_t err = client.Open(app.url);
-    if (client.handle)
-        trace.state.http_status = esp_http_client_get_status_code(client.handle);
+    esp_err_t err = OpenInstallFile(client, app.url, trace);
     if (err != ESP_OK)
         return err;
     if (esp_http_client_get_content_length(client.handle) != app.size)

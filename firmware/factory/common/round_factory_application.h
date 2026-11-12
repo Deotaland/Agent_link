@@ -107,6 +107,8 @@ class AmoledFactoryApplication : public Application {
         kDashboard,
         kApps,
         kCatalog,
+        kDownloadCode,
+        kDownloadHelp,
         kLocalDetail,
         kCatalogDetail,
         kRemove,
@@ -229,10 +231,7 @@ class AmoledFactoryApplication : public Application {
                 ++navigation_;
                 return;
             }
-            if (!ReadyToDownload())
-                return;
-            if (Check(store_job_->StartCatalog(page)))
-                page_ = Page::kJobProgress;
+            page_ = Page::kDownloadCode;
             ++navigation_;
             return;
         }
@@ -264,6 +263,25 @@ class AmoledFactoryApplication : public Application {
         if (row < 0)
             return;
         switch (page_) {
+            case Page::kDownloadCode: {
+                const size_t length = strlen(download_code_);
+                if (row <= 9 && length < 6) {
+                    download_code_[length] = static_cast<char>('0' + row);
+                    download_code_[length + 1] = 0;
+                } else if (row == 10 && length)
+                    download_code_[length - 1] = 0;
+                else if (row == 11 && length == 6 && ReadyToDownload()) {
+                    if (Check(store_job_->StartLookupCode(download_code_))) {
+                        catalog_count_ = 0;
+                        page_ = Page::kJobProgress;
+                    }
+                } else if (row == 12)
+                    page_ = Page::kDownloadHelp;
+                break;
+            }
+            case Page::kDownloadHelp:
+                page_ = Page::kDownloadCode;
+                break;
             case Page::kDashboard:
                 if (row == 0) Apps();
                 else if (row == 1) Catalog();
@@ -364,7 +382,7 @@ class AmoledFactoryApplication : public Application {
             case Page::kCatalogDetail:
                 if (catalog_[selected_].package !=
                     agent_system::CatalogApp::Package::kApplication) {
-                    page_ = Page::kCatalog;
+                    page_ = tile_home_ ? Page::kDownloadCode : Page::kCatalog;
                     break;
                 }
                 if (row == 0) {
@@ -400,7 +418,7 @@ class AmoledFactoryApplication : public Application {
                         retry_requested_ = true;
                     }
                 } else if (row == 1)
-                    page_ = Page::kCatalog;
+                    page_ = tile_home_ ? Page::kDownloadCode : Page::kCatalog;
                 break;
         }
         ++navigation_;
@@ -479,6 +497,19 @@ class AmoledFactoryApplication : public Application {
                     screen_.cover_slot = cover_.slot;
                     screen_.cover_revision = cover_.revision;
                 }
+            } else if (page_ == Page::kDownloadCode) {
+                screen_.kind = amoled_ui::View::kDownloadCode;
+                snprintf(screen_.download_code, sizeof screen_.download_code, "%s", download_code_);
+            } else if (page_ == Page::kDownloadHelp) {
+                title(Tr("下载码在哪里？", "Where is the code?"));
+                snprintf(screen_.info, sizeof screen_.info, "%s",
+                         Tr("在网页平台找到想安装的玩法，查看六位下载码。\n\n"
+                            "在设备上输入下载码，查询详情后确认下载安装。\n\n"
+                            "投稿审核通过后，由管理员分配下载码。",
+                            "Find an app on the web platform and check its six-digit download code.\n\n"
+                            "Enter it here, review the app, then confirm installation.\n\n"
+                            "Administrators assign codes after submission approval."));
+                row(Tr("返回输入下载码", "Enter download code"));
             } else if (page_ == Page::kCatalog) {
                 char heading[64];
                 snprintf(heading, sizeof heading,
@@ -501,6 +532,12 @@ class AmoledFactoryApplication : public Application {
             } else if (page_ == Page::kCatalogDetail) {
                 const auto& app = catalog_[selected_];
                 title(app.name);
+                if (tile_home_) {
+                    screen_.kind = amoled_ui::View::kDownloadDetail;
+                    snprintf(screen_.detail, sizeof screen_.detail, "%s · %.2f MB\n%s %s",
+                             app.version, app.size / 1048576.0,
+                             Tr("下载码", "Code"), app.download_code);
+                }
                 snprintf(screen_.info, sizeof screen_.info, "%s\n%s\n%lu KB", app.app_id,
                          app.version, static_cast<unsigned long>(app.size / 1024));
                 if (app.package != agent_system::CatalogApp::Package::kApplication) {
@@ -512,12 +549,15 @@ class AmoledFactoryApplication : public Application {
                                  : Tr("此版本为整机包或其他格式。启动器需要发布者提供纯应用 .bin。",
                                       "This release requires a pure application .bin for launcher "
                                       "installation."));
-                    row(Tr("返回列表", "Back to list"));
+                    if (tile_home_)
+                        snprintf(screen_.detail, sizeof screen_.detail, "%s",
+                                 Tr("需要纯应用 .bin 或文件超过容量", "Requires an app .bin within capacity"));
+                    row(tile_home_ ? Tr("不可安装", "Unavailable") : Tr("返回列表", "Back to list"));
                 } else {
                     row(Installed(app)
                             ? Tr("已安装（更新前请先卸载）", "Installed (remove before updating)")
                             : Tr("下载安装", "Download and install"));
-                    row(Tr("返回列表", "Back to list"));
+                    row(tile_home_ ? Tr("返回输入下载码", "Enter another code") : Tr("返回列表", "Back to list"));
                 }
             } else if (page_ == Page::kServiceError) {
                 title(Tr("应用服务暂不可用", "App service unavailable"));
@@ -610,7 +650,17 @@ class AmoledFactoryApplication : public Application {
         if (error == ESP_ERR_INVALID_CRC)
             return Tr("文件不完整或校验失败，请重新下载。",
                       "Incomplete file or checksum mismatch. Download again.");
-        if (error == ESP_ERR_INVALID_RESPONSE || error == ESP_ERR_TIMEOUT)
+        if (error == ESP_ERR_TIMEOUT) {
+            if (stage == agent_system::InstallStage::kTicket)
+                return Tr("查询详情或申请下载链接超时，请稍后重试。",
+                          "Timed out checking details or requesting a download link. Try later.");
+            if (stage == agent_system::InstallStage::kConnect)
+                return Tr("等待固件服务器响应超时，请稍后重试。",
+                          "Timed out waiting for the firmware server. Try again later.");
+            return Tr("读取服务器数据超时，请检查网络后重试。",
+                      "Timed out reading server data. Check the network and retry.");
+        }
+        if (error == ESP_ERR_INVALID_RESPONSE)
             return Tr("网络连接中断、超时或服务器响应不完整。",
                       "Connection interrupted, timed out or response incomplete.");
         if (error == ESP_ERR_NO_MEM)
@@ -658,6 +708,7 @@ class AmoledFactoryApplication : public Application {
                     ? static_cast<int>(uint64_t(status.received) * 100 / status.total)
                     : -1;
             title(pending_launch_[0]                 ? Tr("正在结束下载…", "Stopping download...")
+                  : result.kind == J::Kind::kLookupCode ? Tr("查询下载码", "Looking up code")
                   : result.kind == J::Kind::kCatalog ? Tr("获取在线应用", "Loading online apps")
                                                      : InstallStageName(status.stage));
             snprintf(screen_.detail, sizeof screen_.detail, "%s", result.name);
@@ -672,6 +723,7 @@ class AmoledFactoryApplication : public Application {
         title(result.state == J::State::kRestart     ? Tr("应用已写入", "App written")
               : result.state == J::State::kSuccess   ? Tr("安装完成", "Installed")
               : result.state == J::State::kCancelled ? Tr("下载已中断", "Download interrupted")
+              : result.kind == J::Kind::kLookupCode  ? Tr("下载码查询失败", "Code lookup failed")
               : result.kind == J::Kind::kCatalog     ? Tr("应用列表加载失败", "Unable to load apps")
                                                  : Tr("下载安装失败", "Download/install failed"));
         if (result.state == J::State::kRestart) {
@@ -710,7 +762,7 @@ class AmoledFactoryApplication : public Application {
                 --length;
             memcpy(screen_.info, text.data(), length);
             screen_.info[length] = 0;
-            row(Tr("返回下载列表", "Back to downloads"));
+            row(tile_home_ ? Tr("返回输入下载码", "Enter download code") : Tr("返回下载列表", "Back to downloads"));
             row(Tr("知道了，返回主页", "Done, go home"));
         }
     }
@@ -732,12 +784,15 @@ class AmoledFactoryApplication : public Application {
             return;
         seen_job_revision_ = job.revision;
         if (!job.running && job.result.state != FactoryStoreJob::State::kNone) {
-            if (job.result.kind == FactoryStoreJob::Kind::kCatalog &&
+            if (job.result.kind != FactoryStoreJob::Kind::kInstall &&
                 job.result.state == FactoryStoreJob::State::kSuccess) {
                 store_job_->CopyCatalog(catalog_, &catalog_count_, &catalog_page_);
                 store_job_->Acknowledge();
-                if (page_ == Page::kJobProgress)
-                    page_ = Page::kCatalog;
+                if (page_ == Page::kJobProgress) {
+                    selected_ = 0;
+                    page_ = job.result.kind == FactoryStoreJob::Kind::kLookupCode
+                                ? Page::kCatalogDetail : Page::kCatalog;
+                }
                 retry_requested_ = true;
             } else {
                 if (job.result.state == FactoryStoreJob::State::kSuccess)
@@ -785,8 +840,10 @@ class AmoledFactoryApplication : public Application {
                     else if (page_ == Page::kLocalDetail)
                         tile_home_ ? Apps() : Home();
                     else if (page_ == Page::kCatalogDetail)
-                        page_ = Page::kCatalog;
-                    else if (page_ == Page::kJobResult && catalog_count_)
+                        page_ = tile_home_ ? Page::kDownloadCode : Page::kCatalog;
+                    else if (page_ == Page::kDownloadHelp)
+                        page_ = Page::kDownloadCode;
+                    else if (!tile_home_ && page_ == Page::kJobResult && catalog_count_)
                         page_ = Page::kCatalog;
                     else
                         Home();
@@ -1010,6 +1067,7 @@ class AmoledFactoryApplication : public Application {
     std::unique_ptr<FactoryStoreJob> store_job_;
     uint32_t seen_job_revision_ = 0;
     char pending_launch_[17]{};
+    char download_code_[7]{};
     size_t apps_page_ = 0;
     AmoledHardware hardware_;
     std::unique_ptr<FactoryHardwareServices> hardware_services_;

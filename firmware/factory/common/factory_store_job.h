@@ -15,7 +15,7 @@
 // publishes value snapshots; it never accesses the screen or application list.
 class FactoryStoreJob {
    public:
-    enum class Kind : uint32_t { kCatalog, kInstall };
+    enum class Kind : uint32_t { kCatalog, kInstall, kLookupCode };
     enum class State : uint32_t { kNone, kRunning, kRestart, kSuccess, kFailed, kCancelled };
     // This private receipt is versioned independently of application image ABI.
     // Bump its magic/key when changing InstallStatus layout or stage numbering.
@@ -92,6 +92,26 @@ class FactoryStoreJob {
         Begin();
         return ESP_OK;
     }
+    esp_err_t StartLookupCode(const char* code) {
+        if (!code || strlen(code) != 6)
+            return ESP_ERR_INVALID_ARG;
+        for (unsigned i = 0; i < 6; ++i)
+            if (code[i] < '0' || code[i] > '9')
+                return ESP_ERR_INVALID_ARG;
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (running_)
+            return ESP_ERR_INVALID_STATE;
+        snprintf(code_, sizeof code_, "%s", code);
+        count_ = 0;
+        result_ = {};
+        result_.kind = Kind::kLookupCode;
+        result_.state = State::kRunning;
+        result_.status.stage = agent_system::InstallStage::kWaitCover;
+        snprintf(result_.name, sizeof result_.name, "%s",
+                 amoled_ui::Tr("查询下载码", "Looking up download code"));
+        Begin();
+        return ESP_OK;
+    }
     void CopyCatalog(agent_system::CatalogApp* apps, size_t* count,
                      agent_system::CatalogPage* page) {
         std::lock_guard<std::mutex> guard(mutex_);
@@ -119,7 +139,7 @@ class FactoryStoreJob {
         const auto error = nvs_get_blob(handle, "result_v2", &result_, &size);
         nvs_close(handle);
         if (error != ESP_OK || size != sizeof result_ || result_.magic != 0x414C4A32 ||
-            result_.kind > Kind::kInstall || result_.state > State::kCancelled ||
+            result_.kind > Kind::kLookupCode || result_.state > State::kCancelled ||
             result_.status.stage > agent_system::InstallStage::kDone ||
             !memchr(result_.name, 0, sizeof result_.name) ||
             !memchr(result_.release, 0, sizeof result_.release) ||
@@ -213,8 +233,13 @@ class FactoryStoreJob {
                         result_.status.stage = agent_system::InstallStage::kTicket;
                         ++revision_;
                     }
-                    error = agent_system::FetchCatalogPage(catalog_, agent_system::kMaxApps,
-                                                           &count_, Read().result.page, &page_);
+                    if (kind == Kind::kLookupCode) {
+                        error = agent_system::FetchDownloadCode(code_, &catalog_[0]);
+                        count_ = error == ESP_OK ? 1 : 0;
+                        page_ = {1, static_cast<uint32_t>(count_), false};
+                    } else
+                        error = agent_system::FetchCatalogPage(catalog_, agent_system::kMaxApps,
+                                                               &count_, Read().result.page, &page_);
                 }
             }
             std::lock_guard<std::mutex> guard(mutex_);
@@ -257,4 +282,5 @@ class FactoryStoreJob {
     agent_system::CatalogApp app_{}, catalog_[agent_system::kMaxApps]{};
     size_t count_ = 0;
     agent_system::CatalogPage page_{};
+    char code_[7]{};
 };

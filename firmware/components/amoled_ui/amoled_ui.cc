@@ -709,7 +709,7 @@ bool SameScreen(const Screen& a, const Screen& b) {
         strcmp(a.wifi_setup_ssid, b.wifi_setup_ssid) || a.progress != b.progress ||
         strcmp(a.app_id, b.app_id) || a.row_count != b.row_count || a.row_offset != b.row_offset ||
         a.navigation != b.navigation || a.activity != b.activity || a.view != b.view ||
-        strcmp(a.pair_code, b.pair_code) || strcmp(a.title, b.title) ||
+        strcmp(a.pair_code, b.pair_code) || strcmp(a.download_code, b.download_code) || strcmp(a.title, b.title) ||
         strcmp(a.detail, b.detail) || strcmp(a.footer, b.footer) || strcmp(a.info, b.info) ||
         strcmp(a.hardware_status, b.hardware_status) || strcmp(a.job_status, b.job_status))
         return false;

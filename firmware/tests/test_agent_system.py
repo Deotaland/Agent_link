@@ -11,9 +11,11 @@ parser.add_argument('--packages-report', type=Path,
 mode = parser.add_mutually_exclusive_group()
 mode.add_argument('--partition-journal', action='store_true')
 mode.add_argument('--dynamic', action='store_true', help='exercise the dynamic installer against real packages and built images')
+mode.add_argument('--download-codes', action='store_true', help='check six-digit lookup/download contracts without device images')
 mode.add_argument('--community', action='store_true', help='exercise anonymous production catalog and the actual dynamic installer')
 mode.add_argument('--dynamic-cancel', type=Path, help='fault-inject cancellation using an actual vendor application .bin')
 args = parser.parse_args()
+community_mode = args.community or args.download_codes
 if (args.dynamic or args.community) and not args.packages_report:
     parser.error('--dynamic and --community require --packages-report')
 
@@ -25,7 +27,7 @@ headers = ("esp_err.h", "esp_app_desc.h", "esp_crt_bundle.h", "esp_http_client.h
 for name in headers:
     path = build / "stubs" / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('#include "'+('agent_system_dynamic_stubs.h' if args.dynamic or args.community or args.dynamic_cancel else 'agent_system_stubs.h')+'"\n', encoding="utf-8")
+    path.write_text('#include "'+('agent_system_dynamic_stubs.h' if args.dynamic or community_mode or args.dynamic_cancel else 'agent_system_stubs.h')+'"\n', encoding="utf-8")
 (build / "stubs/esp_idf_version.h").write_text('#define ESP_IDF_VERSION_MAJOR 5\n', encoding="utf-8")
 json_dir = root / "managed_components/espressif__cjson/cJSON"
 environment = os.environ.copy()
@@ -46,7 +48,7 @@ sources = [root / "tests/agent_system_test.cc", root / "components/agent_system/
            root / "components/agent_system/cover_cache.cc",json_dir / "cJSON.c"]
 if args.dynamic_cancel:
     roles = ('dynamic_cancel',)
-elif args.community:
+elif community_mode:
     roles = ('community',)
 elif args.partition_journal:
     roles = ('journal',)
@@ -78,8 +80,8 @@ for role in roles:
             selected_sources.append(root/'components/agent_system/dynamic_slots.cc')
             if role == 'dynamic_cancel': selected_sources[0] = root/'tests/agent_system_dynamic_cancel_test.cc'
         if role == 'community':
-            definitions += ['AGENT_SYSTEM_COMMUNITY=1', 'AGENT_COMMUNITY_ORIGIN="http://3.144.1.190:9004"', 'AGENT_COMMUNITY_PRODUCT=1', 'AGENT_COMMUNITY_REVISION=1']
-            selected_sources[0] = root/'tests/agent_system_community_test.cc'
+            definitions += ['AGENT_SYSTEM_COMMUNITY=1', 'AGENT_COMMUNITY_ORIGIN="https://sugapi.deotaland.cn"', 'AGENT_COMMUNITY_PRODUCT=1', 'AGENT_COMMUNITY_REVISION=1']
+            selected_sources[0] = root/('tests/community_download_code_test.cc' if args.download_codes else 'tests/agent_system_community_test.cc')
             selected_sources.append(root/'components/agent_system/community_store.cc')
     if role in ('journal','dynamic','community','dynamic_cancel'):
         import sys
@@ -102,6 +104,6 @@ for role in roles:
         if role in ('packages','journal','dynamic','community','dynamic_cancel'): command.append('-lcrypto')
     subprocess.run(command, env=environment, cwd=build, check=True)
     subprocess.run([str(binary), *([str(args.packages_report.resolve())] if args.packages_report else []),
-                    *([str(root/'build/images/sdgoods-wifi')] if args.dynamic or args.community or args.dynamic_cancel else []),
+                    *([str(root/'build/images/sdgoods-wifi')] if args.dynamic or community_mode or args.dynamic_cancel else []),
                     *([str(args.dynamic_cancel.resolve())] if args.dynamic_cancel else [])],
                    cwd=build,check=True)

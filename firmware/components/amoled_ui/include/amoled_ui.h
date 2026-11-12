@@ -7,7 +7,7 @@ class AmoledFonts;
 
 namespace amoled_ui {
 enum class TouchAction { kMenu, kHome, kRow, kBack, kLoadBefore, kLoadAfter, kVolume, kSystem, kPreviousCard, kNextCard };
-enum class View { kHome, kLauncher, kList, kInfo, kFriend, kCarousel, kAppActions, kFactoryHome, kAppGrid };
+enum class View { kHome, kLauncher, kList, kInfo, kFriend, kCarousel, kAppActions, kFactoryHome, kAppGrid, kDownloadCode, kDownloadDetail };
 struct GridItem {
     int cover_slot = -1;
     uint32_t cover_revision = 0;
@@ -36,6 +36,7 @@ struct Screen {
     Activity activity = Activity::kIdle;
     uint32_t view = 0;
     char pair_code[7] = {};
+    char download_code[7] = {};
     char hardware_status[64] = {};
     char job_status[96] = {};
     char title[96] = {}, detail[192] = {}, rows[kListRows][112] = {}, footer[128] = {}, info[384] = {};
