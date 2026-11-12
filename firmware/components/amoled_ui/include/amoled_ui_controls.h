@@ -40,8 +40,8 @@ public:
             consumed_ = true; return Swipe::kSystem;
         }
 #endif
-        if (!consumed_ && y_ >= 400 && y_ <= 438 && x_ >= 150 && x_ <= 316 &&
-            y_ - y >= 55 && y_ - y > std::abs(dx) * 2) {
+        if (!consumed_ && y_ >= 400 && y_ <= 465 && x_ >= 150 && x_ <= 316 && y_ - y >= 55 &&
+            y_ - y > std::abs(dx) * 2) {
             consumed_ = true; return Swipe::kHome;
         }
         // A vertical contact in the content area belongs to native scrolling.

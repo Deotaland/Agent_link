@@ -50,7 +50,11 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
         page_ = Page::kRoot;
         return true;
     }
-    if (input.action == TouchAction::kBack || input.action == TouchAction::kHome) {
+    if (input.action == TouchAction::kHome) {
+        Close();
+        return true;
+    }
+    if (input.action == TouchAction::kBack) {
         if (page_ == Page::kExtra && extra_.handle && extra_.handle(input, extra_.context))
             return true;
         if (extra_.close)
@@ -168,11 +172,27 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
             row(Tr("硬件与电源", "Hardware and power"));
     } else if (page_ == Page::kNetwork) {
         snprintf(s.title, sizeof s.title, "%s", Tr("网络与配网", "Network"));
-        snprintf(s.info, sizeof s.info,
-                 Tr("网络：%s\n地址：%s\n信号：%d dBm\n配网热点：%s\n配网页：192.168.4.1",
-                    "SSID: %s\nIP: %s\nSignal: %d dBm\nSetup AP: %s\nSetup: 192.168.4.1"),
-                 wifi.connected ? wifi.ssid : Tr("未连接", "Disconnected"), wifi.ip, wifi.rssi,
-                 wifi.setup_ssid);
+        if (!wifi.connected && wifi.setup_active) {
+            snprintf(s.info, sizeof s.info,
+                     Tr("请先完成 WiFi 配网\n\n1. 手机连接设备热点：\n%s\n\n"
+                        "2. 浏览器打开：\nhttp://192.168.4.1\n\n"
+                        "3. 选择 WiFi 并输入密码\n联网后即可下载应用，已安装应用可离线使用。",
+                        "Set up WiFi first\n\n1. Connect your phone to:\n%s\n\n"
+                        "2. Open in your browser:\nhttp://192.168.4.1\n\n"
+                        "3. Select WiFi and enter its password.\nInstalled apps remain available offline."),
+                     wifi.setup_ssid[0] ? wifi.setup_ssid : Tr("热点启动中，请稍候", "Starting hotspot..."));
+        } else if (!wifi.connected) {
+            snprintf(s.info, sizeof s.info, "%s",
+                     Tr("WiFi 尚未连接，请稍候或检查网络。\n\n"
+                        "如需更换网络，请点击下方开始配网。\n已安装应用仍可离线使用。",
+                        "WiFi is not connected. Please wait or check your network.\n\n"
+                        "To change networks, start WiFi setup below. Installed apps remain available offline."));
+        } else {
+            snprintf(s.info, sizeof s.info,
+                     Tr("WiFi 已连接\n网络：%s\n地址：%s\n信号：%d dBm\n可以返回主页下载应用。",
+                        "WiFi connected\nSSID: %s\nIP: %s\nSignal: %d dBm\nReturn home to download apps."),
+                     wifi.ssid, wifi.ip, wifi.rssi);
+        }
         row(Tr("开始或重新配网（保留绑定）", "Set up WiFi (keep binding)"));
     } else if (page_ == Page::kApp) {
         snprintf(s.title, sizeof s.title, "%s", Tr("当前应用", "Current application"));

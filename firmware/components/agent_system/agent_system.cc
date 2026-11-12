@@ -1,6 +1,7 @@
 #include "agent_system.h"
 #include "cover_cache.h"
 #include "image_identity.h"
+#include "install_trace.h"
 #if defined(AGENT_SYSTEM_COMMUNITY)
 #include "community_store.h"
 #endif
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -27,6 +29,8 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "sha256.h"
@@ -493,6 +497,9 @@ esp_err_t GetCoverStatus(const char* label, CoverStatus* status) {
     return cover_cache::Status(label, status);
 }
 esp_err_t Launch(const char* label) {
+    std::unique_lock<std::mutex> lock(operation_mutex, std::try_to_lock);
+    if (!lock.owns_lock())
+        return ESP_ERR_INVALID_STATE;
     if (!IsLauncher())
         return ESP_ERR_INVALID_STATE;
     const auto* p = Slot(label);
@@ -884,10 +891,13 @@ esp_err_t SyncStoreCovers() {
     auto error = FetchCatalog(catalog.get(), kMaxApps, &count);
     return error == ESP_OK ? SyncCovers(catalog.get(), count) : error;
 }
-esp_err_t Install(const CatalogApp& requested, Progress progress, void* context) {
+static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, void* context,
+                             InstallTrace& trace) {
     std::unique_lock<std::mutex> lock(operation_mutex, std::try_to_lock);
     if (!lock.owns_lock() || !IsLauncher())
         return ESP_ERR_INVALID_STATE;
+    if (trace.Cancelled())
+        return kCancelled;
     CatalogApp app = requested;
 #if defined(AGENT_SYSTEM_COMMUNITY)
     if (app.community_play && app.package != CatalogApp::Package::kApplication)
@@ -926,13 +936,19 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
         return kSlotsFull;
 #if defined(AGENT_SYSTEM_COMMUNITY)
     if (app.community_play) {
+        if (!trace.Step(InstallStage::kTicket))
+            return kCancelled;
         const auto prepared = community::PrepareDownload(&app);
         if (prepared != ESP_OK)
             return prepared;
     }
 #endif
+    if (!trace.Step(InstallStage::kConnect))
+        return kCancelled;
     Client client;
     esp_err_t err = client.Open(app.url);
+    if (client.handle)
+        trace.state.http_status = esp_http_client_get_status_code(client.handle);
     if (err != ESP_OK)
         return err;
     if (esp_http_client_get_content_length(client.handle) != app.size)
@@ -942,6 +958,8 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
         return ESP_FAIL;
     uint8_t buffer[4096];
     uint32_t total = 0;
+    if (!trace.Step(InstallStage::kHeader))
+        return kCancelled;
     while (total < 512) {
         const int bytes = esp_http_client_read(
             client.handle, reinterpret_cast<char*>(buffer + total), 512 - total);
@@ -987,34 +1005,64 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
     std::unique_ptr<dynamic_slots::Plan> plan(new (std::nothrow) dynamic_slots::Plan);
     if (!plan)
         return ESP_ERR_NO_MEM;
+    if (!trace.Step(InstallStage::kAllocate))
+        return kCancelled;
     err = dynamic_slots::Allocate(app.size, free_mask, limit, plan.get());
     if (err != ESP_OK)
         return err;
     const auto* target = &plan->partition;
+    trace.Target(target->label, app.app_id);
     uint8_t writing = 2;
     err = Marker(target->label, &writing, true);
     if (err != ESP_OK)
         return err;
-    err = esp_partition_erase_range(target, 0, target->size);
-    if (err != ESP_OK)
-        return err;
+    if (!trace.Step(InstallStage::kErase))
+        return kCancelled;
+    // Bound each cache-disabled erase operation. Explicit scheduling gaps let
+    // the other core finish UI work and run its idle watchdog task, and make
+    // cancellation responsive without publishing a partially erased image.
+    for (size_t offset = 0; offset < target->size; offset += 0x10000) {
+        if (trace.Cancelled())
+            return kCancelled;
+        const size_t bytes = std::min<size_t>(0x10000, target->size - offset);
+        err = esp_partition_erase_range(target, offset, bytes);
+        if (err != ESP_OK)
+            return err;
+        vTaskDelay(pdMS_TO_TICKS(5) + 1);
+    }
+    if (!trace.Step(InstallStage::kDownload))
+        return kCancelled;
     if (!hash.Update(buffer, total))
         return ESP_FAIL;
+    int64_t write_at = esp_timer_get_time();
     err = esp_partition_write(target, 0, buffer, total);
+    trace.Received(total, 0, esp_timer_get_time() - write_at);
     while (err == ESP_OK && total < app.size) {
+        if (trace.Cancelled())
+            return kCancelled;
+        const int64_t read_at = esp_timer_get_time();
         const int bytes = esp_http_client_read(client.handle, reinterpret_cast<char*>(buffer),
                                                std::min<uint32_t>(sizeof buffer, app.size - total));
-        if (bytes <= 0)
-            return ESP_ERR_INVALID_RESPONSE;
+        if (bytes <= 0) {
+            trace.state.network_errno = esp_http_client_get_errno(client.handle);
+            trace.Received(total, esp_timer_get_time() - read_at, 0);
+            return trace.state.network_errno == ETIMEDOUT ? ESP_ERR_TIMEOUT
+                                                          : ESP_ERR_INVALID_RESPONSE;
+        }
+        const int64_t read_us = esp_timer_get_time() - read_at;
         if (!hash.Update(buffer, bytes))
             return ESP_FAIL;
+        write_at = esp_timer_get_time();
         err = esp_partition_write(target, total, buffer, bytes);
         total += bytes;
+        trace.Received(total, read_us, esp_timer_get_time() - write_at);
         if (progress)
             progress(total, app.size, context);
     }
     if (err != ESP_OK)
         return err;
+    if (!trace.Step(InstallStage::kVerify))
+        return kCancelled;
     uint8_t actual[32];
     if (!hash.Finish(actual) || memcmp(actual, expected, 32) ||
         !esp_http_client_is_complete_data_received(client.handle))
@@ -1028,11 +1076,16 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
         return ESP_ERR_INVALID_SIZE;
     if (!ReadIdentity(target, &identity, &format) || strcmp(identity.app_id, app.app_id))
         return ESP_ERR_INVALID_VERSION;
+    if (!trace.Step(InstallStage::kSave))
+        return kCancelled;
 #if defined(AGENT_SYSTEM_COMMUNITY)
     err = community::SaveBinding(target->label, app);
     if (err != ESP_OK)
         return err;
 #endif
+    // Publish the ready marker and layout together; cancellation stops before this boundary.
+    if (!trace.Step(InstallStage::kPublish))
+        return kCancelled;
     uint8_t ready = 1;
     err = Marker(target->label, &ready, true);
     if (err != ESP_OK)
@@ -1062,8 +1115,12 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
     }
     if (!target)
         return kSlotsFull;  // Never overwrite an installed app implicitly.
+    if (!trace.Step(InstallStage::kConnect))
+        return kCancelled;
     Client client;
     esp_err_t err = client.Open(app.url);
+    if (client.handle)
+        trace.state.http_status = esp_http_client_get_status_code(client.handle);
     if (err != ESP_OK)
         return err;
     if (esp_http_client_get_content_length(client.handle) != app.size)
@@ -1072,6 +1129,9 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
     err = Marker(target->label, &writing, true);
     if (err != ESP_OK)
         return err;
+    trace.Target(target->label, app.app_id);
+    if (!trace.Step(InstallStage::kErase))
+        return kCancelled;
     esp_ota_handle_t ota = 0;
     err = esp_ota_begin(target, app.size, &ota);
     if (err != ESP_OK)
@@ -1083,22 +1143,39 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
     }
     uint32_t total = 0;
     uint8_t buffer[4096];
+    if (!trace.Step(InstallStage::kDownload)) {
+        esp_ota_abort(ota);
+        return kCancelled;
+    }
     while (err == ESP_OK && total < app.size) {
+        if (trace.Cancelled()) {
+            err = kCancelled;
+            break;
+        }
+        const int64_t read_at = esp_timer_get_time();
         const int bytes = esp_http_client_read(client.handle, reinterpret_cast<char*>(buffer),
                                                std::min<uint32_t>(sizeof buffer, app.size - total));
         if (bytes <= 0) {
-            err = ESP_FAIL;
+            trace.state.network_errno = esp_http_client_get_errno(client.handle);
+            trace.Received(total, esp_timer_get_time() - read_at, 0);
+            err =
+                trace.state.network_errno == ETIMEDOUT ? ESP_ERR_TIMEOUT : ESP_ERR_INVALID_RESPONSE;
             break;
         }
+        const int64_t read_us = esp_timer_get_time() - read_at;
         if (!hash.Update(buffer, bytes)) {
             err = ESP_FAIL;
             break;
         }
+        const int64_t write_at = esp_timer_get_time();
         err = esp_ota_write(ota, buffer, bytes);
         total += bytes;
+        trace.Received(total, read_us, esp_timer_get_time() - write_at);
         if (progress)
             progress(total, app.size, context);
     }
+    if (err == ESP_OK && !trace.Step(InstallStage::kVerify))
+        err = kCancelled;
     unsigned char actual[32]{};
     if (!hash.Finish(actual))
         err = ESP_FAIL;
@@ -1118,6 +1195,10 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
         esp_ota_abort(ota);
         return err;
     }
+    if (!trace.Step(InstallStage::kPublish)) {
+        esp_ota_abort(ota);
+        return kCancelled;
+    }
     err = esp_ota_end(ota);
     if (err != ESP_OK)
         return err;
@@ -1130,6 +1211,17 @@ esp_err_t Install(const CatalogApp& requested, Progress progress, void* context)
     return err;
 #endif
 }
+
+esp_err_t Install(const CatalogApp& app, Progress progress, void* context, InstallStatus* result,
+                  InstallObserver observer, InstallCancel cancel) {
+    InstallTrace trace(app.size, observer, cancel, context);
+    const esp_err_t error = InstallImpl(app, progress, context, trace);
+    trace.Finish(error);
+    if (result)
+        *result = trace.state;
+    return error;
+}
+
 esp_err_t StartSettingsServer() {
     if (settings_server)
         return ESP_OK;

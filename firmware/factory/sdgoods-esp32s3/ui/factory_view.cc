@@ -1,19 +1,29 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright (c) 2026 Deotaland
+ * Layout and palette inspired by suoyousheng-bot/sugarat-sdgoods, launcher c07957f.
+ */
 #include "factory_view.h"
 #include "amoled_fonts.h"
 #include "amoled_cover_cache.h"
 #include "agent_cover.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
 namespace amoled_factory {
 namespace {
-// Native 360px layout; text and controls stay inside the round safe area.
-lv_obj_t *root, *card, *picture, *glyph, *name, *subtitle, *eyebrow, *hardware_status;
-lv_obj_t *launch, *remove, *back, *launch_text, *remove_text, *dots[4];
-std::shared_ptr<const agent_system::CoverPixels> image;
-AmoledCoverCache covers;
-size_t last_index = size_t(-1);
-bool was_actions = false;
+constexpr uint32_t kBg = 0x1D1D1B, kCard = 0x2B2925, kText = 0xF3F0E8;
+constexpr uint32_t kMuted = 0xAAA49B, kAccent = 0xC54B2C, kBrand = 0xF29A72;
+constexpr amoled_ui::CardRenderer::Palette kPalette{kBg, kCard, kText, kMuted, kBrand, 0x514B43};
+lv_obj_t *root, *home, *apps, *details, *busy;
+lv_obj_t *installed_label, *count_label, *free_label, *usage_ring, *usage_label, *status;
+lv_obj_t *hero, *wifi_title, *wifi_step, *wifi_ap, *wifi_url, *wifi_arrow;
+lv_obj_t *home_tiles[3], *home_names[3], *grid_tiles[4], *grid_names[4];
+lv_obj_t *grid_title, *empty, *empty_text, *empty_button, *empty_button_text;
+lv_obj_t *previous, *next, *page_label, *detail_name, *detail_version;
+lv_obj_t *launch, *remove, *launch_text, *remove_text, *detail_back;
+lv_obj_t *progress_ring, *progress_label, *busy_title, *busy_detail;
+
 void Show(lv_obj_t* obj, bool on) {
     if (on) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -27,87 +37,203 @@ lv_obj_t* Box(lv_obj_t* parent, int x, int y, int w, int h, int radius, uint32_t
     lv_obj_set_style_radius(obj, radius, 0);
     lv_obj_set_style_bg_color(obj, lv_color_hex(color), 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
-    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE); lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
-    return obj;
-}
-lv_obj_t* Label(lv_obj_t* parent, const lv_font_t* font, int x, int y, int w, int h, uint32_t color) {
-    auto* obj = lv_label_create(parent); lv_obj_set_pos(obj, x, y); lv_obj_set_size(obj, w, h);
-    lv_obj_set_style_text_font(obj, font, 0); lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
-    lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     return obj;
 }
+lv_obj_t* Label(lv_obj_t* parent, const lv_font_t* font, int x, int y, int w, int h,
+                uint32_t color, bool center = true) {
+    auto* obj = lv_label_create(parent); lv_obj_set_pos(obj, x, y); lv_obj_set_size(obj, w, h);
+    lv_obj_set_style_text_font(obj, font, 0); lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
+    lv_obj_set_style_text_align(obj, center ? LV_TEXT_ALIGN_CENTER : LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT); lv_label_set_text(obj, "");
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    return obj;
+}
+lv_obj_t* Ring(lv_obj_t* parent, int x, int y, int edge, int width, uint32_t track) {
+    auto* obj = lv_arc_create(parent); lv_obj_remove_style_all(obj);
+    lv_obj_set_pos(obj, x, y); lv_obj_set_size(obj, edge, edge);
+    lv_arc_set_rotation(obj, 270); lv_arc_set_bg_angles(obj, 0, 360); lv_arc_set_range(obj, 0, 100);
+    for (const auto part : {LV_PART_MAIN, LV_PART_INDICATOR}) {
+        lv_obj_set_style_arc_width(obj, width, part);
+        lv_obj_set_style_arc_rounded(obj, true, part);
+        lv_obj_set_style_arc_color(obj, lv_color_hex(part == LV_PART_MAIN ? track : kBrand), part);
+    }
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE); return obj;
+}
+lv_obj_t* Back(lv_obj_t* parent, void (*bind)(lv_obj_t*, int)) {
+    auto* button = Box(parent, 70, 40, 36, 36, 18, kCard); bind(button, -1);
+    Text(Label(button, &lv_font_montserrat_20, 0, 8, 36, 24, kText), LV_SYMBOL_LEFT);
+    return button;
+}
+
+// Each visible image owns one cache entry: replacing a grid page cannot evict
+// a descriptor that another LVGL image is still displaying.
+struct CoverView {
+    lv_obj_t *box = nullptr, *picture = nullptr, *glyph = nullptr;
+    AmoledCoverCache cache{1};
+    void Create(lv_obj_t* parent, int x, int y, int edge) {
+        box = Box(parent, x, y, edge, edge, 18, 0x443027);
+        picture = lv_image_create(box); lv_obj_remove_flag(picture, LV_OBJ_FLAG_CLICKABLE);
+        glyph = Label(box, &lv_font_montserrat_24, 0, 0, edge, 30, kBrand);
+        Text(glyph, LV_SYMBOL_FILE); lv_obj_center(glyph);
+    }
+    void Update(int slot, uint32_t revision, int edge, const char* title) {
+        auto source = agent_system::AcquireCover({slot, revision});
+        // Detach before the bounded cache may replace the old source's pixels.
+        lv_image_set_src(picture, nullptr);
+        const auto* pixels = source ? cache.Get(source, edge) : nullptr;
+        if (pixels) { lv_image_set_src(picture, pixels); lv_obj_center(picture); }
+        Show(picture, pixels); Show(glyph, !pixels);
+        uint32_t hash = 5381;
+        for (const auto* p = reinterpret_cast<const unsigned char*>(title); *p; ++p) hash = hash * 33 + *p;
+        constexpr uint32_t colors[]{0x443027, 0x2E3A6E, 0x493C58, 0x314934};
+        lv_obj_set_style_bg_color(box, lv_color_hex(colors[hash % 4]), 0);
+    }
+} grid_covers[4], detail_cover;
+
 void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) {
-    root = Box(parent, 0, 0, 360, 360, 0, 0x080D16);
-    Box(root, 163, 24, 34, 3, 2, 0x526173);
-    eyebrow = Label(root, fonts.Small(), 90, 38, 180, 20, 0x68D9D1);
-    hardware_status = Label(root, fonts.Small(), 90, 60, 180, 19, 0x8B9DB1);
-    card = Box(root, 81, 70, 198, 198, LV_RADIUS_CIRCLE, 0x172738);
-    lv_obj_set_style_border_width(card, 2, 0); lv_obj_set_style_border_color(card, lv_color_hex(0x3E6B7A), 0);
-    bind(card, 0);
-    picture = lv_image_create(card); lv_obj_remove_flag(picture, LV_OBJ_FLAG_CLICKABLE);
-    glyph = Label(card, &lv_font_montserrat_48, 0, 0, 100, 60, 0x9DECE5); lv_obj_center(glyph);
-    name = Label(root, fonts.Title(), 65, 280, 230, 26, 0xF0F6FC);
-    subtitle = Label(root, fonts.Small(), 75, 306, 210, 20, 0x8B9DB1);
-    back = Box(root, 66, 77, 36, 36, 18, 0x1A293C); bind(back, -1);
-    auto* arrow = Label(back, &lv_font_montserrat_20, 0, 6, 36, 26, 0xB9C8D8); Text(arrow, LV_SYMBOL_LEFT);
-    launch = Box(root, 64, 269, 112, 44, 22, 0x8DE5DB); bind(launch, 0);
-    remove = Box(root, 184, 269, 112, 44, 22, 0x321E2C); bind(remove, 1);
-    launch_text = Label(launch, fonts.Body(), 0, 11, 112, 24, 0x112D32);
-    remove_text = Label(remove, fonts.Body(), 0, 11, 112, 24, 0xFFA3B4);
-    for (auto& dot : dots) dot = Box(root, 0, 334, 5, 5, 3, 0x35465A);
+    root = Box(parent, 0, 0, 360, 360, 0, kBg);
+    home = Box(root, 0, 0, 360, 360, 0, kBg);
+    Text(Label(home, &lv_font_montserrat_16, 62, 30, 236, 24, kText), "Agent_link Launcher");
+    hero = Box(home, 50, 64, 260, 96, 24, 0x443027); bind(hero, 3);
+    installed_label = Label(hero, fonts.Small(), 18, 10, 145, 20, kBrand, false);
+    count_label = Label(hero, &lv_font_montserrat_36, 18, 31, 145, 42, kText, false);
+    free_label = Label(hero, fonts.Small(), 18, 73, 145, 20, kMuted, false);
+    usage_ring = Ring(hero, 172, 10, 76, 7, 0x5A3E31);
+    usage_label = Label(hero, &lv_font_montserrat_16, 178, 37, 64, 24, kText);
+    wifi_title = Label(hero, fonts.Body(), 18, 6, 208, 24, kBrand, false);
+    wifi_step = Label(hero, fonts.Small(), 18, 33, 224, 19, kText, false);
+    wifi_ap = Label(hero, fonts.Small(), 18, 53, 224, 19, kText, false);
+    wifi_url = Label(hero, fonts.Small(), 18, 73, 224, 19, kMuted, false);
+    wifi_arrow = Label(hero, &lv_font_montserrat_14, 228, 12, 20, 20, kBrand);
+    Text(wifi_arrow, LV_SYMBOL_RIGHT);
+    const uint32_t colors[]{kAccent, 0x7F6CF0, 0x514B43};
+    const char* symbols[]{LV_SYMBOL_LIST, LV_SYMBOL_DOWNLOAD, LV_SYMBOL_SETTINGS};
+    for (int i = 0; i < 3; ++i) {
+        home_tiles[i] = Box(home, 49 + 90 * i, 172, 82, 104, 22, kCard);
+        bind(home_tiles[i], i);
+        auto* badge = Box(home_tiles[i], 17, 12, 48, 48, 16, colors[i]);
+        Text(Label(badge, &lv_font_montserrat_24, 0, 11, 48, 30, 0xFFFDF8), symbols[i]);
+        home_names[i] = Label(home_tiles[i], fonts.Small(), 2, 73, 78, 24, kText);
+    }
+    status = Label(home, fonts.Small(), 67, 297, 226, 24, kMuted);
+
+    apps = Box(root, 0, 0, 360, 360, 0, kBg); Back(apps, bind);
+    grid_title = Label(apps, fonts.Title(), 108, 42, 177, 28, kText);
+    for (int i = 0; i < 4; ++i) {
+        grid_tiles[i] = Box(apps, 62 + (i % 2) * 122, 82 + (i / 2) * 112, 114, 104, 20, kCard);
+        bind(grid_tiles[i], i); grid_covers[i].Create(grid_tiles[i], 25, 7, 64);
+        grid_names[i] = Label(grid_tiles[i], fonts.Small(), 4, 77, 106, 22, kText);
+    }
+    previous = Box(apps, 108, 310, 36, 32, 16, kCard); bind(previous, 4);
+    next = Box(apps, 216, 310, 36, 32, 16, kCard); bind(next, 5);
+    Text(Label(previous, &lv_font_montserrat_16, 0, 7, 36, 22, kText), LV_SYMBOL_LEFT);
+    Text(Label(next, &lv_font_montserrat_16, 0, 7, 36, 22, kText), LV_SYMBOL_RIGHT);
+    page_label = Label(apps, &lv_font_montserrat_14, 145, 316, 70, 22, kMuted);
+    empty = Box(apps, 60, 106, 240, 184, 24, kCard);
+    Text(Label(empty, &lv_font_montserrat_36, 0, 16, 240, 46, kBrand), LV_SYMBOL_LIST);
+    empty_text = Label(empty, fonts.Body(), 12, 76, 216, 30, kText);
+    empty_button = Box(empty, 44, 123, 152, 44, 22, kAccent); bind(empty_button, 0);
+    empty_button_text = Label(empty_button, fonts.Body(), 0, 10, 152, 26, kText);
+
+    details = Box(root, 0, 0, 360, 360, 0, kBg); detail_back = Back(details, bind);
+    Text(Label(details, fonts.Small(), 109, 45, 177, 24, kMuted), "Agent_link Launcher");
+    detail_cover.Create(details, 128, 84, 104);
+    detail_name = Label(details, fonts.Title(), 60, 201, 240, 40, kText);
+    lv_label_set_long_mode(detail_name, LV_LABEL_LONG_WRAP);
+    detail_version = Label(details, fonts.Small(), 80, 245, 200, 20, kMuted);
+    launch = Box(details, 64, 270, 112, 44, 22, kAccent); bind(launch, 0);
+    remove = Box(details, 184, 270, 112, 44, 22, kCard); bind(remove, 1);
+    launch_text = Label(launch, fonts.Body(), 0, 10, 112, 26, kText);
+    remove_text = Label(remove, fonts.Body(), 0, 10, 112, 26, kMuted);
+
+    busy = Box(root, 0, 0, 360, 360, 0, kBg);
+    progress_ring = Ring(busy, 46, 46, 268, 8, 0x38352F);
+    progress_label = Label(busy, &lv_font_montserrat_36, 80, 130, 200, 48, kText);
+    busy_title = Label(busy, fonts.Title(), 70, 188, 220, 56, kText);
+    lv_label_set_long_mode(busy_title, LV_LABEL_LONG_WRAP);
+    busy_detail = Label(busy, fonts.Small(), 78, 244, 204, 44, kMuted);
+    lv_label_set_long_mode(busy_detail, LV_LABEL_LONG_WRAP);
     Show(root, false);
 }
+bool Accepts(const amoled_ui::Screen& screen) {
+    return screen.kind == amoled_ui::View::kFactoryHome || screen.kind == amoled_ui::View::kAppGrid ||
+           (screen.kind == amoled_ui::View::kInfo && screen.busy);
+}
 void Update(const amoled_ui::Screen& screen) {
-    Show(root, true);
-    const bool actions = screen.kind == amoled_ui::View::kAppActions;
-    const int edge = actions ? 140 : 184;
-    lv_obj_set_pos(card, (360 - edge) / 2, 86);
-    lv_obj_set_size(card, edge, edge);
-    if (actions) lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE); else lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
-    Text(eyebrow, "Agent_link Launcher");
-    Text(hardware_status, screen.hardware_status);
-    Text(name, screen.title); lv_obj_set_y(name, actions ? 231 : 280);
-    Text(subtitle, actions ? screen.detail : amoled_ui::Tr("左右滑动 · 轻触打开", "Swipe to browse · Tap to open"));
-    lv_obj_set_y(subtitle, actions ? 319 : 306);
-    Text(launch_text, amoled_ui::Tr("启动", "Launch")); Text(remove_text, amoled_ui::Tr("卸载", "Remove"));
-    Show(launch, actions); Show(remove, actions); Show(back, actions);
-    auto next = screen.add_card ? nullptr : agent_system::AcquireCover({screen.cover_slot, screen.cover_revision});
-    Show(picture, bool(next)); Show(glyph, !next);
-    if (next) {
-        image = next;
-        const auto* cached = covers.Get(image, edge);
-        if (cached) {
-            if (lv_image_get_src(picture) != cached) lv_image_set_src(picture, cached);
-            lv_obj_center(picture);
+    using amoled_ui::Tr;
+    const bool is_home = screen.kind == amoled_ui::View::kFactoryHome;
+    const bool is_grid = screen.kind == amoled_ui::View::kAppGrid;
+    const bool is_busy = screen.kind == amoled_ui::View::kInfo && screen.busy;
+    Show(root, true); Show(home, is_home); Show(apps, is_grid);
+    Show(busy, is_busy); Show(details, !is_home && !is_grid && !is_busy);
+    char text[96];
+    if (is_home) {
+        const bool guide = !screen.wifi_connected;
+        for (auto* obj : {installed_label, count_label, free_label, usage_ring, usage_label}) Show(obj, !guide);
+        for (auto* obj : {wifi_title, wifi_step, wifi_ap, wifi_url, wifi_arrow}) Show(obj, guide);
+        if (guide) lv_obj_add_flag(hero, LV_OBJ_FLAG_CLICKABLE);
+        else lv_obj_remove_flag(hero, LV_OBJ_FLAG_CLICKABLE);
+        Text(wifi_title, screen.wifi_setup_active ? Tr("请先完成配网", "Set up WiFi first")
+                                                 : Tr("请先连接 WiFi", "Connect WiFi first"));
+        Text(wifi_step, screen.wifi_setup_active ? Tr("1 手机连接设备热点", "1 Join the device hotspot")
+                                                : Tr("下载应用需要联网", "Downloads need WiFi"));
+        Text(wifi_ap, screen.wifi_setup_active
+            ? (screen.wifi_setup_ssid[0] ? screen.wifi_setup_ssid : Tr("热点启动中…", "Starting hotspot..."))
+            : Tr("点击进入设置 → 网络与配网", "Tap for network settings"));
+        Text(wifi_url, screen.wifi_setup_active ? Tr("2 打开 192.168.4.1", "2 Open 192.168.4.1")
+                                               : Tr("已安装应用仍可使用", "Installed apps stay available"));
+        Text(installed_label, Tr("已安装应用", "Installed apps"));
+        snprintf(text, sizeof text, "%u", unsigned(screen.card_count)); Text(count_label, text);
+        const auto used = std::min(screen.storage_used, screen.storage_total);
+        snprintf(text, sizeof text, Tr("可用 %.1f MB", "Free %.1f MB"), (screen.storage_total - used) / 1048576.0);
+        Text(free_label, text);
+        const int percent = screen.storage_total ? uint64_t(used) * 100 / screen.storage_total : 0;
+        lv_arc_set_value(usage_ring, percent);
+        snprintf(text, sizeof text, "%d%%", percent); Text(usage_label, text);
+        Text(home_names[0], Tr("我的应用", "My apps"));
+        Text(home_names[1], Tr("下载应用", "Download")); Text(home_names[2], Tr("设置", "Settings"));
+        char battery[12];
+        if (screen.battery_percent >= 0) snprintf(battery, sizeof battery, "%d%%", screen.battery_percent);
+        else snprintf(battery, sizeof battery, "--%%");
+        snprintf(text, sizeof text, "%s  ·  %s", battery, screen.wifi_connected ? "WiFi"
+                 : screen.wifi_setup_active ? Tr("等待配网", "WiFi setup") : Tr("未连接 WiFi", "No WiFi"));
+        Text(status, screen.job_status[0] ? screen.job_status : text);
+    } else if (is_grid) {
+        Text(grid_title, screen.title);
+        for (int i = 0; i < 4; ++i) {
+            Show(grid_tiles[i], i < screen.row_count);
+            if (i >= screen.row_count) continue;
+            Text(grid_names[i], screen.rows[i]);
+            grid_covers[i].Update(screen.grid[i].cover_slot, screen.grid[i].cover_revision, 64, screen.rows[i]);
         }
-        else { lv_image_set_src(picture, nullptr); Show(picture, false); Show(glyph, true); }
-    } else if (!next && image) { lv_image_set_src(picture, nullptr); image.reset(); }
-    Text(glyph, screen.add_card ? LV_SYMBOL_PLUS : LV_SYMBOL_FILE); lv_obj_center(glyph);
-    const int count = std::min<size_t>(4, screen.card_count);
-    const size_t first =
-        screen.card_count <= 4
-            ? 0
-            : std::min(screen.card_index > 1 ? screen.card_index - 1 : 0, screen.card_count - 4);
-    int x = (360 - (count * 5 + (count-1)*8 + 11))/2;
-    for (int i=0; i<4; ++i) {
-        const bool selected = first + size_t(i) == screen.card_index;
-        Show(dots[i], !actions && i<count); lv_obj_set_pos(dots[i], x, 334);
-        lv_obj_set_width(dots[i], selected ? 16 : 5);
-        lv_obj_set_style_bg_color(dots[i], lv_color_hex(selected ? 0x8DE5DB : 0x35465A), 0);
-        x += (selected ? 16 : 5) + 8;
+        Show(empty, screen.row_count == 0);
+        Text(empty_text, Tr("还没有应用", "No apps installed"));
+        Text(empty_button_text, Tr("去下载", "Find apps"));
+        Show(previous, screen.card_index > 0); Show(next, screen.card_index + 1 < screen.card_count);
+        Show(page_label, screen.row_count > 0);
+        snprintf(text, sizeof text, "%u / %u", unsigned(screen.card_index + 1), unsigned(screen.card_count));
+        Text(page_label, text);
+    } else if (is_busy) {
+        lv_arc_set_value(progress_ring, screen.progress < 0 ? 0 : std::min(100, screen.progress));
+        if (screen.progress >= 0) snprintf(text, sizeof text, "%d%%", std::min(100, screen.progress));
+        else snprintf(text, sizeof text, "...");
+        Text(progress_label, text); Text(busy_title, screen.title);
+        Text(busy_detail, screen.progress >= 0 ? screen.info : screen.detail);
+    } else {
+        Text(detail_name, screen.title); Text(detail_version, screen.detail);
+        detail_cover.Update(screen.add_card ? -1 : screen.cover_slot, screen.cover_revision, 104, screen.title);
+        const bool actions = screen.kind == amoled_ui::View::kAppActions;
+        Show(remove, actions); Show(detail_back, actions);
+        Text(launch_text, actions ? Tr("启动", "Open") : Tr("下载应用", "Download"));
+        Text(remove_text, Tr("卸载", "Remove"));
     }
-    if (!actions && !was_actions && last_index != size_t(-1) && last_index != screen.card_index) {
-        lv_anim_delete(card, nullptr); lv_anim_t animation; lv_anim_init(&animation);
-        lv_anim_set_var(&animation, card); lv_anim_set_values(&animation, screen.card_index > last_index ? 14 : -14, 0);
-        lv_anim_set_duration(&animation, 160); lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
-        lv_anim_set_exec_cb(&animation, [](void* obj, int32_t x) { lv_obj_set_style_translate_x(static_cast<lv_obj_t*>(obj), x, 0); });
-        lv_anim_start(&animation);
-    } else if (actions || was_actions) { lv_anim_delete(card, nullptr); lv_obj_set_style_translate_x(card, 0, 0); }
-    last_index = screen.card_index; was_actions = actions;
 }
 void Hide() { Show(root, false); }
+}  // namespace
+const amoled_ui::CardRenderer& Renderer() {
+    static const amoled_ui::CardRenderer renderer{Create, Update, Hide, Accepts, &kPalette};
+    return renderer;
 }
-const amoled_ui::CardRenderer& Renderer() { static const amoled_ui::CardRenderer renderer{Create, Update, Hide}; return renderer; }
-}
+}  // namespace amoled_factory

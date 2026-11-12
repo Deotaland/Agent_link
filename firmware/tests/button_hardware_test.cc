@@ -85,6 +85,19 @@ int main() {
     nvs["agent_nvs/al_wifi/ssid"] = 7;
     nvs["nvs/bmb_net/ssid"] = 9;
     auto service = CreateFactoryHardwareServices(hardware);
+    amoled_ui::Screen status;
+    service->Decorate(status);
+    assert(status.battery_percent == hardware.sensors_.Read().percent);
+    assert(strstr(status.hardware_status, "%"));
+    test_wifi.connected = false;
+    test_wifi.setup_active = true;
+    snprintf(test_wifi.setup_ssid, sizeof test_wifi.setup_ssid, "Sugarat-Button-ABCDEF");
+    service->Decorate(status);
+    assert(!status.wifi_connected && status.wifi_setup_active &&
+           !strcmp(status.wifi_setup_ssid, test_wifi.setup_ssid));
+    test_wifi = {};
+    service->Decorate(status);
+    assert(status.wifi_connected && !status.wifi_setup_active && !status.wifi_setup_ssid[0]);
     auto menu = service->Menu();
     const auto row = [&](int index) {
         return menu.handle({amoled_ui::TouchAction::kRow, index}, menu.context);

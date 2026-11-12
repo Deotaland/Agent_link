@@ -3,6 +3,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_random.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include <algorithm>
 #include <cmath>
@@ -123,12 +124,19 @@ esp_err_t Json(const std::string& url, cJSON** out, bool post = false) {
         (void)esp_http_client_set_method(handle, HTTP_METHOD_POST);
         (void)esp_http_client_set_header(handle, "Idempotency-Key", key);
     }
+    const auto open_at = esp_timer_get_time();
     auto error = esp_http_client_open(handle, 0);
+    const auto headers_at = esp_timer_get_time();
+    ESP_LOGI("agent_system.store", "metadata connect_ms=%lld result=0x%x",
+             static_cast<long long>((headers_at - open_at) / 1000), unsigned(error));
     if (error != ESP_OK)
         return Fail("Unable to connect to the community service");
     if (esp_http_client_fetch_headers(handle) < 0)
         return Fail("Unable to read community response headers");
     const int status = esp_http_client_get_status_code(handle);
+    ESP_LOGI("agent_system.store", "metadata method=%s HTTP=%d headers_ms=%lld",
+             post ? "POST" : "GET", status,
+             static_cast<long long>((esp_timer_get_time() - headers_at) / 1000));
     std::string body;
     char block[1024];
     for (;;) {
@@ -141,6 +149,8 @@ esp_err_t Json(const std::string& url, cJSON** out, bool post = false) {
             return Failure("Community response exceeds the device limit", status, nullptr);
         body.append(block, bytes);
     }
+    ESP_LOGI("agent_system.store", "metadata body_bytes=%u body_ms=%lld", unsigned(body.size()),
+             static_cast<long long>((esp_timer_get_time() - headers_at) / 1000));
     if (!esp_http_client_is_complete_data_received(handle))
         return Failure("Incomplete community response", status, nullptr);
     auto* root = cJSON_ParseWithLength(body.c_str(), body.size() + 1);
@@ -476,12 +486,18 @@ esp_err_t File::Open(const char* url) {
         handle = esp_http_client_init(&config);
         if (!handle)
             return ESP_ERR_NO_MEM;
+        const auto open_at = esp_timer_get_time();
         auto error = esp_http_client_open(handle, 0);
+        const auto headers_at = esp_timer_get_time();
+        ESP_LOGI("agent_system.store", "file connect_ms=%lld result=0x%x",
+                 static_cast<long long>((headers_at - open_at) / 1000), unsigned(error));
         if (error != ESP_OK)
             return error;
         if (esp_http_client_fetch_headers(handle) < 0)
             return ESP_ERR_INVALID_RESPONSE;
         const int status = esp_http_client_get_status_code(handle);
+        ESP_LOGI("agent_system.store", "file HTTP=%d headers_ms=%lld redirect=%u", status,
+                 static_cast<long long>((esp_timer_get_time() - headers_at) / 1000), redirect);
         if (status == 200)
             return ESP_OK;
         if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) &&

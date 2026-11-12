@@ -379,9 +379,11 @@ const Descriptor& Current() {static Descriptor value{};return value;}
 const char* SettingsPartition() {return "nvs";}
 esp_err_t CatalogUrl(char* value,size_t) {value[0]=0;return ESP_OK;}
 }
-struct agent_link_wifi_info_t {bool connected=false;char ssid[33]{},ip[16]{},setup_ssid[33]{};int rssi=0;};
-esp_err_t agent_link_wifi_info(agent_link_wifi_info_t*) {return ESP_OK;}
-esp_err_t agent_link_wifi_setup() {return ESP_OK;}
+struct agent_link_wifi_info_t {bool connected=false,setup_active=false;char ssid[33]{},ip[16]{},setup_ssid[33]{};int rssi=0;};
+agent_link_wifi_info_t test_wifi{};
+unsigned wifi_setup_calls=0;
+esp_err_t agent_link_wifi_info(agent_link_wifi_info_t* out) {*out=test_wifi;return ESP_OK;}
+esp_err_t agent_link_wifi_setup() {++wifi_setup_calls;return ESP_OK;}
 struct NativeAppDescription {char version[32]="test";};
 const NativeAppDescription* esp_app_get_description() {static NativeAppDescription value;return &value;}
 uint32_t esp_get_free_heap_size() {return 1024*1024;}
@@ -411,6 +413,22 @@ void CheckSystemMenu() {
     menu.Handle(input);assert(!menu.TakeExit());menu.Render(s,1,1,70,false);
     assert(!strcmp(s.title,amoled_ui::Tr("应用封面与同步","App covers and sync")));
     agent_system::menu_launcher=false;
+    test_wifi.setup_active=true;
+    snprintf(test_wifi.setup_ssid,sizeof test_wifi.setup_ssid,"Sugarat-Button-TEST");
+    menu.OpenNetwork();menu.Render(s,1,1,70,false);
+    assert(strstr(s.info,test_wifi.setup_ssid) && strstr(s.info,"192.168.4.1"));
+    assert(strstr(s.info,amoled_ui::Tr("已安装应用可离线使用","Installed apps remain available offline")));
+    input.row=0;menu.Handle(input);assert(wifi_setup_calls==1);
+    test_wifi.setup_active=false;menu.Render(s,1,1,70,false);
+    assert(!strstr(s.info,"192.168.4.1"));
+    test_wifi.connected=true;snprintf(test_wifi.ssid,sizeof test_wifi.ssid,"Test WiFi");
+    menu.Render(s,1,1,70,false);assert(strstr(s.info,"Test WiFi") && !strstr(s.info,"192.168.4.1"));
+    menu.Close();assert(!menu.Active());test_wifi={};
+    menu.OpenNetwork();input.action=amoled_ui::TouchAction::kBack;menu.Handle(input);
+    assert(menu.Active());menu.Render(s,1,1,70,false);
+    assert(!strcmp(s.title,amoled_ui::Tr("系统菜单","System")));
+    menu.OpenNetwork();input.action=amoled_ui::TouchAction::kHome;menu.Handle(input);
+    assert(!menu.Active());
     puts("System menu: standalone hides return, installed app can return, stale input rejected and launcher cover page retained.");
 }
 '''
@@ -537,7 +555,10 @@ if args.sdgoods:
 #include "amoled_cover_cache.h"
 namespace agent_system {
 std::shared_ptr<const CoverPixels> supplied_pixels;
-std::shared_ptr<const CoverPixels> AcquireCover(const Cover& cover) { return cover.slot==0 ? supplied_pixels : nullptr; }
+std::shared_ptr<const CoverPixels> supplied_grid[4];
+std::shared_ptr<const CoverPixels> AcquireCover(const Cover& cover) {
+    return cover.slot>=0 && cover.slot<4 ? supplied_grid[cover.slot] : nullptr;
+}
 }
 """
     factory_source = '\n'.join(line for line in (factory_ui/'factory_view.cc').read_text(encoding='utf-8').splitlines() if not line.startswith('#include'))+'\n'

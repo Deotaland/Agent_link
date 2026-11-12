@@ -46,49 +46,80 @@ int main(int argc, char** argv) {
     assert(display_transfer_.Start(panel_,sizeof buffers[0],0,360)==ESP_OK);
     lv_display_set_flush_wait_cb(display,WaitFlush);
     card_renderer_=&amoled_factory::Renderer();
-    Screen state{}; state.kind=View::kCarousel; state.launcher_shell=true;
-    state.view=1; state.navigation=1; state.card_count=2; state.add_card=true;
-    snprintf(state.hardware_status,sizeof state.hardware_status,"72%% · WiFi");
-    snprintf(state.title,sizeof state.title,"添加应用"); SetScreen(state); Frame("sdgoods-add.ppm");
+    Screen state{}; state.kind=View::kFactoryHome; state.launcher_shell=true;
+    state.view=1; state.navigation=1; state.card_count=5;
+    state.storage_total=10*1024*1024; state.storage_used=4*1024*1024;
+    state.battery_percent=72; state.wifi_connected=true;
+    SetScreen(state); Frame("sdgoods-home.ppm");
     assert(fonts_.Ready() && LayoutFits());
     Cst9217Touch touch; touch_=&touch;
     pointer_=lv_indev_create(); lv_indev_set_type(pointer_,LV_INDEV_TYPE_POINTER);
     lv_indev_set_display(pointer_,display); lv_indev_set_read_cb(pointer_,ReadTouch);
-    const unsigned before=clicks; Tap(touch,180,170);
-    assert(clicks==before+1 && last_input.action==TouchAction::kRow && last_input.row==0);
-    auto* bytes=new uint8_t[agent_system::kCoverBytes]{};
-    auto pixels=std::make_shared<agent_system::CoverPixels>();
-    pixels->blob=std::shared_ptr<const uint8_t>(bytes,[](const uint8_t* p){delete[] p;});
-    auto* colors=reinterpret_cast<uint16_t*>(bytes+agent_system::kCoverHeaderBytes);
-    auto* alpha=bytes+agent_system::kCoverHeaderBytes+132*132*2;
-    for(int y=0;y<132;++y) for(int x=0;x<132;++x) {
-        colors[y*132+x]=uint16_t(((x*31/131)<<11)|((y*63/131)<<5)|20);
-        const float d=std::sqrt(float((2*x-131)*(2*x-131)+(2*y-131)*(2*y-131)))/2;
-        alpha[y*132+x]=uint8_t(std::max(0.f,std::min(1.f,66-d))*255);
+    for(int i=0;i<3;++i) {
+        state.view++; SetScreen(state); Frame("sdgoods-home.ppm");
+        const unsigned before=clicks; Tap(touch,90+i*90,220);
+        assert(clicks==before+1 && last_input.action==TouchAction::kRow && last_input.row==i);
     }
-    agent_system::supplied_pixels=pixels;
-    state.view++; state.navigation++; state.add_card=false; state.cover_slot=0; state.cover_revision=1;
-    snprintf(state.title,sizeof state.title,"日常对话"); SetScreen(state); Frame("sdgoods-cover.ppm");
-    state.card_count = 17;
-    for (size_t page : {size_t(4), size_t(8), size_t(16)}) {
-        state.view++;
-        state.navigation++;
-        state.card_index = page;
-        SetScreen(state);
-        Frame("sdgoods-many.ppm");
-        unsigned selected = 0;
-        for (auto* dot : amoled_factory::dots)
-            if (!lv_obj_has_flag(dot, LV_OBJ_FLAG_HIDDEN) && lv_obj_get_width(dot) == 16)
-                ++selected;
-        assert(selected == 1);
+    state.view++; state.wifi_connected=false; state.wifi_setup_active=true;
+    snprintf(state.wifi_setup_ssid,sizeof state.wifi_setup_ssid,"Sugarat-Button-ABCDEF");
+    SetScreen(state); Frame("sdgoods-setup.ppm");
+    assert(!lv_obj_has_flag(amoled_factory::wifi_title,LV_OBJ_FLAG_HIDDEN));
+    assert(!strcmp(lv_label_get_text(amoled_factory::wifi_ap),state.wifi_setup_ssid));
+    Tap(touch,180,110); assert(last_input.action==TouchAction::kRow && last_input.row==3);
+    state.view++; SetScreen(state); Frame("sdgoods-setup.ppm");
+    Tap(touch,90,220); assert(last_input.action==TouchAction::kRow && last_input.row==0);
+    for(int slot=0;slot<4;++slot) {
+        auto* bytes=new uint8_t[agent_system::kCoverBytes]{};
+        auto pixels=std::make_shared<agent_system::CoverPixels>();
+        pixels->blob=std::shared_ptr<const uint8_t>(bytes,[](const uint8_t* p){delete[] p;});
+        auto* colors=reinterpret_cast<uint16_t*>(bytes+agent_system::kCoverHeaderBytes);
+        auto* alpha=bytes+agent_system::kCoverHeaderBytes+132*132*2;
+        for(int y=0;y<132;++y) for(int x=0;x<132;++x) {
+            colors[y*132+x]=uint16_t((((x*31/131+slot*7)%32)<<11)|((y*63/131)<<5)|20);
+            const float d=std::sqrt(float((2*x-131)*(2*x-131)+(2*y-131)*(2*y-131)))/2;
+            alpha[y*132+x]=uint8_t(std::max(0.f,std::min(1.f,66-d))*255);
+        }
+        agent_system::supplied_grid[slot]=pixels;
     }
-    state.card_count = 2;
-    state.card_index = 0;
+    agent_system::supplied_pixels=agent_system::supplied_grid[0];
+    state.kind=View::kAppGrid; state.view++; state.navigation++;
+    state.row_count=4; state.card_count=4; state.card_index=0;
+    snprintf(state.title,sizeof state.title,"我的应用");
+    const char* apps[]{"日常对话","BambuMonitor","音乐播放器","很长的中文应用名称"};
+    for(int i=0;i<4;++i) {
+        snprintf(state.rows[i],112,"%s",apps[i]); state.grid[i]={i,1};
+    }
+    SetScreen(state); Frame("sdgoods-apps.ppm");
+    for(int i=0;i<4;++i) {
+        auto* src=static_cast<const lv_image_dsc_t*>(lv_image_get_src(amoled_factory::grid_covers[i].picture));
+        assert(src && src->header.w==64);
+        for(int j=0;j<i;++j)
+            assert(src!=lv_image_get_src(amoled_factory::grid_covers[j].picture));
+        state.view++; SetScreen(state); Frame("sdgoods-apps.ppm");
+        Tap(touch,119+(i%2)*122,132+(i/2)*112);
+        assert(last_input.action==TouchAction::kRow && last_input.row==i);
+    }
+    state.view++; SetScreen(state); Frame("sdgoods-apps.ppm");
+    Tap(touch,234,326); assert(last_input.row==5);
+    state.card_index=3; state.row_count=1; state.view++; state.navigation++;
+    SetScreen(state); Frame("sdgoods-apps-last.ppm");
+    assert(lv_obj_has_flag(amoled_factory::next,LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_has_flag(amoled_factory::grid_tiles[1],LV_OBJ_FLAG_HIDDEN));
+    Tap(touch,126,326); assert(last_input.row==4);
+    state.row_count=0; state.card_index=0; state.card_count=1; state.view++; state.navigation++;
+    SetScreen(state); Frame("sdgoods-empty.ppm");
+    Tap(touch,180,249); assert(last_input.row==0);
+    state.view++; SetScreen(state); Frame("sdgoods-empty.ppm");
+    Tap(touch,83,55); assert(last_input.action==TouchAction::kBack);
+    state.cover_slot=0; state.cover_revision=1;
+    snprintf(state.title,sizeof state.title,"日常对话");
     const auto check_button=[](lv_obj_t* button) {
         lv_area_t box; lv_obj_get_coords(button,&box);
         for (int x : {box.x1,box.x2}) for (int y : {box.y1,box.y2})
             assert((x-180)*(x-180)+(y-180)*(y-180)<180*180);
     };
+    for (auto* tile : amoled_factory::home_tiles) check_button(tile);
+    for (auto* tile : amoled_factory::grid_tiles) check_button(tile);
     state.kind=View::kAppActions; state.view++; state.navigation++;
     snprintf(state.detail,sizeof state.detail,"2.0.0"); SetScreen(state); Frame("sdgoods-actions.ppm");
     check_button(amoled_factory::launch); check_button(amoled_factory::remove);
@@ -96,6 +127,7 @@ int main(int argc, char** argv) {
     state.view++; state.navigation++; SetScreen(state); Frame("sdgoods-actions.ppm");
     Tap(touch,240,290); assert(last_input.action==TouchAction::kRow && last_input.row==1);
     state.kind=View::kList; state.view++; state.navigation++; state.row_count=5;
+    state.detail[0]=0;
     snprintf(state.title,sizeof state.title,"系统设置");
     const char* rows[]{"WiFi 网络","应用服务","设备信息","语言 / Language","封面同步"};
     for(int i=0;i<5;++i) snprintf(state.rows[i],112,"%s",rows[i]);
@@ -103,12 +135,47 @@ int main(int argc, char** argv) {
     const auto coords=[](lv_obj_t* obj) { lv_area_t area; lv_obj_get_coords(obj,&area); return area; };
     const auto row=coords(rows_[0]); Tap(touch,(row.x1+row.x2)/2,(row.y1+row.y2)/2);
     assert(last_input.action==TouchAction::kRow && last_input.row==0);
-    state.kind=View::kCarousel; state.view++; state.navigation++; SetScreen(state); Frame("sdgoods-cover.ppm");
+    state.kind=View::kInfo; state.busy=true; state.progress=63; state.view++; state.navigation++;
+    snprintf(state.title,sizeof state.title,"下载安装应用");
+    snprintf(state.info,sizeof state.info,"1326 / 2105 KB");
+    SetScreen(state); Frame("sdgoods-progress.ppm");
+    const unsigned busy_clicks=clicks; Tap(touch,120,290); assert(clicks==busy_clicks);
+    // Start on the last physical pixel, beyond the inset used for normal taps.
+    touch.sample.x=180; touch.sample.y=359; touch.sample.pressed=true;
+    clock_us+=40000; Render(nullptr); touch.sample.y=296; clock_us+=40000; Render(nullptr);
+    assert(last_input.action==TouchAction::kHome);
+    touch.sample.pressed=false; clock_us+=40000; Render(nullptr);
+    state.kind=View::kFactoryHome; state.busy=false; state.view++; state.navigation++;
+    state.wifi_connected=true; state.wifi_setup_active=false;
+    snprintf(state.job_status,sizeof state.job_status,"后台下载中 · 点击下载查看");
+    SetScreen(state); Frame("sdgoods-background.ppm");
+    assert(strstr(lv_label_get_text(amoled_factory::status),"后台下载"));
+    state.job_status[0]=0;
+    SetScreen(state); Frame("sdgoods-home.ppm");
+    state.battery_percent=-1; state.wifi_connected=false;
+    state.wifi_setup_active=false;
+    SetScreen(state); Frame("sdgoods-offline.ppm");
+    assert(strstr(lv_label_get_text(amoled_factory::status),"--%"));
+    assert(!lv_obj_has_flag(amoled_factory::wifi_title,LV_OBJ_FLAG_HIDDEN));
+    assert(strstr(lv_label_get_text(amoled_factory::wifi_url),"已安装"));
+    state.battery_percent=72; state.wifi_connected=true;
+    SetScreen(state); Frame("sdgoods-home.ppm");
+    assert(lv_obj_has_flag(amoled_factory::wifi_title,LV_OBJ_FLAG_HIDDEN));
+    assert(!lv_obj_has_flag(amoled_factory::count_label,LV_OBJ_FLAG_HIDDEN));
+    language.store(Language::kEnglish);
+    state.view++; SetScreen(state); Frame("sdgoods-home-en.ppm");
+    language.store(Language::kChinese);
+    state.view++; SetScreen(state); Frame("sdgoods-home.ppm");
+    touch.sample.x=270; touch.sample.y=160; touch.sample.pressed=true;
+    clock_us+=40000; Render(nullptr); touch.sample.x=180; clock_us+=40000; Render(nullptr);
+    assert(last_input.action==TouchAction::kNextCard);
+    touch.sample.pressed=false; clock_us+=40000; Render(nullptr);
+    state.view++; SetScreen(state); Frame("sdgoods-home.ppm");
     touch.sample.x=180; touch.sample.y=42; touch.sample.pressed=true;
     clock_us+=40000; Render(nullptr); touch.sample.y=100; clock_us+=40000; Render(nullptr);
     assert(last_input.action==TouchAction::kSystem);
     touch.sample.pressed=false; clock_us+=40000; Render(nullptr);
-    state.view++; state.navigation++; SetScreen(state); Frame("sdgoods-cover.ppm");
+    state.view++; state.navigation++; SetScreen(state); Frame("sdgoods-home.ppm");
     touch.sample.x=180; touch.sample.y=325; touch.sample.pressed=true;
     clock_us+=40000; Render(nullptr); touch.sample.y=260; clock_us+=40000; Render(nullptr);
     assert(last_input.action==TouchAction::kHome);
@@ -122,6 +189,6 @@ int main(int argc, char** argv) {
     Frame("sdgoods-resume.ppm");
     assert(!sleep_ready_.load() && applied_backlight_ == (42*255+50)/100);
     lv_indev_delete(pointer_); pointer_=nullptr; display_transfer_.Stop();
-    puts("SDGOODS: native 360px layout, fonts, cover cache, app actions, list taps and edge gestures passed.");
+    puts("SDGOODS: home tiles, four-cover grid, paging, empty state, actions, progress, settings and gestures passed.");
     return 0;
 }

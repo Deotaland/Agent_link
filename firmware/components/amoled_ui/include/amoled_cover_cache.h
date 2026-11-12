@@ -10,6 +10,7 @@
 class AmoledCoverCache {
    public:
     AmoledCoverCache() = default;
+    explicit AmoledCoverCache(unsigned capacity) : capacity_(std::max(1u, std::min(3u, capacity))) {}
     AmoledCoverCache(const AmoledCoverCache&) = delete;
     AmoledCoverCache& operator=(const AmoledCoverCache&) = delete;
     ~AmoledCoverCache() {
@@ -20,10 +21,11 @@ class AmoledCoverCache {
     }
     const lv_image_dsc_t* Get(const std::shared_ptr<const agent_system::CoverPixels>& source,
                               uint16_t edge) {
-        if (!source || (edge < 128 || edge > 300))
+        if (!source || (edge < 48 || edge > 300))
             return nullptr;
         Entry* oldest = &entries_[0];
-        for (auto& entry : entries_) {
+        for (unsigned i = 0; i < capacity_; ++i) {
+            auto& entry = entries_[i];
             if (entry.source == source && entry.image.header.w == edge) {
                 entry.used = ++sequence_;
                 return &entry.image;
@@ -62,6 +64,7 @@ class AmoledCoverCache {
         uint64_t used = 0;
     } entries_[3];
     uint64_t sequence_ = 0;
+    unsigned capacity_ = 3;
     static void Scale(const uint8_t* source, uint8_t* target, int edge) {
         constexpr int n = agent_system::kCoverEdge;
         const auto* rgb = reinterpret_cast<const uint16_t*>(source);

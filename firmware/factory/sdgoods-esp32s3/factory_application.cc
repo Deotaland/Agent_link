@@ -1,3 +1,7 @@
 #include "../common/round_factory_application.h"
 
-DECLARE_APPLICATION(AmoledFactoryApplication);
+class SugaratFactoryApplication final : public AmoledFactoryApplication {
+   public:
+    SugaratFactoryApplication() : AmoledFactoryApplication(true) {}
+};
+DECLARE_APPLICATION(SugaratFactoryApplication);

@@ -3,13 +3,35 @@
 This Factory also supports the same Sugarat Button hardware sold by SDGOODS.
 
 This board-bound Factory reuses the round launcher controller and system menu.
-Its native 360px renderer uses a dark navy background, cyan accents, large
-antialiased circular covers, a separate app name and gesture hint, page dots,
-and explicit launch/remove actions. It supports Chinese and English.
+Its native 360px renderer follows the warm charcoal and terracotta home layout
+of [Sugarat's launcher](https://github.com/suoyousheng-bot/sugarat-sdgoods/tree/c07957fe9794808d6ee866553af169f5654d69e5).
+The home summary shows installed app count, free app-pool space and an allocation
+ring. Three tiles open **My apps**, **Download apps** and **Settings**. The grid,
+app actions and download progress use the same palette, in Chinese and English.
 
-- Swipe horizontally to browse installed apps and the final Add application card.
+- Open **My apps** (or swipe left on home) for a four-app grid with page controls.
+  Up to 16 apps occupy four pages; the empty state links to the existing catalog.
 - Tap an app to open its actions; removal requires confirmation.
+- The upper-left arrow returns one level. Swiping up from the physical bottom
+  edge returns directly home, including from settings and download progress.
+- Catalog queries and installation run on a dedicated worker. Going home leaves
+  a download running; **Download apps** reopens its progress or unacknowledged
+  result. Opening another app asks whether to interrupt the download and start
+  over next time. After confirmation the worker stops at a safe boundary before
+  the selected app boots. Atomic layout publication finishes before switching.
+- Errors retain their stage, code, received bytes and available HTTP/server
+  details until acknowledged. Installation outcomes are stored in `app_nvs` and
+  survive restart; pending outcomes are checked against the actual installed
+  image after reboot. Partial images remain unavailable.
 - Pull down from the top for WiFi, app service, device, language and cover settings.
+- **Settings > WiFi** uses the common Agent Link provisioning flow and existing
+  isolated settings. The reference launcher's provisioning and download-code
+  flows are not used; downloads still use the production community catalog.
+- Without WiFi the home summary becomes a tappable setup guide. While the
+  setup hotspot is active it shows the actual hotspot name and `192.168.4.1`;
+  a disconnected station instead links to network settings. Online app listing
+  and installation direct users there first. Installed apps stay accessible and
+  launch normally offline; connecting WiFi restores the storage summary.
 - Open **Hardware and power** for battery voltage/estimated level, six-axis sensor
   readings, speaker tone, three-second record/playback, persistent brightness and
   sleep/power/restart controls. The existing volume page controls self-test audio.
@@ -34,8 +56,9 @@ and explicit launch/remove actions. It supports Chinese and English.
   the launcher; the backend must publish a reviewed pure `.bin`. This does not
   add an official SDGOODS browser or local firmware import endpoint on the device.
 - A 10 MiB dynamic pool supports up to 16 applications, subject to image sizes,
-  alignment, cover reserve and contiguous free space. Installing/removing an app
-  restarts Factory to refresh the partition list. The matching V4 full USB package
+  alignment, cover reserve and contiguous free space. After installation choose
+  **Finish and restart** to refresh the partition list and confirm the result.
+  Removal still restarts Factory. The matching V4 full USB package
   is required initially; application ABI remains 3 for existing native images.
   Vendor `appdata` occupies the upper 16 MiB. Hold GPIO6 at power-on for three
   seconds to recover Factory without erasing application files or settings.
@@ -47,11 +70,22 @@ buffers plus one asynchronous transfer staging buffer occupy 777,600 bytes
 in PSRAM. Rendering and transfer run on separate cores; no scaling of a 466px
 framebuffer is performed. Only dirty regions are transmitted.
 
-Three recent cover sizes use bounded PSRAM caching and alpha-aware bilinear
-resampling. At the largest 198px size, their pixel storage is at most 352,836
-bytes, plus immutable source snapshots (184px home covers use less). Fonts also cache glyphs in PSRAM.
+Four 64px grid covers and one 104px detail cover use independent, single-entry
+PSRAM caches with alpha-aware bilinear resampling. Their scaled pixel storage
+is bounded to 81,600 bytes, plus at most five immutable 132px source snapshots.
+Replacing a page cannot evict another visible image's pixels. Fonts also cache glyphs in PSRAM.
+Home storage usage includes installed partition alignment and cover reserves;
+the vendor's separate upper-16-MiB appdata partition is excluded.
 WiFi/LwIP and TLS prefer external memory; 64 KiB of internal memory is reserved
 for tasks, radio and DMA needs.
+
+Installation logs separate cover-worker waiting, catalog/ticket requests,
+connection/headers, allocation, erase, transfer, image verification and layout
+publication. The final summary includes received bytes, elapsed time, network-read
+and flash-write times. Repeated transfer statistics stay at Debug; normal stage
+summaries and failures remain visible at Info/Error. URLs and download tickets
+are not logged. Dynamic-slot erasure uses at most 64 KiB per call with explicit
+scheduling gaps, retaining watchdog checks and cancellation between chunks.
 
 Community WebP, PNG and baseline JPEG covers are decoded into the existing
 132px RGB565LE+A8 cache. Input is bounded to 2 MiB, each dimension to 2048 and

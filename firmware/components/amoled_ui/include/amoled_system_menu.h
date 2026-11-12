@@ -22,6 +22,10 @@ class AmoledSystemMenu {
     }
     void SetDeviceInfo(const char* text);
     void Open();
+    void OpenNetwork() {
+        Open();
+        page_ = Page::kNetwork;
+    }
     void Close() {
         if (extra_.close)
             extra_.close(extra_.context);

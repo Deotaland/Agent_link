@@ -33,6 +33,15 @@ checks complete before the installation is marked ready. Interrupted writes stay
 unavailable and can be reused. `Remove()` removes the selected app and its cover;
 shared WiFi, device identity, binding, volume and language settings remain intact.
 
+Optional `InstallStatus`, observer and cancellation arguments expose the active
+stage, received bytes, HTTP/transport errors and timing. Observers run on the
+install worker and must return promptly. Cancellation returns `kCancelled` at a
+safe boundary; publication is atomic and finishes once begun. Dynamic erasure
+uses bounded 64 KiB chunks with scheduling gaps. `kRestartRequired` means the
+partition cache must reload; the UI must verify the installed image after reboot
+before presenting a confirmed success. Installation never silently changes the
+running app. `Launch()` rejects concurrent slot/cover writes.
+
 Catalog, install and cover synchronization calls perform blocking work and belong
 on controller workers. They must not run in LVGL, BLE or audio callbacks. Cover
 readers retain immutable PSRAM data while a background update publishes a new

@@ -343,9 +343,12 @@ inline int esp_wifi_stop() {
 }
 struct agent_link_wifi_info_t {
     bool connected = true;
+    bool setup_active = false;
+    char setup_ssid[33]{};
 };
+inline agent_link_wifi_info_t test_wifi{};
 inline int agent_link_wifi_info(agent_link_wifi_info_t* out) {
-    out->connected = true;
+    *out = test_wifi;
     return ESP_OK;
 }
 namespace agent_system {
@@ -363,6 +366,9 @@ struct Input {
 struct Screen {
     char rows[12][112]{}, title[96]{}, info[384]{}, hardware_status[64]{};
     int row_count = 0;
+    int battery_percent = -1;
+    bool wifi_connected = false, wifi_setup_active = false;
+    char wifi_setup_ssid[33]{};
 };
 inline const char* Tr(const char*, const char* english) {
     return english;

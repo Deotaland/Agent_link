@@ -3,6 +3,7 @@
 #define __attribute__(...)
 #endif
 #define ESP_LOGW(...) ((void)0)
+#define ESP_LOGE(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGD(...) ((void)0)
 #define esp_err_to_name(...) "fixture-error"
@@ -14,13 +15,21 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <chrono>
+inline int64_t esp_timer_get_time() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 #include <cstdlib>
+#define pdMS_TO_TICKS(value) (value)
+namespace fixture { inline unsigned erase_yields = 0; }
+inline void vTaskDelay(unsigned) { ++fixture::erase_yields; std::this_thread::yield(); }
 using esp_err_t = int;
 constexpr int ESP_OK=0, ESP_FAIL=-1, ESP_ERR_NO_MEM=1, ESP_ERR_INVALID_ARG=2,
     ESP_ERR_INVALID_STATE=3, ESP_ERR_INVALID_SIZE=4, ESP_ERR_NOT_FOUND=5,
     ESP_ERR_INVALID_RESPONSE=6, ESP_ERR_INVALID_CRC=7, ESP_ERR_INVALID_VERSION=8,
     ESP_ERR_NVS_NOT_FOUND=9, ESP_ERR_NVS_NO_FREE_PAGES=10, ESP_ERR_NVS_NEW_VERSION_FOUND=11,
-    ESP_ERR_NOT_SUPPORTED=12;
+    ESP_ERR_NOT_SUPPORTED=12, ESP_ERR_TIMEOUT=13;
 using esp_partition_subtype_t = int;
 constexpr int ESP_PARTITION_TYPE_APP=0, ESP_PARTITION_SUBTYPE_APP_FACTORY=0,
     ESP_PARTITION_SUBTYPE_APP_OTA_0=16;
@@ -177,6 +186,7 @@ inline int esp_http_client_get_and_clear_last_tls_error(HttpClient*,int* code,in
 inline int64_t esp_http_client_fetch_headers(HttpClient* c){if(c->event) for(const auto& [key,value]:fixture::http_headers[c->url]){
     esp_http_client_event_t e{HTTP_EVENT_ON_HEADER,c->user_data,key.c_str(),value.c_str()};c->event(&e);}return c->body.size();}
 inline int esp_http_client_get_status_code(HttpClient* c){auto i=fixture::http_status.find(c->url);return i==fixture::http_status.end()?fixture::status:i->second;}
+inline int esp_http_client_get_errno(HttpClient*) {return 0;}
 inline int64_t esp_http_client_get_content_length(HttpClient* c){return c->body.size();}
 inline int esp_http_client_read(HttpClient* client,char* out,size_t size){
     if(client->offset>=fixture::fail_after)return -1;

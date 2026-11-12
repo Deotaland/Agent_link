@@ -23,6 +23,7 @@ constexpr esp_err_t kNoAppSpace = 0x7F05;
 constexpr esp_err_t kLegacySlotsFull = 0x7F06;
 constexpr esp_err_t kStoreError = 0x7F07;
 constexpr esp_err_t kUnsupportedPackage = 0x7F08;
+constexpr esp_err_t kCancelled = 0x7F09;
 constexpr const char* kBoard = AGENT_SYSTEM_BOARD_MODEL;
 constexpr const char* kSdk = "0.1.0";
 // Stored immediately after esp_app_desc at image offset 0x120. Keep this ABI stable.
@@ -95,6 +96,30 @@ struct CoverStatus {
     bool cached = false;  // An older usable image may remain after a failed update.
 };
 using Progress = void (*)(uint32_t received, uint32_t total, void* context);
+enum class InstallStage {
+    kWaitCover,
+    kInspect,
+    kTicket,
+    kConnect,
+    kHeader,
+    kAllocate,
+    kErase,
+    kDownload,
+    kVerify,
+    kSave,
+    kPublish,
+    kDone
+};
+struct InstallStatus {
+    InstallStage stage = InstallStage::kInspect;
+    esp_err_t error = ESP_OK;
+    uint32_t received = 0, total = 0, elapsed_ms = 0, read_ms = 0, write_ms = 0;
+    int http_status = 0;
+    int network_errno = 0;
+    char slot[17]{}, app_id[32]{};
+};
+using InstallObserver = void (*)(const InstallStatus&, void*);
+using InstallCancel = bool (*)(void*);
 const Descriptor& Current();
 uint32_t Revision();  // Changes after an installed-app list mutation.
 const char* SettingsPartition();
@@ -123,6 +148,10 @@ bool CommunityCatalog();
 void LastStoreError(StoreError* error);
 esp_err_t SyncStoreCovers();
 esp_err_t SyncCovers(const CatalogApp* apps, size_t count);  // Call on a worker after FetchCatalog.
-esp_err_t Install(const CatalogApp& app, Progress progress = nullptr, void* context = nullptr);
+// Observer/cancel run on the install worker, never on the display task. Cancellation
+// is checked between I/O operations, before the atomic layout publication begins.
+esp_err_t Install(const CatalogApp& app, Progress progress = nullptr, void* context = nullptr,
+                  InstallStatus* result = nullptr, InstallObserver observer = nullptr,
+                  InstallCancel cancel = nullptr);
 esp_err_t StartSettingsServer();  // Port 8081: catalog configuration, no WiFi passwords.
 }  // namespace agent_system

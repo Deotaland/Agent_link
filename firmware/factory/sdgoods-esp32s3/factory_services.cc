@@ -125,6 +125,10 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         agent_link_wifi_info_t wifi{};
         (void)agent_link_wifi_info(&wifi);
         const auto& state = hardware_.sensors_.Read();
+        screen.battery_percent = state.percent;
+        screen.wifi_connected = wifi.connected;
+        screen.wifi_setup_active = wifi.setup_active;
+        snprintf(screen.wifi_setup_ssid, sizeof screen.wifi_setup_ssid, "%s", wifi.setup_ssid);
         if (state.percent >= 0)
             snprintf(screen.hardware_status, sizeof screen.hardware_status, "%d%%  ·  %s",
                      state.percent, wifi.connected ? "WiFi" : Tr("离线", "Offline"));

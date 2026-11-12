@@ -103,6 +103,20 @@ int main() {
     app=Download("CLOCK",Image("CLOCK"));fixture::end_error=ESP_ERR_INVALID_CRC;
     assert(Install(app)==ESP_ERR_INVALID_CRC);fixture::end_error=ESP_OK;
     assert(List(apps,2,&count)==ESP_OK && count==0);
+    struct Cancellation { bool requested = false; InstallStage stage; };
+    const auto cancel = +[](void* context) { return static_cast<Cancellation*>(context)->requested; };
+    const auto observe = +[](const InstallStatus& status, void* context) {
+        auto& cancellation = *static_cast<Cancellation*>(context);
+        if (status.stage == cancellation.stage &&
+            (status.stage != InstallStage::kDownload || status.received > 0)) cancellation.requested = true;
+    };
+    for (const auto phase : {InstallStage::kDownload, InstallStage::kPublish}) {
+        Cancellation cancellation{false, phase};
+        InstallStatus result;
+        assert(Install(app, nullptr, &cancellation, &result, observe, cancel) == kCancelled);
+        assert(result.error == kCancelled && result.stage == phase && result.received > 0);
+        assert(List(apps,2,&count)==ESP_OK && count==0 && fixture::boot==nullptr);
+    }
     assert(Install(app)==ESP_OK && Revision()==1);
     assert(List(apps,2,&count)==ESP_OK && count==1);
     assert(apps[0].format==ImageFormat::kSdgoods && !strcmp(apps[0].descriptor.app_id,"CLOCK"));

@@ -9,9 +9,11 @@
 #include "amoled_launcher_model.h"
 #include "factory_view.h"
 #include "factory_hardware_services.h"
+#include "factory_store_job.h"
 #include "agent_system.h"
 #include "agent_link_network.h"
 #include "esp_log.h"
+#include "esp_partition.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -27,7 +29,7 @@
 using amoled_ui::Tr;
 class AmoledFactoryApplication : public Application {
    public:
-    AmoledFactoryApplication() {
+    explicit AmoledFactoryApplication(bool tile_home = false) : tile_home_(tile_home) {
         nvs_handle_t h;
         int8_t language = 0;
         if (nvs_open_from_partition(agent_system::SettingsPartition(), "amoled175", NVS_READONLY, &h) == ESP_OK) {
@@ -54,11 +56,22 @@ class AmoledFactoryApplication : public Application {
                                            amoled_ui::DisplayPerformance::kLauncher));
         RefreshLocal();
         Home();
+        if (tile_home_) {
+            store_job_ = std::make_unique<FactoryStoreJob>();
+            if (store_job_->Restore(apps_, app_count_))
+                page_ = Page::kJobResult;
+        }
         Publish();
         ESP_ERROR_CHECK(xTaskCreate(CoverEntry, "cover_sync", 16384, this, 3, &cover_task_) ==
                                 pdPASS
                             ? ESP_OK
                             : ESP_ERR_NO_MEM);
+        if (store_job_)
+            ESP_ERROR_CHECK(store_job_->Init(
+                [](void* context) {
+                    static_cast<AmoledFactoryApplication*>(context)->WaitForCoverSync();
+                },
+                this));
         ESP_ERROR_CHECK(xTaskCreate(ControlEntry, "system_ctrl", 24576, this, 4, nullptr) == pdPASS
                             ? ESP_OK
                             : ESP_ERR_NO_MEM);
@@ -89,9 +102,32 @@ class AmoledFactoryApplication : public Application {
     }
 
    private:
-    enum class Page { kHome, kCatalog, kLocalDetail, kCatalogDetail, kRemove, kServiceError };
+    enum class Page {
+        kHome,
+        kDashboard,
+        kApps,
+        kCatalog,
+        kLocalDetail,
+        kCatalogDetail,
+        kRemove,
+        kServiceError,
+        kJobProgress,
+        kJobResult,
+        kInterrupt
+    };
+    bool StoreRunning() {
+        return store_job_ && store_job_->Running();
+    }
+    bool NeedsRestart() {
+        return store_job_ && store_job_->Read().result.state == FactoryStoreJob::State::kRestart;
+    }
     void Home() {
-        page_ = Page::kHome;
+        page_ = tile_home_ ? Page::kDashboard : Page::kHome;
+        ++navigation_;
+    }
+    void Apps() {
+        page_ = Page::kApps;
+        apps_page_ = std::min(apps_page_, app_count_ ? (app_count_ - 1) / 4 : size_t(0));
         ++navigation_;
     }
     bool Check(esp_err_t error) {
@@ -159,13 +195,49 @@ class AmoledFactoryApplication : public Application {
             app_count_ = 0;
         carousel_.SetCount(app_count_);
         RefreshCover();
+        seen_app_revision_ = agent_system::Revision();
     }
     void RefreshCover() {
         cover_ = {};
         if (!carousel_.IsAdd())
             (void)agent_system::ReadCover(apps_[carousel_.Index()].slot, &cover_);
     }
+    bool ReadyToDownload() {
+        if (tile_home_) {
+            agent_link_wifi_info_t wifi{};
+            if (agent_link_wifi_info(&wifi) != ESP_OK || !wifi.connected) {
+                menu_.OpenNetwork();
+                ++navigation_;
+                amoled_ui::Toast(wifi.setup_active
+                    ? Tr("请先完成 WiFi 配网，再下载应用", "Set up WiFi before downloading apps")
+                    : Tr("WiFi 未连接，请先检查网络", "Connect WiFi before downloading apps"));
+                return false;
+            }
+        }
+        return true;
+    }
     void Catalog(unsigned page = 1) {
+        if (store_job_) {
+            const auto state = store_job_->Read();
+            if (state.running) {
+                page_ = Page::kJobProgress;
+                ++navigation_;
+                return;
+            }
+            if (state.result.state != FactoryStoreJob::State::kNone) {
+                page_ = Page::kJobResult;
+                ++navigation_;
+                return;
+            }
+            if (!ReadyToDownload())
+                return;
+            if (Check(store_job_->StartCatalog(page)))
+                page_ = Page::kJobProgress;
+            ++navigation_;
+            return;
+        }
+        if (!ReadyToDownload())
+            return;
         page_ = Page::kCatalog;
         ++navigation_;
         Busy(Tr("正在获取在线应用", "Loading online apps"));
@@ -192,6 +264,20 @@ class AmoledFactoryApplication : public Application {
         if (row < 0)
             return;
         switch (page_) {
+            case Page::kDashboard:
+                if (row == 0) Apps();
+                else if (row == 1) Catalog();
+                else if (row == 2) menu_.Open();
+                else if (row == 3) menu_.OpenNetwork();
+                break;
+            case Page::kApps:
+                if (!app_count_ && row == 0) Catalog();
+                else if (row < 4 && apps_page_ * 4 + row < app_count_) {
+                    selected_ = apps_page_ * 4 + row;
+                    page_ = Page::kLocalDetail;
+                } else if (row == 4 && apps_page_) { --apps_page_; Apps(); }
+                else if (row == 5 && (apps_page_ + 1) * 4 < app_count_) { ++apps_page_; Apps(); }
+                break;
             case Page::kHome:
                 if (row == 0) {
                     if (carousel_.IsAdd())
@@ -221,11 +307,49 @@ class AmoledFactoryApplication : public Application {
                     Home();
                 break;
             case Page::kLocalDetail:
-                if (row == 0)
-                    Check(agent_system::Launch(apps_[selected_].slot));
-                else if (row == 1)
-                    page_ = Page::kRemove;
+                if (row == 0) {
+                    if (StoreRunning())
+                        page_ = Page::kInterrupt;
+                    else
+                        Check(agent_system::Launch(apps_[selected_].slot));
+                } else if (row == 1) {
+                    if (StoreRunning() || NeedsRestart())
+                        amoled_ui::Toast(
+                            Tr("请先完成当前安装", "Finish the current installation first"));
+                    else
+                        page_ = Page::kRemove;
+                }
                 break;
+            case Page::kInterrupt:
+                if (row == 0)
+                    page_ = Page::kLocalDetail;
+                else if (row == 1) {
+                    snprintf(pending_launch_, sizeof pending_launch_, "%s", apps_[selected_].slot);
+                    store_job_->Cancel();
+                    page_ = Page::kJobProgress;
+                }
+                break;
+            case Page::kJobProgress:
+                break;
+            case Page::kJobResult: {
+                const auto result = store_job_->Read().result;
+                if (result.state == FactoryStoreJob::State::kRestart) {
+                    if (row == 0)
+                        esp_restart();
+                    else
+                        Home();
+                } else {
+                    store_job_->Acknowledge();
+                    if (row == 0 && result.state == FactoryStoreJob::State::kSuccess &&
+                        result.kind == FactoryStoreJob::Kind::kInstall)
+                        Apps();
+                    else if (row == 0)
+                        Catalog(result.page);
+                    else
+                        Home();
+                }
+                break;
+            }
             case Page::kRemove:
                 if (row == 0)
                     page_ = Page::kLocalDetail;
@@ -246,6 +370,23 @@ class AmoledFactoryApplication : public Application {
                 if (row == 0) {
                     if (Installed(catalog_[selected_])) {
                         Check(agent_system::kAlreadyInstalled);
+                        break;
+                    }
+                    if (NeedsRestart()) {
+                        page_ = Page::kJobResult;
+                        break;
+                    }
+                    if (!ReadyToDownload())
+                        break;
+                    if (store_job_) {
+                        if (StoreRunning()) {
+                            page_ = Page::kJobProgress;
+                            break;
+                        }
+                        if (Check(store_job_->StartInstall(catalog_[selected_])))
+                            page_ = Page::kJobProgress;
+                        else
+                            page_ = Page::kJobResult;
                         break;
                     }
                     Busy(Tr("正在安装应用", "Installing application"));
@@ -282,7 +423,50 @@ class AmoledFactoryApplication : public Application {
             const auto row = [&](const char* s) {
                 snprintf(screen_.rows[screen_.row_count++], sizeof screen_.rows[0], "%s", s);
             };
-            if (page_ == Page::kHome) {
+            if (page_ == Page::kJobProgress || page_ == Page::kJobResult) {
+                RenderJob(row, title);
+            } else if (page_ == Page::kInterrupt) {
+                title(Tr("中断下载并启动？", "Interrupt download?"));
+                snprintf(screen_.info, sizeof screen_.info, "%s",
+                         Tr("启动其他应用会中断本次下载，下次需要重新下载。\n\n"
+                            "确认后会先安全结束当前操作，再启动应用。",
+                            "Opening another app interrupts this download. It must restart from "
+                            "the beginning next time.\n\n"
+                            "The current operation will stop safely before the app opens."));
+                row(Tr("取消，继续下载", "Cancel, keep downloading"));
+                row(Tr("确认中断并启动", "Interrupt and open"));
+            } else if (page_ == Page::kDashboard) {
+                screen_.kind = amoled_ui::View::kFactoryHome;
+                screen_.card_count = app_count_;
+                title("Agent_link Launcher");
+                if (store_job_) {
+                    const auto job = store_job_->Read();
+                    if (job.running)
+                        snprintf(screen_.job_status, sizeof screen_.job_status, "%s",
+                                 Tr("后台下载中 · 点击下载查看", "Downloading - tap Download"));
+                    else if (job.result.state != FactoryStoreJob::State::kNone)
+                        snprintf(screen_.job_status, sizeof screen_.job_status, "%s",
+                                 Tr("下载结果待查看 · 点击下载", "Result ready - tap Download"));
+                }
+                screen_.storage_total = agent_system::kAppImageMaxBytes + agent_system::kCoverReserveBytes;
+                for (size_t i = 0; i < app_count_; ++i) {
+                    const auto* slot = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                        ESP_PARTITION_SUBTYPE_ANY, apps_[i].slot);
+                    if (slot) screen_.storage_used += slot->size;
+                }
+            } else if (page_ == Page::kApps) {
+                screen_.kind = amoled_ui::View::kAppGrid;
+                screen_.card_index = apps_page_;
+                screen_.card_count = std::max<size_t>(1, (app_count_ + 3) / 4);
+                title(Tr("我的应用", "My apps"));
+                const size_t first = apps_page_ * 4;
+                for (size_t i = first; i < app_count_ && i < first + 4; ++i) {
+                    row(apps_[i].descriptor.name);
+                    agent_system::Cover cover;
+                    if (agent_system::ReadCover(apps_[i].slot, &cover) == ESP_OK)
+                        screen_.grid[i - first] = {cover.slot, cover.revision};
+                }
+            } else if (page_ == Page::kHome) {
                 screen_.kind = amoled_ui::View::kCarousel;
                 screen_.card_index = carousel_.Index();
                 screen_.card_count = carousel_.Pages();
@@ -358,8 +542,10 @@ class AmoledFactoryApplication : public Application {
                 snprintf(screen_.app_id, sizeof screen_.app_id, "%s", app.descriptor.app_id);
                 snprintf(screen_.detail, sizeof screen_.detail, "%s",
                          app.release_version[0] ? app.release_version : app.version);
-                screen_.cover_slot = cover_.slot;
-                screen_.cover_revision = cover_.revision;
+                agent_system::Cover detail_cover;
+                (void)agent_system::ReadCover(app.slot, &detail_cover);
+                screen_.cover_slot = detail_cover.slot;
+                screen_.cover_revision = detail_cover.revision;
             } else {
                 const auto& app = apps_[selected_];
                 title(page_ == Page::kRemove ? Tr("确认卸载？", "Remove this app?")
@@ -376,14 +562,199 @@ class AmoledFactoryApplication : public Application {
                 }
             }
         }
+        if (tile_home_) screen_.launcher_shell = true;
         if (hardware_services_)
             hardware_services_->Decorate(screen_);
         amoled_ui::SetScreen(screen_);
+    }
+    static const char* InstallStageName(agent_system::InstallStage stage) {
+        using S = agent_system::InstallStage;
+        switch (stage) {
+            case S::kWaitCover:
+                return Tr("等待封面任务结束", "Waiting for cover sync");
+            case S::kInspect:
+                return Tr("检查应用与空间", "Checking apps and space");
+            case S::kTicket:
+                return Tr("获取下载信息", "Getting download details");
+            case S::kConnect:
+                return Tr("连接下载服务器", "Connecting to server");
+            case S::kHeader:
+                return Tr("检查固件格式", "Checking image identity");
+            case S::kAllocate:
+                return Tr("分配应用空间", "Allocating app space");
+            case S::kErase:
+                return Tr("准备设备存储", "Preparing storage");
+            case S::kDownload:
+                return Tr("下载并写入", "Downloading and writing");
+            case S::kVerify:
+                return Tr("校验固件", "Verifying firmware");
+            case S::kSave:
+                return Tr("保存安装记录", "Saving app record");
+            case S::kPublish:
+                return Tr("完成应用布局", "Publishing app layout");
+            case S::kDone:
+                return Tr("安装完成", "Installed");
+        }
+        return "-";
+    }
+    static const char* InstallReason(esp_err_t error, agent_system::InstallStage stage) {
+        if (error == agent_system::kCancelled)
+            return Tr("下载已中断，下次需从头下载。",
+                      "Download interrupted. Next attempt starts over.");
+        if (error == ESP_ERR_INVALID_VERSION)
+            return Tr("固件与设备不兼容，或文件是启动器／整机包。",
+                      "Incompatible image, launcher or full-device package.");
+        if (error == ESP_ERR_INVALID_SIZE)
+            return Tr("文件大小与目录不一致，或超过可用空间。",
+                      "File size differs from the catalog or available space.");
+        if (error == ESP_ERR_INVALID_CRC)
+            return Tr("文件不完整或校验失败，请重新下载。",
+                      "Incomplete file or checksum mismatch. Download again.");
+        if (error == ESP_ERR_INVALID_RESPONSE || error == ESP_ERR_TIMEOUT)
+            return Tr("网络连接中断、超时或服务器响应不完整。",
+                      "Connection interrupted, timed out or response incomplete.");
+        if (error == ESP_ERR_NO_MEM)
+            return Tr("可用内存不足，请稍后重试。", "Not enough memory. Try again later.");
+        if (error == agent_system::kNoAppSpace || error == agent_system::kSlotsFull ||
+            error == agent_system::kLegacySlotsFull)
+            return Tr("应用空间不足，请先卸载其他应用。",
+                      "Not enough app space. Remove another app first.");
+        if (error == agent_system::kNeedsFullPackage)
+            return Tr("需要先通过 USB 更新完整启动器固件。",
+                      "Update the full launcher package over USB first.");
+        if (error == agent_system::kAlreadyInstalled)
+            return Tr("此应用已经安装，更新前请先卸载。",
+                      "App already installed. Remove it before updating.");
+        if (error == agent_system::kUnsupportedPackage)
+            return Tr("需要纯应用 .bin，不能安装整机包。", "A pure application .bin is required.");
+        if (error == ESP_ERR_INVALID_STATE)
+            return Tr("操作未完成，可能已被重启中断，请重新选择应用。",
+                      "Operation incomplete or interrupted by restart. Select the app again.");
+        if (stage == agent_system::InstallStage::kErase)
+            return Tr("无法擦除目标应用分区，请检查设备存储。",
+                      "Unable to erase the target app partition.");
+        if (stage == agent_system::InstallStage::kSave)
+            return Tr("无法保存安装记录，请检查设备存储。", "Unable to save installation records.");
+        if (stage == agent_system::InstallStage::kDownload)
+            return Tr("下载或写入存储失败，请重新下载。",
+                      "Download or flash write failed. Download again.");
+        if (stage == agent_system::InstallStage::kVerify)
+            return Tr("固件校验失败，文件损坏或格式不受支持。",
+                      "Image verification failed: damaged or unsupported image.");
+        return Tr("操作失败，请根据下方阶段和错误码重试。",
+                  "Operation failed. Check the stage and error code below.");
+    }
+    template <class Row, class Title>
+    void RenderJob(const Row& row, const Title& title) {
+        using J = FactoryStoreJob;
+        const auto job = store_job_->Read();
+        const auto& result = job.result;
+        const auto& status = result.status;
+        if (job.running) {
+            screen_.kind = amoled_ui::View::kInfo;
+            screen_.busy = true;
+            screen_.progress =
+                status.total && status.received
+                    ? static_cast<int>(uint64_t(status.received) * 100 / status.total)
+                    : -1;
+            title(pending_launch_[0]                 ? Tr("正在结束下载…", "Stopping download...")
+                  : result.kind == J::Kind::kCatalog ? Tr("获取在线应用", "Loading online apps")
+                                                     : InstallStageName(status.stage));
+            snprintf(screen_.detail, sizeof screen_.detail, "%s", result.name);
+            const auto rate =
+                status.elapsed_ms ? uint64_t(status.received) * 1000 / status.elapsed_ms / 1024 : 0;
+            snprintf(screen_.info, sizeof screen_.info, "%s\n%lu / %lu KB · %llu KB/s", result.name,
+                     static_cast<unsigned long>(status.received / 1024),
+                     static_cast<unsigned long>(status.total / 1024),
+                     static_cast<unsigned long long>(rate));
+            return;
+        }
+        title(result.state == J::State::kRestart     ? Tr("应用已写入", "App written")
+              : result.state == J::State::kSuccess   ? Tr("安装完成", "Installed")
+              : result.state == J::State::kCancelled ? Tr("下载已中断", "Download interrupted")
+              : result.kind == J::Kind::kCatalog     ? Tr("应用列表加载失败", "Unable to load apps")
+                                                 : Tr("下载安装失败", "Download/install failed"));
+        if (result.state == J::State::kRestart) {
+            snprintf(screen_.info, sizeof screen_.info,
+                     Tr("%s\n请重启以刷新应用布局。重启后将确认安装结果。",
+                        "%s\nRestart to refresh app layout. The installation result is verified "
+                        "after restart."),
+                     result.name);
+            row(Tr("完成并重启", "Finish and restart"));
+            row(Tr("返回主页，稍后完成", "Home, finish later"));
+        } else if (result.state == J::State::kSuccess) {
+            snprintf(screen_.info, sizeof screen_.info, "%s\n%s", result.name, result.release);
+            row(Tr("查看我的应用", "View my apps"));
+            row(Tr("知道了，返回主页", "Done, go home"));
+        } else {
+            char header[320];
+            snprintf(header, sizeof header, "%s\n%s\n%s: %s\n%s (0x%x)\n%lu / %lu KB\n",
+                     result.name, InstallReason(status.error, status.stage), Tr("阶段", "Stage"),
+                     InstallStageName(status.stage), esp_err_to_name(status.error),
+                     unsigned(status.error), static_cast<unsigned long>(status.received / 1024),
+                     static_cast<unsigned long>(status.total / 1024));
+            std::string text = header;
+            if (status.error == agent_system::kStoreError) {
+                char server[192];
+                snprintf(server, sizeof server, "HTTP %d %.47s\nrequestId: %.79s\n",
+                         result.store.http_status, result.store.code, result.store.request_id);
+                text = std::string(result.name) + "\n" + InstallStageName(status.stage) + "\n" +
+                       server + result.store.message + "\n" + esp_err_to_name(status.error);
+            } else if (status.http_status) {
+                text += "HTTP " + std::to_string(status.http_status);
+            }
+            if (status.network_errno)
+                text += " errno=" + std::to_string(status.network_errno);
+            size_t length = std::min(text.size(), sizeof screen_.info - 1);
+            while (length && (static_cast<unsigned char>(text[length]) & 0xC0) == 0x80)
+                --length;
+            memcpy(screen_.info, text.data(), length);
+            screen_.info[length] = 0;
+            row(Tr("返回下载列表", "Back to downloads"));
+            row(Tr("知道了，返回主页", "Done, go home"));
+        }
+    }
+    void PollStoreJob() {
+        if (!store_job_)
+            return;
+        const auto job = store_job_->Read();
+        if (pending_launch_[0] && !job.running) {
+            char slot[sizeof pending_launch_];
+            snprintf(slot, sizeof slot, "%s", pending_launch_);
+            pending_launch_[0] = 0;
+            if (!Check(agent_system::Launch(slot)))
+                page_ = Page::kJobResult;
+            ++view_;
+            ++navigation_;
+            Publish();
+        }
+        if (job.revision == seen_job_revision_)
+            return;
+        seen_job_revision_ = job.revision;
+        if (!job.running && job.result.state != FactoryStoreJob::State::kNone) {
+            if (job.result.kind == FactoryStoreJob::Kind::kCatalog &&
+                job.result.state == FactoryStoreJob::State::kSuccess) {
+                store_job_->CopyCatalog(catalog_, &catalog_count_, &catalog_page_);
+                store_job_->Acknowledge();
+                if (page_ == Page::kJobProgress)
+                    page_ = Page::kCatalog;
+                retry_requested_ = true;
+            } else {
+                if (job.result.state == FactoryStoreJob::State::kSuccess)
+                    RefreshLocal();
+                if (page_ == Page::kJobProgress)
+                    page_ = Page::kJobResult;
+            }
+            ++view_;
+            ++navigation_;
+        }
+        Publish();
     }
     void ControlLoop() {
         amoled_ui::ButtonDebounce button;
         int64_t next_update = 0;
         while (true) {
+            PollStoreJob();
             amoled_ui::Input input;
             const bool received = xQueueReceive(events_, &input, pdMS_TO_TICKS(30)) == pdTRUE;
             const bool fresh =
@@ -395,7 +766,10 @@ class AmoledFactoryApplication : public Application {
             if (fresh) {
                 ++view_;
                 ++navigation_;
-                if (input.action == amoled_ui::TouchAction::kSystem)
+                if (input.action == amoled_ui::TouchAction::kHome) {
+                    menu_.Close();
+                    Home();
+                } else if (input.action == amoled_ui::TouchAction::kSystem)
                     menu_.Open();
                 else if (menu_.Active())
                     menu_.Handle(input);
@@ -406,12 +780,18 @@ class AmoledFactoryApplication : public Application {
                 else if (input.action == amoled_ui::TouchAction::kBack) {
                     if (page_ == Page::kRemove)
                         page_ = Page::kLocalDetail;
+                    else if (page_ == Page::kInterrupt)
+                        page_ = Page::kLocalDetail;
                     else if (page_ == Page::kLocalDetail)
-                        Home();
+                        tile_home_ ? Apps() : Home();
                     else if (page_ == Page::kCatalogDetail)
+                        page_ = Page::kCatalog;
+                    else if (page_ == Page::kJobResult && catalog_count_)
                         page_ = Page::kCatalog;
                     else
                         Home();
+                } else if (page_ == Page::kDashboard && input.action == amoled_ui::TouchAction::kNextCard) {
+                    Apps();
                 } else if (page_ == Page::kHome &&
                            (input.action == amoled_ui::TouchAction::kPreviousCard ||
                             input.action == amoled_ui::TouchAction::kNextCard)) {
@@ -447,7 +827,7 @@ class AmoledFactoryApplication : public Application {
                     ++navigation_;
                     Publish();
                 }
-                if (hardware_services_->Tick(!sync_busy_.load())) {
+                if (hardware_services_->Tick(!sync_busy_.load() && !StoreRunning())) {
                     char info[384]{};
                     hardware_services_->DeviceInfo(info, sizeof info);
                     menu_.SetDeviceInfo(info);
@@ -468,11 +848,16 @@ class AmoledFactoryApplication : public Application {
         }
     }
     void TickCoverSync() {
+        // No new cover work or cached-partition scans while an install owns flash,
+        // or after layout publication until IDF reloads the partition table.
+        if (StoreRunning() || NeedsRestart())
+            return;
         const uint32_t app_revision = agent_system::Revision();
         if (app_revision != seen_app_revision_) {
             seen_app_revision_ = app_revision;
             RefreshLocal();
-            Home();
+            if (page_ != Page::kJobResult && page_ != Page::kInterrupt)
+                Home();
         }
         if (!cover_task_)
             return;
@@ -599,8 +984,9 @@ class AmoledFactoryApplication : public Application {
         if (now < self->progress_at_ && received != total)
             return;
         self->progress_at_ = now + 250000;
+        self->screen_.progress = total ? static_cast<int>(static_cast<uint64_t>(received) * 100 / total) : -1;
         snprintf(self->screen_.info, sizeof self->screen_.info, "%lu%%  (%lu / %lu KB)",
-                 static_cast<unsigned long>(static_cast<uint64_t>(received) * 100 / total),
+                 static_cast<unsigned long>(std::max(0, self->screen_.progress)),
                  static_cast<unsigned long>(received / 1024),
                  static_cast<unsigned long>(total / 1024));
         amoled_ui::SetScreen(self->screen_);
@@ -620,6 +1006,11 @@ class AmoledFactoryApplication : public Application {
     static void CoverEntry(void* context) {
         static_cast<AmoledFactoryApplication*>(context)->CoverLoop();
     }
+    const bool tile_home_;
+    std::unique_ptr<FactoryStoreJob> store_job_;
+    uint32_t seen_job_revision_ = 0;
+    char pending_launch_[17]{};
+    size_t apps_page_ = 0;
     AmoledHardware hardware_;
     std::unique_ptr<FactoryHardwareServices> hardware_services_;
     QueueHandle_t events_ = nullptr;

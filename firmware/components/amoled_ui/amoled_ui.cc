@@ -36,7 +36,8 @@ std::atomic<uint32_t> panel_errors_{0}, panel_recoveries_{0};
 std::atomic<uint32_t> touch_polls_{0}, touch_errors_{0}, max_touch_gap_ms_{0};
 std::atomic<uint32_t> volume_events_{0}, volume_commits_{0};
 int64_t last_touch_poll_at_ = 0;
-constexpr uint32_t kWhite = 0xF5F5F7, kMuted = 0x98989F, kBlue = 0x0A84FF;
+uint32_t kWhite = 0xF5F5F7, kMuted = 0x98989F, kBlue = 0x0A84FF;
+uint32_t kBackground = 0, kCard = 0x1C1C1E, kPressed = 0x38383C;
 AmoledFonts fonts_;
 RoundDisplay* panel_ = nullptr;
 RoundTouch* touch_ = nullptr;
@@ -197,7 +198,7 @@ lv_obj_t* Label(lv_obj_t* parent, const lv_font_t* font, uint32_t color, bool ce
 }
 lv_obj_t* Card(lv_obj_t* parent, int radius = 20) {
     auto* obj = lv_obj_create(parent); lv_obj_remove_style_all(obj);
-    lv_obj_set_style_bg_color(obj, lv_color_hex(0x1C1C1E), 0);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(kCard), 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(obj, radius, 0);
     lv_obj_set_style_border_color(obj, lv_color_hex(0x303034), 0);
@@ -206,7 +207,8 @@ lv_obj_t* Card(lv_obj_t* parent, int radius = 20) {
     return obj;
 }
 bool Dispatch(TouchAction action, int row = 0) {
-    if (pending_ || shown_busy_ || !handler_) return false;
+    if (pending_ || (shown_busy_ && action != TouchAction::kHome) || !handler_)
+        return false;
     Input input{}; input.action = action; input.row = row;
     input.view = shown_view_; input.at = esp_timer_get_time();
     if (!handler_(input, context_)) return false;
@@ -241,7 +243,7 @@ void BindClick(lv_obj_t* obj, int id) {
     lv_obj_add_event_cb(obj, Click, LV_EVENT_PRESSED, data);
     lv_obj_add_event_cb(obj, Click, LV_EVENT_PRESS_LOST, data);
     lv_obj_add_event_cb(obj, Click, LV_EVENT_CLICKED, data);
-    lv_obj_set_style_bg_color(obj, lv_color_hex(0x38383C), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(kPressed), LV_STATE_PRESSED);
 }
 void VolumeText(int value) {
     char text[48]; snprintf(text, sizeof text, Tr("音量  %d%%", "Volume  %d%%"), value);
@@ -279,8 +281,14 @@ void ScrollStyle(lv_obj_t* obj) {
     lv_obj_set_style_radius(obj, 2, LV_PART_SCROLLBAR);
 }
 void Build() {
+    if (card_renderer_ && card_renderer_->palette) {
+        const auto& colors = *card_renderer_->palette;
+        kBackground = colors.background; kCard = colors.card;
+        kWhite = colors.text; kMuted = colors.muted;
+        kBlue = colors.accent; kPressed = colors.pressed;
+    }
     auto* root = lv_screen_active(); lv_obj_remove_style_all(root);
-    lv_obj_set_style_bg_color(root, lv_color_black(), 0); lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(root, lv_color_hex(kBackground), 0); lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     ring_ = lv_obj_create(root); lv_obj_remove_style_all(ring_);
     lv_obj_set_pos(ring_, kRingInset, kRingInset); lv_obj_set_size(ring_, kRingDiameter, kRingDiameter);
@@ -448,10 +456,13 @@ void Render(void*) {
                 }
             }
             if (touch_ok) TrackTap(next);
+            // Edge gestures use the physical circle; ordinary taps retain the
+            // inset content boundary and cannot activate controls outside it.
+            const bool gesture_down = next.pressed && Inside(next.x, next.y, kDisplaySize / 2);
             if (next.pressed && !Inside(next.x, next.y)) {
                 next.pressed = false; click_cancelled_ = true;
             }
-            if (next.pressed) {
+            if (gesture_down) {
                 activity_at = now;
                 if (dim) {
                     dim = false;
@@ -463,13 +474,16 @@ void Render(void*) {
                     std::abs(next.y - contact_y_) > 12 && std::abs(next.y - contact_y_) > std::abs(next.x - contact_x_)) {
                     list_gesture_ = true; list_direction_ = next.y - contact_y_;
                 }
-            } else swallow_ = false;
+            } else
+                swallow_ = false;
             const bool volume_touch = !lv_obj_has_flag(volume_box_, LV_OBJ_FLAG_HIDDEN) &&
                 contact_y_ >= kVolume.y - 10 && contact_y_ <= kVolume.y + kVolume.h + 10;
-            const Swipe direction = swipe_.Update(next.pressed && !swallow_, next.x * 466 / DISPLAY_WIDTH, next.y * 466 / DISPLAY_HEIGHT, shown_view_, now, volume_touch);
+            const Swipe direction =
+                swipe_.Update(gesture_down && !swallow_, next.x * 466 / DISPLAY_WIDTH,
+                              next.y * 466 / DISPLAY_HEIGHT, shown_view_, now, volume_touch);
             bool sent = false;
             if (direction == Swipe::kSystem) sent = Dispatch(TouchAction::kSystem);
-            else if (shown_kind_ == View::kCarousel && direction == Swipe::kLeft) sent = Dispatch(TouchAction::kNextCard);
+            else if ((shown_kind_ == View::kCarousel || shown_kind_ == View::kFactoryHome) && direction == Swipe::kLeft) sent = Dispatch(TouchAction::kNextCard);
             else if (shown_kind_ == View::kCarousel && direction == Swipe::kRight) sent = Dispatch(TouchAction::kPreviousCard);
             else if (direction == Swipe::kHome) sent = Dispatch(TouchAction::kHome);
             else if (direction == Swipe::kLeft && shown_kind_ == View::kHome) sent = Dispatch(TouchAction::kMenu);
@@ -505,7 +519,8 @@ void Render(void*) {
             }
             shown_kind_ = screen.kind; shown_busy_ = screen.busy;
             const bool home = screen.kind == View::kHome;
-            const bool poster = screen.kind == View::kCarousel || screen.kind == View::kAppActions;
+            const bool poster = screen.kind == View::kCarousel || screen.kind == View::kAppActions ||
+                (card_renderer_ && card_renderer_->accepts && card_renderer_->accepts(screen));
             const bool quiet = screen.launcher_shell;
             const bool setup = home && (status.phase == AGENT_LINK_PHASE_SETUP ||
                 status.phase == AGENT_LINK_PHASE_PAIRING || status.phase == AGENT_LINK_PHASE_BLOCKED);
@@ -551,7 +566,7 @@ void Render(void*) {
             }
             Visible(latest_, home && !setup && lv_obj_get_scroll_bottom(answer_view_) > 24);
             text_applied_.store(text_sequence);
-            if (!home || setup) {
+            if ((!home || setup) && !poster) {
                 Mark(UiStage::kList);
                 const int old_y = lv_obj_get_scroll_y(list_);
                 int y = 0;
@@ -688,13 +703,20 @@ bool SameScreen(const Screen& a, const Screen& b) {
         a.launcher_shell != b.launcher_shell || a.add_card != b.add_card ||
         a.card_index != b.card_index || a.card_count != b.card_count ||
         a.cover_slot != b.cover_slot || a.cover_revision != b.cover_revision ||
+        a.storage_total != b.storage_total || a.storage_used != b.storage_used ||
+        a.battery_percent != b.battery_percent || a.wifi_connected != b.wifi_connected ||
+        a.wifi_setup_active != b.wifi_setup_active ||
+        strcmp(a.wifi_setup_ssid, b.wifi_setup_ssid) || a.progress != b.progress ||
         strcmp(a.app_id, b.app_id) || a.row_count != b.row_count || a.row_offset != b.row_offset ||
         a.navigation != b.navigation || a.activity != b.activity || a.view != b.view ||
         strcmp(a.pair_code, b.pair_code) || strcmp(a.title, b.title) ||
         strcmp(a.detail, b.detail) || strcmp(a.footer, b.footer) || strcmp(a.info, b.info) ||
-        strcmp(a.hardware_status, b.hardware_status))
+        strcmp(a.hardware_status, b.hardware_status) || strcmp(a.job_status, b.job_status))
         return false;
     for (int i = 0; i < kListRows; ++i) if (strcmp(a.rows[i], b.rows[i])) return false;
+    for (int i = 0; i < 4; ++i)
+        if (a.grid[i].cover_slot != b.grid[i].cover_slot ||
+            a.grid[i].cover_revision != b.grid[i].cover_revision) return false;
     return true;
 }
 void SetScreen(const Screen& screen) {
