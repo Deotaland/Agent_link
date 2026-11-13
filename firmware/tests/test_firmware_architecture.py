@@ -62,7 +62,8 @@ class FirmwareArchitectureTests(unittest.TestCase):
 
     def test_software_crypto_policy_is_only_for_sdgoods_factory(self):
         profile = self.profiles["sdgoods-wifi"]
-        software = {"CONFIG_MBEDTLS_HARDWARE_SHA": "n", "CONFIG_MBEDTLS_HARDWARE_AES": "n"}
+        software = {"CONFIG_MBEDTLS_HARDWARE_SHA": "n", "CONFIG_MBEDTLS_HARDWARE_AES": "n",
+                    "CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY": "y"}
         self.assertEqual(build.image_config_overrides(profile, "factory"), software)
         self.assertEqual(build.image_config_overrides(profile, "standard"), {})
         self.assertEqual(build.image_config_overrides(self.profile, "factory"), {})
@@ -89,9 +90,11 @@ class FirmwareArchitectureTests(unittest.TestCase):
             values = build.settings(config)
             self.assertEqual(values["CONFIG_MBEDTLS_HARDWARE_SHA"], "n")
             self.assertEqual(values["CONFIG_MBEDTLS_HARDWARE_AES"], "n")
+            self.assertEqual(values["CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY"], "y")
             self.assertFalse(build.prepare_image_config(profile, config))
             # IDF may place the overrides in the middle of sdkconfig.
             config.write_text("# CONFIG_MBEDTLS_HARDWARE_AES is not set\n"
+                              "CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y\n"
                               "CONFIG_AGENT_LINK_BUILD_FACTORY=y\n"
                               "# CONFIG_MBEDTLS_HARDWARE_SHA is not set\n"
                               "CONFIG_LOG_DEFAULT_LEVEL=4\n", encoding="utf-8")
@@ -104,6 +107,7 @@ class FirmwareArchitectureTests(unittest.TestCase):
             self.assertEqual(values["CONFIG_MBEDTLS_HARDWARE_SHA"], "y")
             self.assertEqual(values["CONFIG_MBEDTLS_HARDWARE_AES"], "n")
             self.assertEqual(values["CONFIG_LOG_DEFAULT_LEVEL"], "4")
+            self.assertNotIn("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY", values)
             self.assertNotIn("image_config", build.read_state())
             # Fresh configurations have no explicit crypto settings. Return to
             # absent values so normal SDK defaults apply to application builds.
@@ -113,6 +117,7 @@ class FirmwareArchitectureTests(unittest.TestCase):
             build.prepare_image_config(profile, config)
             self.assertNotIn("CONFIG_MBEDTLS_HARDWARE_SHA", build.settings(config))
             self.assertNotIn("CONFIG_MBEDTLS_HARDWARE_AES", build.settings(config))
+            self.assertNotIn("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY", build.settings(config))
 
     def test_image_policy_runs_when_profile_fingerprint_is_unchanged(self):
         profile = self.profiles["sdgoods-wifi"]

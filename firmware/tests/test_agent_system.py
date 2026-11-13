@@ -17,8 +17,9 @@ mode.add_argument('--download-codes', action='store_true', help='check six-digit
 mode.add_argument('--community', action='store_true', help='exercise anonymous production catalog and the actual dynamic installer')
 mode.add_argument('--dynamic-cancel', type=Path, help='fault-inject cancellation using an actual vendor application .bin')
 parser.add_argument('--download-code-snapshot', type=Path, help='exercise one real API download snapshot against the V5 installer')
+parser.add_argument('--firmware-code-snapshot', type=Path, help='exercise the new firmware-code API snapshot and binary against the V5 installer')
 args = parser.parse_args()
-community_mode = args.community or args.download_codes or bool(args.download_code_snapshot)
+community_mode = args.community or args.download_codes or bool(args.download_code_snapshot) or bool(args.firmware_code_snapshot)
 if (args.dynamic or args.community) and not args.packages_report:
     parser.error('--dynamic and --community require --packages-report')
 
@@ -27,7 +28,7 @@ build = root / "build/agent-system-tests"
 build.mkdir(parents=True, exist_ok=True)
 headers = ("esp_err.h", "esp_app_desc.h", "esp_crt_bundle.h", "esp_http_client.h", "esp_http_server.h",
            "esp_image_format.h", "esp_ota_ops.h", "esp_partition.h", "esp_system.h", "esp_timer.h", "freertos/FreeRTOS.h", "freertos/task.h", "nvs.h", "nvs_flash.h", "mbedtls/sha256.h", "esp_heap_caps.h", "esp_log.h", "esp_flash.h", "esp_flash_encrypt.h", "esp_rom_md5.h", "esp_attr.h", "esp_random.h")
-for name in headers:
+for name in (*headers, "mbedtls/x509.h"):
     path = build / "stubs" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('#include "'+('agent_system_dynamic_stubs.h' if args.dynamic or community_mode or args.dynamic_cancel else 'agent_system_stubs.h')+'"\n', encoding="utf-8")
@@ -84,18 +85,22 @@ for role in roles:
             if role == 'dynamic_cancel': selected_sources[0] = root/'tests/agent_system_dynamic_cancel_test.cc'
         if role == 'community':
             definitions += ['AGENT_SYSTEM_COMMUNITY=1', 'AGENT_COMMUNITY_ORIGIN="https://sugapi.deotaland.cn"', 'AGENT_COMMUNITY_PRODUCT=1', 'AGENT_COMMUNITY_REVISION=1']
-            selected_sources[0] = root/('tests/community_download_code_test.cc' if args.download_codes else 'tests/agent_system_community_test.cc')
+            selected_sources[0] = root/('tests/firmware_download_code_test.cc' if args.download_codes else 'tests/agent_system_community_test.cc')
             selected_sources.append(root/'components/agent_system/community_store.cc')
             if args.download_code_snapshot:
                 selected_sources[0] = root/'tests/community_live_code_test.cc'
+            if args.firmware_code_snapshot:
+                selected_sources[0] = root/'tests/firmware_live_code_test.cc'
+            if args.download_codes or args.firmware_code_snapshot:
+                definitions += ['AGENT_FIRMWARE_CODE_ORIGIN="https://bot.deotaland.cn"', 'AGENT_FIRMWARE_HARDWARE_ID=2']
     if role in ('journal','dynamic','community','dynamic_cancel'):
         import sys
         sys.path.insert(0,str(root/'tools'))
         from dynamic_layout import header
         from firmware_manifest import resolve_profiles, layout_info
         profile=resolve_profiles()['sdgoods-wifi']
-        profile['layout_info']=layout_info('sdgoods-v5' if args.ab_journal or args.dynamic or args.download_code_snapshot else 'sdgoods-v4')
-        if args.dynamic or args.download_code_snapshot:
+        profile['layout_info']=layout_info('sdgoods-v5' if args.ab_journal or args.dynamic or args.download_code_snapshot or args.firmware_code_snapshot else 'sdgoods-v4')
+        if args.dynamic or args.download_code_snapshot or args.firmware_code_snapshot:
             definitions = [d for d in definitions if not d.startswith('AGENT_SYSTEM_SLOT_COUNT=')]
             definitions += ['AGENT_SYSTEM_SLOT_COUNT=14', 'AGENT_SYSTEM_METADATA_PARTITION=\"app_meta\"']
         (build/'stubs/dynamic_layout_config.h').write_text(header(profile),encoding='utf-8')
@@ -114,5 +119,6 @@ for role in roles:
     subprocess.run([str(binary), *([str(args.packages_report.resolve())] if args.packages_report else []),
                     *([str(root/'build/images/sdgoods-wifi')] if args.dynamic or community_mode or args.dynamic_cancel else []),
                     *([str(args.dynamic_cancel.resolve())] if args.dynamic_cancel else []),
-                    *([str(args.download_code_snapshot.resolve())] if args.download_code_snapshot else [])],
+                    *([str(args.download_code_snapshot.resolve())] if args.download_code_snapshot else []),
+                    *([str(args.firmware_code_snapshot.resolve())] if args.firmware_code_snapshot else [])],
                    cwd=build,check=True)

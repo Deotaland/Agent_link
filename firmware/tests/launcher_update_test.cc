@@ -3,6 +3,7 @@
 #include "agent_system.h"
 #include "agent_launcher_boot.h"
 #include "dynamic_layout_config.h"
+#include "launcher_version.h"
 #include <fstream>
 #include <iterator>
 
@@ -14,9 +15,11 @@ esp_err_t FetchCover(const CatalogApp&, uint8_t*) {
 }  // namespace agent_system::community
 namespace {
 const std::string origin = "https://bot.deotaland.cn";
-const std::string check =
-    origin +
-    "/api/firmware/check-update?product_id=13&current_version_code=20000&chip_type=esp32-s3";
+const std::string check = origin +
+                          "/api/firmware/check-update?product_id=13&current_version_code=" +
+                          std::to_string(AGENT_LAUNCHER_VERSION_CODE) + "&chip_type=esp32-s3";
+const uint32_t candidate_code = AGENT_LAUNCHER_VERSION_CODE + 1;
+const std::string candidate_version = "test." + std::to_string(candidate_code);
 const std::string refresh = origin + "/api/firmware/42/download-url";
 const std::string direct = origin + "/api/firmware/42/download";
 const std::string cdn = "https://cdn.example.com/launcher.bin";
@@ -36,10 +39,10 @@ alboot_record State() {
 }
 std::string Release(const char* digest = nullptr, unsigned product = 13, bool official = true) {
     return "{\"code\":0,\"message\":\"\",\"success\":true,\"data\":{\"has_update\":true,\"firmware_"
-           "id\":42,\"version\":\"2.0.1\",\"version_code\":"
-           "20001,"
-           "\"product_id\":" +
-           std::to_string(product) + ",\"is_official\":" + (official ? "true" : "false") +
+           "id\":42,\"version\":\"" +
+           candidate_version + "\",\"version_code\":" + std::to_string(candidate_code) +
+           ",\"product_id\":" + std::to_string(product) +
+           ",\"is_official\":" + (official ? "true" : "false") +
            ",\"chip_type\":\"esp32-s3\",\"flash_address\":\"0x0\",\"file_"
            "size\":" +
            std::to_string(candidate.size()) + ",\"file_md5\":\"" + (digest ? digest : md5) +
@@ -97,6 +100,12 @@ int main(int argc, char** argv) {
     assert(launcher::Read().state == launcher::State::kError &&
            launcher::Read().http_status == 401);
     fixture::http_status[check] = 200;
+    fixture::open_errors[check] = ESP_ERR_HTTP_CONNECT;
+    fixture::tls_errors[check] = {MBEDTLS_ERR_X509_FATAL_ERROR, 8};
+    assert(launcher::Check() == 0);
+    Wait();
+    assert(launcher::Read().error == kCertificateError && strstr(launcher::Read().message, "证书"));
+    fixture::open_errors.clear();
     const auto writes = dynamic_fixture::mutations;
     for (const auto& response :
          {std::string(
@@ -114,6 +123,15 @@ int main(int argc, char** argv) {
     fixture::http_status[direct] = 302;
     fixture::http_headers[direct]["Location"] = cdn;
     fixture::responses[cdn] = candidate;
+    Available();
+    const auto before_tls = dynamic_fixture::mutations;
+    fixture::open_errors[cdn] = ESP_ERR_HTTP_CONNECT;
+    fixture::tls_errors[cdn] = {MBEDTLS_ERR_X509_FATAL_ERROR, 0};
+    assert(launcher::Install() == 0);
+    Wait();
+    assert(launcher::Read().error == kCertificateError && State().pending == 255 &&
+           dynamic_fixture::mutations == before_tls);
+    fixture::open_errors.clear();
     Available("00000000000000000000000000000000");
     assert(launcher::Install() == 0);
     Wait();

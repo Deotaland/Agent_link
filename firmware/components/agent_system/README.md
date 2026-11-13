@@ -117,14 +117,26 @@ submit them for review. Administrators collecting reviewed applications use
 a storage URL, PUT the raw file and confirm it before referencing the ready file
 in a draft. User/admin files are not interchangeable. Storage PUTs carry only
 the returned storage headers; account identity belongs to the business API.
-The Sugarat Factory uses `https://sugapi.deotaland.cn`: enter the six-digit code
-from the web platform, read `GET /api/v1/community/download-codes/{code}` and
-confirm installation before `POST /api/v1/community/download-codes/{code}/downloads`.
-Codes stay strings to preserve leading zeroes. The device rechecks the displayed
-play/version/size/hash before obtaining a ticket and verifies the ticket against
-that metadata. Same-host HTTP cover/file URLs are upgraded to HTTPS. Code lookup
-and downloads use a worker; returning home does not cancel installation.
-The public store requires no account or device authentication on this deployment.
+The Sugarat Factory uses anonymous
+`GET https://bot.deotaland.cn/api/firmware/code/{code}/download-url`. One response
+contains `download_url`, `firmware` and `product`. Codes stay strings to preserve
+leading zeroes. Before installation, another GET refreshes the URL and checks
+the same firmware ID, version code, release version, size and MD5. The parser
+requires approved/public/published ESP32-S3 firmware and the board's configured
+hardware ID (`2` for Sugarat Button). Different application products on that
+hardware are supported. `flash_address` does not override pool allocation.
+MD5 is verified during the existing streaming install; ESP image integrity,
+native SDK capability and board compatibility checks remain mandatory. Installed
+firmware identity, code and public release label survive reboot independently
+of the binary's own IDF version. Covers use the product icon with hardware-icon
+fallback. Code lookup and downloads use a worker; returning home does not cancel
+installation. These requests carry no account or device authentication.
+The separate community catalog keeps its existing origin/SHA-256/ticket contract.
+Certificate verification failures return `kCertificateError`, retain
+`TLS_CERT_VERIFY_FAILED` and a readable reason, and stop immediately before any
+firmware write. Logs include the TLS code and verification flags. Transient
+connection failures keep their bounded retries; certificate and hostname checks
+remain enabled.
 For download diagnostics, installation logs the complete temporary file URL once.
 All metadata requests (including detail lookup and ticket POST) and installer file
 headers have a 60-second wait budget and up to two retries before firmware
@@ -134,8 +146,7 @@ Each ticket POST generates one Idempotency-Key and reuses it across timeout retr
 a new logical request gets a fresh key. Cancellation is checked between metadata
 I/O operations and retries. Connection failures and transient gateway errors may
 retry; long server cooldowns, invalid/expired tickets and image validation failures stop.
-Code assignment through `PATCH /api/v1/admin/plays/{playId}` remains an administrator
-action on the platform, including after submission approval; it is not a device API.
+The device reads platform download codes and does not call code-assignment APIs.
 
 For Sugarat Button's active V5 layout, application metadata lives in `app_meta`,
 table transactions in `layout_journal`, and app labels are `app_00`..`app_13`.

@@ -20,11 +20,13 @@ class FactoryStoreJob {
     // This private receipt is versioned independently of application image ABI.
     // Bump its magic/key when changing InstallStatus layout or stage numbering.
     struct Result {
-        uint32_t magic = 0x414C4A32;
+        uint32_t magic = 0x414C4A33;
         Kind kind = Kind::kCatalog;
         State state = State::kNone;
         unsigned page = 1;
         uint64_t play = 0, version = 0;
+        uint64_t firmware = 0;
+        uint32_t firmware_version = 0;
         char name[64]{}, release[32]{};
         agent_system::InstallStatus status{};
         agent_system::StoreError store{};
@@ -76,6 +78,8 @@ class FactoryStoreJob {
         result_.state = State::kRunning;
         result_.play = app.community_play;
         result_.version = app.community_version;
+        result_.firmware = app.firmware_id;
+        result_.firmware_version = app.firmware_version_code;
         result_.status.total = app.size;
         result_.status.stage = agent_system::InstallStage::kWaitCover;
         snprintf(result_.name, sizeof result_.name, "%s", app.name);
@@ -136,9 +140,9 @@ class FactoryStoreJob {
         if (nvs_open_from_partition(agent_system::kMetadataPartition, "factory_job", NVS_READONLY, &handle) != ESP_OK)
             return false;
         size_t size = sizeof result_;
-        const auto error = nvs_get_blob(handle, "result_v2", &result_, &size);
+        const auto error = nvs_get_blob(handle, "result_v3", &result_, &size);
         nvs_close(handle);
-        if (error != ESP_OK || size != sizeof result_ || result_.magic != 0x414C4A32 ||
+        if (error != ESP_OK || size != sizeof result_ || result_.magic != 0x414C4A33 ||
             result_.kind > Kind::kLookupCode || result_.state > State::kCancelled ||
             result_.status.stage > agent_system::InstallStage::kDone ||
             !memchr(result_.name, 0, sizeof result_.name) ||
@@ -157,10 +161,12 @@ class FactoryStoreJob {
             bool installed = false;
             for (size_t i = 0; i < count; ++i) {
                 const auto& app = apps[i];
-                if (result_.play ? app.community_play == result_.play &&
-                                       app.community_version == result_.version
-                                 : !strcmp(app.descriptor.app_id, result_.status.app_id) &&
-                                       !strcmp(app.version, result_.release))
+                if (result_.firmware ? app.firmware_id == result_.firmware &&
+                                           app.firmware_version_code == result_.firmware_version
+                    : result_.play ? app.community_play == result_.play &&
+                                         app.community_version == result_.version
+                                   : !strcmp(app.descriptor.app_id, result_.status.app_id) &&
+                                         !strcmp(app.version, result_.release))
                     installed = true;
             }
             result_.state = installed ? State::kSuccess : State::kFailed;
@@ -184,7 +190,7 @@ class FactoryStoreJob {
         auto error = nvs_open_from_partition(agent_system::kMetadataPartition, "factory_job", NVS_READWRITE, &handle);
         if (error != ESP_OK)
             return error;
-        error = nvs_set_blob(handle, "result_v2", &result_, sizeof result_);
+        error = nvs_set_blob(handle, "result_v3", &result_, sizeof result_);
         if (error == ESP_OK)
             error = nvs_commit(handle);
         nvs_close(handle);

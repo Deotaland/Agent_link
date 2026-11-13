@@ -46,6 +46,12 @@ if(NOT _store_error)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE
         AGENT_COMMUNITY_ORIGIN="${_store_origin}" AGENT_COMMUNITY_PRODUCT=${_store_product}
         AGENT_COMMUNITY_REVISION=${_store_revision})
+    string(JSON _code_origin ERROR_VARIABLE _code_error GET "${BUILD_PROFILE}" community_store download_code_origin)
+    if(NOT _code_error)
+        string(JSON _code_hardware GET "${BUILD_PROFILE}" community_store download_code_hardware_id)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE
+            AGENT_FIRMWARE_CODE_ORIGIN="${_code_origin}" AGENT_FIRMWARE_HARDWARE_ID=${_code_hardware})
+    endif()
 endif()
 string(JSON _model GET "${SYSTEM_MANIFEST}" model)
 string(JSON _layout GET "${SYSTEM_MANIFEST}" layout)

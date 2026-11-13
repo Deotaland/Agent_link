@@ -140,6 +140,24 @@ int main() {
     assert(confirmed.Read().result.state == Job::State::kSuccess);
     job.Acknowledge();
 
+    // Firmware-code releases can differ from the binary's IDF version. Reconcile
+    // the durable receipt using firmware identity rather than the display label.
+    auto firmware_app = app;
+    firmware_app.community_play = firmware_app.community_version = 0;
+    firmware_app.firmware_id = 19;
+    firmware_app.firmware_version_code = 1;
+    snprintf(firmware_app.version, sizeof firmware_app.version, "1.0.0");
+    assert(job.StartInstall(firmware_app) == ESP_OK);
+    Until([&] { return !job.Read().running; });
+    installed = {};
+    installed.firmware_id = 19;
+    installed.firmware_version_code = 1;
+    snprintf(installed.version, sizeof installed.version, "2.0.0");
+    Job firmware_confirmed;
+    assert(firmware_confirmed.Restore(&installed, 1));
+    assert(firmware_confirmed.Read().result.state == Job::State::kSuccess);
+    job.Acknowledge();
+
     assert(job.StartCatalog(2) == ESP_OK);
     Until([&] { return !job.Read().running; });
     CatalogApp apps[kMaxApps];

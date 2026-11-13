@@ -14,6 +14,7 @@
 #endif
 #if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
 #include "dynamic_slots.h"
+#include "esp_rom_md5.h"
 #endif
 
 #include <algorithm>
@@ -236,10 +237,10 @@ bool CopyString(cJSON* object, const char* key, char* out, size_t capacity) {
     memcpy(out, value->valuestring, strlen(value->valuestring) + 1);
     return true;
 }
-bool Digest(const char* hex, unsigned char out[32]) {
-    if (strlen(hex) != 64)
+bool Digest(const char* hex, unsigned char* out, size_t bytes = 32) {
+    if (strlen(hex) != bytes * 2)
         return false;
-    for (size_t i = 0; i < 32; ++i) {
+    for (size_t i = 0; i < bytes; ++i) {
         auto nibble = [](char c) {
             return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
         };
@@ -911,13 +912,22 @@ esp_err_t SyncStoreCovers() {
             return error;
         esp_err_t result = ESP_OK;
         for (size_t i = 0; i < count; ++i) {
-            if (!installed[i].community_play) {
+            if (!installed[i].community_play && !installed[i].firmware_id) {
                 cover_cache::NotListed(installed[i].slot);
                 continue;
             }
             CatalogApp app;
-            error = community::Detail(installed[i].community_play, installed[i].community_version,
-                                      &app);
+            if (installed[i].firmware_id) {
+                error = community::LookupCode(installed[i].download_code, &app);
+                if (error == ESP_OK &&
+                    (app.firmware_id != installed[i].firmware_id ||
+                     app.firmware_version_code != installed[i].firmware_version_code)) {
+                    cover_cache::NotListed(installed[i].slot);
+                    continue;
+                }
+            } else
+                error = community::Detail(installed[i].community_play,
+                                          installed[i].community_version, &app);
             if (error == ESP_OK) {
                 snprintf(app.app_id, sizeof app.app_id, "%s", installed[i].descriptor.app_id);
                 error = cover_cache::Update(installed[i].slot, app);
@@ -957,14 +967,21 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
         return kCancelled;
     CatalogApp app = requested;
 #if defined(AGENT_SYSTEM_COMMUNITY)
-    if (app.community_play && app.package != CatalogApp::Package::kApplication)
+    if ((app.community_play || app.firmware_id) && app.package != CatalogApp::Package::kApplication)
         return kUnsupportedPackage;
 #endif
-    unsigned char expected[32];
-    if (!Terminated(app.app_id, sizeof app.app_id) || !app.app_id[0] ||
-        !Terminated(app.sha256, sizeof app.sha256) || !Digest(app.sha256, expected) || !app.size ||
-        app.size > kAppImageMaxBytes)
+    unsigned char expected[32]{}, expected_md5[16]{};
+    const bool has_sha256 =
+        Terminated(app.sha256, sizeof app.sha256) && Digest(app.sha256, expected);
+    const bool has_md5 = app.firmware_id && Terminated(app.file_md5, sizeof app.file_md5) &&
+                         Digest(app.file_md5, expected_md5, 16);
+    if (!Terminated(app.app_id, sizeof app.app_id) || !app.app_id[0] || (!has_sha256 && !has_md5) ||
+        !app.size || app.size > kAppImageMaxBytes)
         return ESP_ERR_INVALID_ARG;
+#if !defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
+    if (!has_sha256 || app.firmware_id)
+        return kNeedsFullPackage;
+#endif
 #if !defined(AGENT_SYSTEM_SDGOODS_COMPAT)
     if (app.format != ImageFormat::kAgentLink)
         return ESP_ERR_INVALID_ARG;
@@ -986,13 +1003,14 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
         else if (result != ESP_OK)
             return result;
         else if (!strcmp(existing.descriptor.app_id, app.app_id) ||
-                 (app.community_play && existing.community_play == app.community_play))
+                 (app.community_play && existing.community_play == app.community_play) ||
+                 (app.firmware_id && existing.firmware_id == app.firmware_id))
             return kAlreadyInstalled;
     }
     if (!free_mask)
         return kSlotsFull;
 #if defined(AGENT_SYSTEM_COMMUNITY)
-    if (app.community_play) {
+    if (app.community_play || app.firmware_id) {
         if (!trace.Step(InstallStage::kTicket))
             return kCancelled;
         const auto prepared = community::PrepareDownload(
@@ -1013,6 +1031,9 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
     agentlink::ota::Sha256 hash;
     if (!hash.Start())
         return ESP_FAIL;
+    md5_context_t md5;
+    if (has_md5)
+        esp_rom_md5_init(&md5);
     uint8_t buffer[4096];
     uint32_t total = 0;
     if (!trace.Step(InstallStage::kHeader))
@@ -1033,7 +1054,7 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
         idf.magic_word != ESP_APP_DESC_MAGIC_WORD ||
         !DecodeIdentity(idf, raw, &identity, &format) || !strcmp(identity.app_id, "agent.launcher"))
         return ESP_ERR_INVALID_VERSION;
-    if (app.community_play) {
+    if (app.community_play || app.firmware_id) {
         if (!memchr(idf.version, 0, sizeof idf.version))
             return ESP_ERR_INVALID_VERSION;
         app.format = format;
@@ -1098,6 +1119,8 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
         return kCancelled;
     if (!hash.Update(buffer, total))
         return ESP_FAIL;
+    if (has_md5)
+        esp_rom_md5_update(&md5, buffer, total);
     int64_t write_at = esp_timer_get_time();
     err = esp_partition_write(target, 0, buffer, total);
     trace.Received(total, 0, esp_timer_get_time() - write_at);
@@ -1116,6 +1139,8 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
         const int64_t read_us = esp_timer_get_time() - read_at;
         if (!hash.Update(buffer, bytes))
             return ESP_FAIL;
+        if (has_md5)
+            esp_rom_md5_update(&md5, buffer, bytes);
         write_at = esp_timer_get_time();
         err = esp_partition_write(target, total, buffer, bytes);
         total += bytes;
@@ -1128,9 +1153,15 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
     if (!trace.Step(InstallStage::kVerify))
         return kCancelled;
     uint8_t actual[32];
-    if (!hash.Finish(actual) || memcmp(actual, expected, 32) ||
+    if (!hash.Finish(actual) || (has_sha256 && memcmp(actual, expected, 32)) ||
         !esp_http_client_is_complete_data_received(client.handle))
         return ESP_ERR_INVALID_CRC;
+    if (has_md5) {
+        uint8_t actual_md5[16];
+        esp_rom_md5_final(actual_md5, &md5);
+        if (memcmp(actual_md5, expected_md5, sizeof actual_md5))
+            return ESP_ERR_INVALID_CRC;
+    }
     esp_partition_pos_t position{target->address, target->size};
     esp_image_metadata_t metadata{};
     err = esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &position, &metadata);

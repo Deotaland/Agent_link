@@ -28,6 +28,7 @@ constexpr esp_err_t kLegacySlotsFull = 0x7F06;
 constexpr esp_err_t kStoreError = 0x7F07;
 constexpr esp_err_t kUnsupportedPackage = 0x7F08;
 constexpr esp_err_t kCancelled = 0x7F09;
+constexpr esp_err_t kCertificateError = 0x7F0A;
 constexpr const char* kBoard = AGENT_SYSTEM_BOARD_MODEL;
 constexpr const char* kSdk = "0.1.0";
 // Stored immediately after esp_app_desc at image offset 0x120. Keep this ABI stable.
@@ -55,6 +56,9 @@ struct App {
     ImageFormat format = ImageFormat::kAgentLink;
     uint64_t community_play = 0, community_version = 0;
     char release_version[32]{};
+    uint64_t firmware_id = 0;
+    uint32_t firmware_version_code = 0;
+    char download_code[7]{};
 };
 struct CatalogApp {
     char app_id[32]{}, name[64]{}, version[32]{};
@@ -69,6 +73,9 @@ struct CatalogApp {
     char filename[96]{};
     char release_version[32]{};
     char download_code[7]{};
+    uint64_t firmware_id = 0;
+    uint32_t firmware_version_code = 0;
+    char file_md5[33]{};
 };
 struct CatalogPage {
     unsigned page = 1;
@@ -150,7 +157,8 @@ esp_err_t FetchCatalog(CatalogApp* apps, size_t capacity, size_t* count);
 esp_err_t FetchCatalogPage(CatalogApp* apps, size_t capacity, size_t* count, unsigned page,
                            CatalogPage* pagination);
 bool CommunityCatalog();
-// Six ASCII digits, including leading zeroes. Metadata only; no download ticket.
+// Six ASCII digits, including leading zeroes. Fetches metadata and a temporary
+// URL; installation refreshes it and verifies the displayed release before writing.
 esp_err_t FetchDownloadCode(const char* code, CatalogApp* app);
 void LastStoreError(StoreError* error);
 esp_err_t SyncStoreCovers();

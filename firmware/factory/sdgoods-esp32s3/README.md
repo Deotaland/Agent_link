@@ -55,7 +55,7 @@ rate and transition still require hardware acceptance.
   reference launcher's layout. Enter the code shown on the web platform (including
   leading zeroes), tap **Find**, review the app name/version/size and confirm
   **Download and install**. Back returns to the entered code; **?** explains where
-  to find it. Administrators assign codes on the platform after submission approval.
+  to find it. Codes are shown on the platform's public approved firmware page.
 - Tap an app to open its actions; removal requires confirmation.
 - The upper-left arrow returns one level. Swiping up from the physical bottom
   edge returns directly home, including from settings and download progress.
@@ -76,7 +76,7 @@ rate and transition still require hardware acceptance.
   including on the download/progress and hardware-test pages. A normal tap or
   list scroll does not open the menu.
 - **Settings > WiFi** uses the common Agent Link provisioning flow and existing
-  isolated settings. App downloads use the production community download-code API;
+  isolated settings. App downloads use the production firmware download-code API;
   provisioning continues to use the common Agent Link flow.
 - Without WiFi the home summary becomes a tappable setup guide. While the
   setup hotspot is active it shows the actual hotspot name and `192.168.4.1`;
@@ -106,23 +106,28 @@ rate and transition still require hardware acceptance.
   explicitly **unknown** because no charger-status signal is documented.
 - Swipe up from the bottom, or press the GPIO6 key, to return home.
 - Join `Sugarat-Button-XXXX` and open `http://192.168.4.1` for initial WiFi setup.
-- The default app service is the production community at `https://sugapi.deotaland.cn`,
-  product `1`, hardware revision `1`. Factory anonymously queries
-  `GET /api/v1/community/download-codes/{code}` for published play/firmware details,
-  then requests `POST /api/v1/community/download-codes/{code}/downloads` only after
-  confirmation. It rechecks play/version/size/SHA-256 before requesting a ticket,
-  and verifies the ticket against the displayed firmware. The six digits are
-  never converted to a number. No account ID, device authentication or binding is needed
-  for this store flow. These community IDs are separate from Agent platform product 13.
+- Factory anonymously queries `https://bot.deotaland.cn/api/firmware/code/{code}/download-url`.
+  One GET supplies the temporary `download_url`, `firmware` and `product` details.
+  After confirmation, another GET refreshes the URL and must match the displayed
+  firmware ID/version/size/MD5 before downloading. The nested firmware must be
+  public, approved and published; product `hardware_id=2` identifies Sugarat Button,
+  independently of which application product owns the firmware. Chip and actual
+  image compatibility are checked separately. The six digits stay strings.
+  The installer verifies the received size/MD5 and full ESP image before publishing
+  an app. It preserves the public release label separately from the binary's IDF
+  version. Backend `flash_address` is USB metadata; allocation uses the app pool.
+  Code lookup and file downloads carry no account/device headers or cookies.
+  Cover/catalog tooling retains `https://sugapi.deotaland.cn`, community product `1`
+  and hardware revision `1`; these IDs do not select the firmware-code hardware.
   Saved defaults using the previous production IP migrate to the HTTPS domain.
   Same-host HTTP file URLs emitted by the backend are upgraded to HTTPS.
   The previous port-8765 test catalog migrates once; subsequent explicit overrides
   remain available at `http://DEVICE_IP:8081` and in the system menu for cover sync
   and SDK catalog tooling. Device code entry always uses the configured production
-  community origin. The device never calls the administrator code-assignment API.
+  firmware-code origin. The device never calls the administrator code-assignment API.
 - Reviewed original SDGOODS pure applications and native Agent Link applications
   keep their exact binary bytes. Installation discovers the actual image identity,
-  validates chip/ABI/size/full image/SHA-256 and records the community play/version
+  validates chip/ABI/size/full image and the service checksum, and records release identity
   separately in `app_meta`. ZIP, UF2 and full-device packages cannot be installed by
   the launcher; the backend must publish a reviewed pure `.bin`. This does not
   add an official SDGOODS browser or local firmware import endpoint on the device.
@@ -195,6 +200,13 @@ device acceptance. If both Launchers are invalid the immutable entry stays in
 USB recovery and logs the reason; it does not erase user data or launch arbitrary apps.
 
 ## Memory and transfers
+
+This Factory enables `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY` for
+the R2 download service's cross-signed GTS Root R4 chain. Normal certificate,
+hostname and validity checks remain enabled. Certificate failures stop the
+current download without retrying and retain a specific user-facing reason plus
+numeric TLS diagnostics. Connection failures and gateway/timeouts retain bounded
+retries. The image policy restores the previous setting when building an app.
 
 Only this board's Factory image uses software SHA and AES in mbedTLS. The
 image-scoped build policy avoids the reported ESP32-S3 I2S/GDMA crypto interaction

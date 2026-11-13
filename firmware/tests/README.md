@@ -32,6 +32,19 @@ python firmware/tests/test_boot_animation.py
 python firmware/tests/test_amoled_ui.py --carousel --rotation 90
 ```
 
+`--download-codes` checks the anonymous firmware-code GET contract and its
+hardware/release/MD5 validation. To replay an actual response and pure application
+through the V5 installer, keep `code-detail.json` and `application.bin` together
+under ignored `firmware/build/code-api-snapshot/`, then run:
+
+```powershell
+python firmware/tests/test_agent_system.py --firmware-code-snapshot firmware/build/code-api-snapshot/code-detail.json
+```
+
+The snapshot can contain an expiring signed URL and must stay local. This check
+uses simulated flash, not a device or live network; it verifies the captured file
+checksum, installation, persistent identity, launch selection and removal.
+
 Menu checks require the activated ESP-IDF Python environment. Native C/C++ checks
 use an available host compiler; UI tests also use the already restored LVGL
 dependency. Follow each script's dependency notes. Run checks relevant to the

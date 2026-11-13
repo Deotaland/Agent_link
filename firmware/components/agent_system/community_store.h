@@ -18,6 +18,9 @@ esp_err_t SaveBinding(const char* slot, const CatalogApp& app);
 void ReadBinding(App* app);
 void Error(StoreError* out);
 esp_err_t Fail(const char* message, int status = 0);
+// Certificate errors are permanent for this attempt; transient connection errors
+// retain their retry policy. The detailed reason is available through Error().
+esp_err_t ConnectionError(esp_http_client_handle_t handle, esp_err_t error);
 
 // Public files never carry account/device headers. Redirects are bounded and
 // checked against the same transport policy before opening the next URL.

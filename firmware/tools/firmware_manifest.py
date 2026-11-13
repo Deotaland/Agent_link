@@ -135,9 +135,17 @@ def resolve_profiles(root=ROOT):
         store = hardware.get("community_store")
         if store is not None:
             origin = urlsplit(store.get("origin", ""))
+            code_keys = {"download_code_origin", "download_code_hardware_id"}
+            code_store = code_keys.intersection(store)
+            code_origin = urlsplit(store.get("download_code_origin", ""))
             if (origin.scheme not in {"http", "https"} or not origin.hostname or
                     origin.path or origin.query or origin.fragment or origin.username is not None or
-                    set(store) != {"origin", "product_id", "hardware_revision_id"} or
+                    set(store) - code_keys != {"origin", "product_id", "hardware_revision_id"} or
+                    (code_store and (code_store != code_keys or code_origin.scheme != "https" or
+                     not code_origin.hostname or code_origin.path or code_origin.query or
+                     code_origin.fragment or code_origin.username is not None or
+                     type(store.get("download_code_hardware_id")) is not int or
+                     store["download_code_hardware_id"] <= 0)) or
                     any(type(store[key]) is not int or store[key] <= 0 for key in ("product_id", "hardware_revision_id")) or
                     catalog["target"] != "esp32s3" or "dynamic_slots" not in layout):
                 raise ValueError(f"{name}: invalid community origin, hardware identity or installer layout")

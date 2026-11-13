@@ -45,6 +45,8 @@ constexpr int ESP_IMAGE_VERIFY_SILENT=0;
 using esp_ota_handle_t = int;
 using esp_ota_img_states_t = int;
 constexpr int ESP_OTA_IMG_PENDING_VERIFY=1, ESP_OTA_IMG_VALID=2;
+constexpr int MBEDTLS_ERR_X509_CERT_VERIFY_FAILED = -0x2700;
+constexpr int MBEDTLS_ERR_X509_FATAL_ERROR = -0x3000;
 namespace fixture {
 inline esp_partition_t partitions[] = {{0x10000,0x300000,0,0,"factory"},
     {0x310000,0x300000,0,16,"ota_0"},{0x610000,0x300000,0,17,"ota_1"},
@@ -62,6 +64,8 @@ inline int ota_state=ESP_OTA_IMG_PENDING_VERIFY, confirm_error=ESP_OK, boot_erro
 inline std::string response;
 inline std::map<std::string,std::string> responses;
 inline std::map<std::string,int> http_status;
+inline std::map<std::string, int> open_errors;
+inline std::map<std::string, std::pair<int, int>> tls_errors;
 inline std::map<std::string,std::map<std::string,std::string>> http_headers;
 inline std::map<std::string,std::vector<int64_t>> header_results;
 inline std::map<std::string,std::vector<int>> header_timeouts;
@@ -188,9 +192,20 @@ inline int esp_http_client_open(HttpClient* c,int){
         fixture::open_entered.store(true);
         while(!fixture::release_open.load())std::this_thread::yield();
     }
-    return fixture::open_error;
+    const auto found = fixture::open_errors.find(c->url);
+    return found == fixture::open_errors.end() ? fixture::open_error : found->second;
 }
-inline int esp_http_client_get_and_clear_last_tls_error(HttpClient*,int* code,int* flags){*code=0;*flags=0;return ESP_OK;}
+inline int esp_http_client_get_and_clear_last_tls_error(HttpClient* c, int* code, int* flags) {
+    *code = 0;
+    *flags = 0;
+    const auto found = fixture::tls_errors.find(c->url);
+    if (found == fixture::tls_errors.end())
+        return ESP_OK;
+    *code = found->second.first;
+    *flags = found->second.second;
+    fixture::tls_errors.erase(found);
+    return ESP_FAIL;
+}
 inline int64_t esp_http_client_fetch_headers(HttpClient* c){
     fixture::header_timeouts[c->url].push_back(c->timeout_ms);
     if(fixture::header_delay_ms[c->url]>c->timeout_ms)return -ESP_ERR_HTTP_EAGAIN;

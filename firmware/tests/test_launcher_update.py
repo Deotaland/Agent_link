@@ -1,6 +1,7 @@
 """Exercise the production updater with actual ESP image hashes and HTTP/flash faults."""
 import hashlib
 import os
+import re
 from pathlib import Path
 import shutil
 import struct
@@ -20,7 +21,7 @@ for name in ('esp_err.h', 'esp_app_desc.h', 'esp_crt_bundle.h', 'esp_http_client
              'esp_system.h', 'esp_timer.h', 'nvs.h', 'nvs_flash.h', 'esp_heap_caps.h',
              'esp_log.h', 'esp_flash.h', 'esp_flash_encrypt.h', 'esp_rom_md5.h',
              'esp_attr.h', 'esp_random.h', 'freertos/FreeRTOS.h', 'freertos/task.h',
-             'mbedtls/sha256.h'):
+             'mbedtls/sha256.h', 'mbedtls/x509.h'):
     path = stubs / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('#include "launcher_update_stubs.h"\n', encoding='utf-8')
@@ -29,18 +30,21 @@ for name in ('esp_err.h', 'esp_app_desc.h', 'esp_crt_bundle.h', 'esp_http_client
 profile = resolve_profiles()['sdgoods-wifi']
 (stubs / 'dynamic_layout_config.h').write_text(header(profile), encoding='utf-8')
 # Minimal valid ESP image, including real segment checksum and appended SHA-256.
+version_config = (root / 'factory/sdgoods-esp32s3/launcher_version.h').read_text(encoding='utf-8')
+candidate_code = int(re.search(r'^#define AGENT_LAUNCHER_VERSION_CODE (\d+)u', version_config, re.M)[1]) + 1
+candidate_version = f'test.{candidate_code}'.encode('ascii')
 data = bytearray(24 + 8 + 512)
 data[0:2] = bytes([0xE9, 1])
 struct.pack_into('<H', data, 12, 9)
 data[23] = 1
 struct.pack_into('<II', data, 24, 0x3C000020, 512)
 struct.pack_into('<I', data, 32, 0xABCD5432)
-data[0x30:0x50] = b'2.0.1'.ljust(32, b'\0')
+data[0x30:0x50] = candidate_version.ljust(32, b'\0')
 data[0x50:0x70] = b'SDGOODS_LAUNCHER'.ljust(32, b'\0')
 struct.pack_into('<8sII32s64s48s16s', data, 0x120, b'AGSYS001', 1, 3,
                  b'agent.launcher', b'Agent_link Launcher', b'SDGOODS-ESP32S3', b'0.1.0')
-struct.pack_into('<8sIII', data, 0x1D0, b'AGLCAP01', 1, 14, 1)
-struct.pack_into('<8sIIII', data, 0x1E4, b'ALAB0001', definition(profile)[2], 20001, 13, 0)
+struct.pack_into('<8sIII', data, 0x1D0, b'AGLCAP01', 2, 14, 1)
+struct.pack_into('<8sIIII', data, 0x1E4, b'ALAB0001', definition(profile)[2], candidate_code, 13, 0)
 checksum = 0xEF
 for byte in data[32:]: checksum ^= byte
 data.extend(b'\0' * (15 - len(data) % 16))

@@ -60,7 +60,9 @@
         "community_store": {
           "origin": "https://sugapi.deotaland.cn",
           "product_id": 1,
-          "hardware_revision_id": 1
+          "hardware_revision_id": 1,
+          "download_code_origin": "https://bot.deotaland.cn",
+          "download_code_hardware_id": 2
         }
       }
     }

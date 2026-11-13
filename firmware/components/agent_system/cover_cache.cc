@@ -182,7 +182,8 @@ esp_err_t Update(const char* slot, const CatalogApp& app) {
         SetStatus(index, CoverState::kNoImage, CoverStage::kMetadata, ESP_OK);
         return ESP_OK;
     }
-    const bool community_image = app.community_play && !strcmp(app.cover_format, "community-image");
+    const bool community_image =
+        (app.community_play || app.firmware_id) && !strcmp(app.cover_format, "community-image");
     if ((!community_image &&
          (app.cover_size != kCoverBytes || strcmp(app.cover_format, kCoverFormat))) ||
         !ValidServiceUrl(app.cover_url))

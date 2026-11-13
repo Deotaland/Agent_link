@@ -5,7 +5,7 @@
 # Name,Type,SubType,Offset,Size,Flags
 nvs,data,nvs,0x9000,0x5000,
 otadata,data,ota,0xE000,0x2000,
-recovery,app,factory,0x10000,0x80000,
+recovery,app,factory,0x10000,0x80000,   
 launcher_a,app,ota_14,0x90000,0x300000,
 app_pool,app,ota_0,0x390000,0xA00000,
 nvs_keys,data,nvs_keys,0xD90000,0x1000,

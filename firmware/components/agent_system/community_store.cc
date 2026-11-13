@@ -4,6 +4,7 @@
 #include "esp_random.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "mbedtls/x509.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,6 +24,10 @@ constexpr int kConnectTimeoutMs = 15000, kResponseTimeoutMs = 60000, kReadTimeou
 constexpr unsigned kRequestAttempts = 3;
 std::mutex error_mutex;
 StoreError last_error;
+bool SameOrigin(const char* url, const char* origin) {
+    const size_t n = strlen(origin);
+    return url && !strncmp(url, origin, n) && (!url[n] || url[n] == '/' || url[n] == '?');
+}
 bool TimedOut(int64_t result, int network_errno) {
     return result == -ESP_ERR_HTTP_EAGAIN || network_errno == ETIMEDOUT ||
            network_errno == EAGAIN || network_errno == EWOULDBLOCK;
@@ -152,6 +157,9 @@ esp_err_t JsonOnce(const std::string& url, cJSON** out, const char* key, JsonHea
              static_cast<long long>((headers_at - open_at) / 1000), unsigned(error));
     if (error != ESP_OK) {
         headers.network_errno = esp_http_client_get_errno(handle);
+        error = ConnectionError(handle, error);
+        if (error == kCertificateError)
+            return error;
         return TimedOut(0, headers.network_errno) ? ESP_ERR_TIMEOUT : error;
     }
     if (cancel && cancel(context))
@@ -199,7 +207,9 @@ esp_err_t JsonOnce(const std::string& url, cJSON** out, const char* key, JsonHea
     headers.phase = "parse";
     auto* root = cJSON_ParseWithLength(body.c_str(), body.size() + 1);
     const auto* code = root ? cJSON_GetObjectItemCaseSensitive(root, "code") : nullptr;
-    if (status != 200 || !cJSON_IsNumber(code) || code->valuedouble != 0) {
+    const auto* success = root ? cJSON_GetObjectItemCaseSensitive(root, "success") : nullptr;
+    if (status != 200 || !cJSON_IsNumber(code) || code->valuedouble != 0 ||
+        (success && !cJSON_IsTrue(success))) {
         const auto* delay = root ? cJSON_GetObjectItemCaseSensitive(root, "retryAfterSeconds") : nullptr;
         if (cJSON_IsNumber(delay) && delay->valuedouble >= 0 && delay->valuedouble <= 86400)
             headers.retry = static_cast<unsigned>(delay->valuedouble);
@@ -225,9 +235,10 @@ esp_err_t JsonOnce(const std::string& url, cJSON** out, const char* key, JsonHea
     return ESP_OK;
 }
 esp_err_t Json(const std::string& url, cJSON** out, bool post = false,
-               InstallCancel cancel = nullptr, void* context = nullptr) {
+               InstallCancel cancel = nullptr, void* context = nullptr,
+               const char* origin = kOrigin) {
     *out = nullptr;
-    if (!IsOrigin(url.c_str()) || !ValidServiceUrl(url.c_str()))
+    if (!SameOrigin(url.c_str(), origin) || !ValidServiceUrl(url.c_str()))
         return Fail("Invalid community endpoint");
     // One logical POST owns one key. A timeout can happen after the server has
     // already issued a ticket; every retry must identify that same operation.
@@ -277,33 +288,33 @@ std::string Resolve(const std::string& base, const char* address) {
     }
     return address;
 }
-bool CopyUrl(char* out, size_t capacity, const char* value) {
-    auto url = Resolve(kOrigin, value);
+bool CopyUrl(char* out, size_t capacity, const char* value, const char* origin = kOrigin) {
+    auto url = Resolve(origin, value);
     // The service currently emits http file URLs behind its HTTPS reverse proxy.
     // Upgrade only the exact configured host; keep all other URL checks intact.
-    if (!strncmp(kOrigin, "https://", 8)) {
-        const auto insecure = std::string("http://") + (kOrigin + 8);
+    if (!strncmp(origin, "https://", 8)) {
+        const auto insecure = std::string("http://") + (origin + 8);
         if (url.compare(0, insecure.size(), insecure) == 0 &&
             (url.size() == insecure.size() || url[insecure.size()] == '/' ||
              url[insecure.size()] == '?'))
-            url = std::string(kOrigin) + url.substr(insecure.size());
+            url = std::string(origin) + url.substr(insecure.size());
     }
     if (url.empty() || url.size() >= capacity || !ValidServiceUrl(url.c_str()))
         return false;
     memcpy(out, url.c_str(), url.size() + 1);
     return true;
 }
-bool Hash(cJSON* object, const char* field, char out[65]) {
+bool Hash(cJSON* object, const char* field, char* out, unsigned digits = 64) {
     const char* value = String(object, field);
-    if (strlen(value) != 64)
+    if (strlen(value) != digits)
         return false;
-    for (unsigned i = 0; i < 64; ++i) {
+    for (unsigned i = 0; i < digits; ++i) {
         const char c = value[i] >= 'A' && value[i] <= 'F' ? value[i] + 32 : value[i];
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
             return false;
         out[i] = c;
     }
-    out[64] = 0;
+    out[digits] = 0;
     return true;
 }
 bool ApplicationFile(const char* name, const char* mime) {
@@ -312,9 +323,12 @@ bool ApplicationFile(const char* name, const char* mime) {
            (Equal(mime, "application/octet-stream") || Equal(mime, "application/x-binary"));
 }
 struct Binding {
-    uint32_t magic = 0x314D4341, schema = 1;
+    uint32_t magic = 0x324D4341, schema = 2;
     uint64_t play = 0, version = 0;
     char app_id[32]{}, binary_version[32]{}, release_version[32]{};
+    uint64_t firmware = 0;
+    uint32_t firmware_version = 0;
+    char code[7]{};
 };
 void BindingKey(const char* slot, char key[16]) {
     snprintf(key, 16, "c_%.7s", slot);
@@ -328,8 +342,7 @@ const char* DefaultCatalog() {
     return value.c_str();
 }
 bool IsOrigin(const char* url) {
-    const size_t n = strlen(kOrigin);
-    return url && !strncmp(url, kOrigin, n) && (!url[n] || url[n] == '/' || url[n] == '?');
+    return SameOrigin(url, kOrigin);
 }
 bool IsCatalog(const char* url) {
     if (!IsOrigin(url))
@@ -346,6 +359,24 @@ void Error(StoreError* out) {
 }
 esp_err_t Fail(const char* message, int status) {
     return Failure(message, status, nullptr);
+}
+esp_err_t ConnectionError(esp_http_client_handle_t handle, esp_err_t error) {
+    int tls_code = 0, tls_flags = 0;
+    (void)esp_http_client_get_and_clear_last_tls_error(handle, &tls_code, &tls_flags);
+    if (!tls_flags && tls_code != MBEDTLS_ERR_X509_CERT_VERIFY_FAILED &&
+        tls_code != MBEDTLS_ERR_X509_FATAL_ERROR)
+        return error;
+    StoreError value{};
+    Text(value.code, sizeof value.code, "TLS_CERT_VERIFY_FAILED");
+    Text(value.message, sizeof value.message,
+         "HTTPS 证书校验失败，连接已停止。请检查设备时间或更新启动器固件后重试。");
+    {
+        std::lock_guard<std::mutex> lock(error_mutex);
+        last_error = value;
+    }
+    ESP_LOGW("agent_system.store", "TLS certificate verification failed: code=%d flags=0x%x",
+             tls_code, unsigned(tls_flags));
+    return kCertificateError;
 }
 static bool ValidCode(const char* code) {
     if (!code || strlen(code) != 6)
@@ -410,6 +441,71 @@ esp_err_t LookupCode(const char* code, CatalogApp* app, InstallCancel cancel, vo
         return ESP_ERR_INVALID_ARG;
     *app = {};
     cJSON* data = nullptr;
+#if defined(AGENT_FIRMWARE_CODE_ORIGIN)
+    auto error = Json(
+        std::string(AGENT_FIRMWARE_CODE_ORIGIN) + "/api/firmware/code/" + code + "/download-url",
+        &data, false, cancel, context, AGENT_FIRMWARE_CODE_ORIGIN);
+    CatalogApp fresh;
+    if (error == ESP_OK) {
+        auto* firmware = cJSON_GetObjectItemCaseSensitive(data, "firmware");
+        auto* product = cJSON_GetObjectItemCaseSensitive(data, "product");
+        uint64_t id = 0, firmware_id = 0, product_id = 0, firmware_product = 0;
+        uint64_t hardware = 0, version_code = 0, bytes = 0, firmware_bytes = 0;
+        char digest[33]{};
+        const char* version = String(firmware, "version");
+        const char* filename = String(data, "file_name");
+        const char* name = String(product, "name");
+        if (strcmp(String(data, "download_code"), code) ||
+            strcmp(String(firmware, "download_code"), code) || !Id(data, "id", &id) ||
+            !Id(firmware, "id", &firmware_id) || id != firmware_id ||
+            !Id(product, "id", &product_id) || !Id(firmware, "product_id", &firmware_product) ||
+            product_id != firmware_product || !Id(product, "hardware_id", &hardware) ||
+            hardware != AGENT_FIRMWARE_HARDWARE_ID ||
+            strcmp(String(firmware, "chip_type"), "esp32-s3") ||
+            strcmp(String(product, "chip_type"), "esp32-s3") ||
+            !cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(firmware, "is_public")) ||
+            !cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(firmware, "is_published")) ||
+            strcmp(String(firmware, "review_status"), "approved") ||
+            !Id(firmware, "version_code", &version_code, true) || version_code > UINT32_MAX ||
+            !Id(data, "file_size", &bytes) || !Id(firmware, "file_size", &firmware_bytes) ||
+            bytes != firmware_bytes || bytes > UINT32_MAX ||
+            !Hash(data, "file_md5", fresh.file_md5, 32) ||
+            !Hash(firmware, "file_md5", digest, 32) || strcmp(digest, fresh.file_md5) ||
+            !version[0] || strlen(version) >= sizeof fresh.version || !name[0] || !filename[0] ||
+            strlen(filename) >= sizeof fresh.filename ||
+            strcmp(filename, String(firmware, "file_name")))
+            error = Fail("下载码固件信息不完整、未公开发布或硬件不匹配");
+        else if (!CopyUrl(fresh.url, sizeof fresh.url, String(data, "download_url"),
+                          AGENT_FIRMWARE_CODE_ORIGIN))
+            error = Fail("下载码未返回有效的固件下载链接");
+        else {
+            fresh.firmware_id = id;
+            fresh.firmware_version_code = version_code;
+            fresh.size = bytes;
+            snprintf(fresh.app_id, sizeof fresh.app_id, "firmware.%llu",
+                     static_cast<unsigned long long>(id));
+            Text(fresh.name, sizeof fresh.name, name);
+            Text(fresh.version, sizeof fresh.version, version);
+            Text(fresh.release_version, sizeof fresh.release_version, version);
+            Text(fresh.filename, sizeof fresh.filename, filename);
+            Text(fresh.download_code, sizeof fresh.download_code, code);
+            if (strcmp(String(firmware, "firmware_type"), "ota") ||
+                !ApplicationFile(filename, "application/octet-stream"))
+                fresh.package = CatalogApp::Package::kFullPackage;
+            else if (bytes > kAppImageMaxBytes)
+                fresh.package = CatalogApp::Package::kTooLarge;
+            const char* cover = String(product, "icon_url");
+            if (!cover[0])
+                cover = String(product, "hardware_icon_url");
+            if (cover[0]) {
+                if (!CopyUrl(fresh.cover_url, sizeof fresh.cover_url, cover,
+                             AGENT_FIRMWARE_CODE_ORIGIN))
+                    error = Fail("下载码固件的封面链接无效");
+                Text(fresh.cover_format, sizeof fresh.cover_format, "community-image");
+            }
+        }
+    }
+#else
     auto error = Json(std::string(kOrigin) + kCodes + code, &data, false, cancel, context);
     CatalogApp fresh;
     if (error == ESP_OK) {
@@ -418,6 +514,7 @@ esp_err_t LookupCode(const char* code, CatalogApp* app, InstallCancel cancel, vo
         else
             error = ParseDetail(data, 0, 0, &fresh);
     }
+#endif
     cJSON_Delete(data);
     if (error == ESP_OK) {
         Text(fresh.download_code, sizeof fresh.download_code, code);
@@ -489,6 +586,21 @@ esp_err_t Fetch(const char* url, unsigned page, CatalogApp* apps, size_t capacit
     return ESP_OK;
 }
 esp_err_t PrepareDownload(CatalogApp* app, InstallCancel cancel, void* context) {
+    if (app && app->firmware_id) {
+        CatalogApp fresh;
+        auto error = LookupCode(app->download_code, &fresh, cancel, context);
+        if (error != ESP_OK)
+            return error;
+        if (fresh.package != CatalogApp::Package::kApplication)
+            return kUnsupportedPackage;
+        if (fresh.firmware_id != app->firmware_id ||
+            fresh.firmware_version_code != app->firmware_version_code ||
+            strcmp(fresh.version, app->release_version) || fresh.size != app->size ||
+            strcmp(fresh.file_md5, app->file_md5))
+            return Fail("下载码对应的固件已变化，请重新查询后确认安装");
+        *app = fresh;
+        return ESP_OK;
+    }
     if (!app || !app->community_play)
         return ESP_ERR_INVALID_ARG;
     const auto play = app->community_play, version = app->community_version;
@@ -528,7 +640,7 @@ esp_err_t PrepareDownload(CatalogApp* app, InstallCancel cancel, void* context) 
 }
 esp_err_t SaveBinding(const char* slot, const CatalogApp& app) {
     Binding binding;
-    if (app.community_play) {
+    if (app.community_play || app.firmware_id) {
         binding.play = app.community_play;
         binding.version = app.community_version;
         Text(binding.app_id, sizeof binding.app_id, app.app_id);
@@ -536,6 +648,9 @@ esp_err_t SaveBinding(const char* slot, const CatalogApp& app) {
         // PrepareDownload keeps the public release label separately in filename-independent
         // metadata.
         Text(binding.release_version, sizeof binding.release_version, app.release_version);
+        binding.firmware = app.firmware_id;
+        binding.firmware_version = app.firmware_version_code;
+        Text(binding.code, sizeof binding.code, app.download_code);
     }
     nvs_handle_t handle;
     auto error = nvs_open_from_partition(kMetadataPartition, "al_apps", NVS_READWRITE, &handle);
@@ -559,8 +674,9 @@ void ReadBinding(App* app) {
     BindingKey(app->slot, key);
     const auto error = nvs_get_blob(handle, key, &binding, &size);
     nvs_close(handle);
-    if (error != ESP_OK || size != sizeof binding || binding.magic != 0x314D4341 ||
-        binding.schema != 1 || !binding.play || !binding.version ||
+    if (error != ESP_OK || size != sizeof binding || binding.magic != 0x324D4341 ||
+        binding.schema != 2 || (!binding.firmware && (!binding.play || !binding.version)) ||
+        !memchr(binding.code, 0, sizeof binding.code) ||
         !memchr(binding.app_id, 0, sizeof binding.app_id) ||
         !memchr(binding.binary_version, 0, sizeof binding.binary_version) ||
         !memchr(binding.release_version, 0, sizeof binding.release_version) ||
@@ -569,6 +685,9 @@ void ReadBinding(App* app) {
         return;
     app->community_play = binding.play;
     app->community_version = binding.version;
+    app->firmware_id = binding.firmware;
+    app->firmware_version_code = binding.firmware_version;
+    Text(app->download_code, sizeof app->download_code, binding.code);
     Text(app->release_version, sizeof app->release_version, binding.release_version);
 }
 File::~File() {
@@ -663,7 +782,7 @@ esp_err_t File::OpenWithTimeout(const char* url, int header_timeout_ms) {
         ESP_LOGI("agent_system.store", "file connect_ms=%lld result=0x%x",
                  static_cast<long long>((headers_at - open_at) / 1000), unsigned(error));
         if (error != ESP_OK)
-            return error;
+            return ConnectionError(handle, error);
         error = esp_http_client_set_timeout_ms(handle, header_timeout_ms);
         if (error != ESP_OK)
             return error;

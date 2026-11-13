@@ -144,6 +144,8 @@ esp_err_t Request(const std::string& path, Status& value, Json& root) {
     esp_http_client_set_header(handle, "Accept", "application/json");
     const auto start = esp_timer_get_time();
     auto err = esp_http_client_open(handle, 0);
+    if (err != ESP_OK)
+        err = community::ConnectionError(handle, err);
     if (err == ESP_OK && esp_http_client_fetch_headers(handle) < 0)
         err = ESP_ERR_HTTP_CONNECT;
     value.http_status = esp_http_client_get_status_code(handle);
@@ -170,9 +172,11 @@ esp_err_t Request(const std::string& path, Status& value, Json& root) {
     ESP_LOGI(kTag, "metadata HTTP=%d elapsed_ms=%lu", value.http_status,
              (unsigned long)value.elapsed_ms);
     if (err != ESP_OK)
-        return Fail(
-            value, err,
-            cancelled ? "已取消更新操作" : "更新服务连接失败或响应不完整，请检查网络后重试");
+        return Fail(value, err,
+                    cancelled ? "已取消更新操作"
+                    : err == kCertificateError
+                        ? "更新服务证书校验失败，请检查设备时间或更新启动器证书支持"
+                        : "更新服务连接失败或响应不完整，请检查网络后重试");
     root.reset(cJSON_ParseWithLength(body.c_str(), body.size() + 1));
     if (value.http_status != 200) {
         char text[384];
@@ -305,7 +309,10 @@ esp_err_t InstallNow(Status& value) {
     err = file.OpenDownload(download.c_str(), Cancelled, nullptr);
     value.http_status = file.handle ? esp_http_client_get_status_code(file.handle) : 0;
     if (err != ESP_OK)
-        return Fail(value, err, "固件下载连接失败或链接已失效，请重新检查更新");
+        return Fail(value, err,
+                    err == kCertificateError
+                        ? "下载服务器证书校验失败，请检查设备时间或更新启动器证书支持"
+                        : "固件下载连接失败或链接已失效，请重新检查更新");
     const auto length = esp_http_client_get_content_length(file.handle);
     if (length >= 0 && length != value.size)
         return Fail(value, ESP_ERR_INVALID_SIZE, "下载文件大小与更新信息不一致");

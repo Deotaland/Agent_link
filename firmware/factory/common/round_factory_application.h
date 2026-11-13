@@ -269,8 +269,9 @@ class AmoledFactoryApplication : public Application {
     }
     bool Installed(const agent_system::CatalogApp& app) const {
         for (size_t i = 0; i < app_count_; ++i)
-            if (app.community_play ? apps_[i].community_play == app.community_play
-                                   : !strcmp(apps_[i].descriptor.app_id, app.app_id))
+            if (app.firmware_id      ? apps_[i].firmware_id == app.firmware_id
+                : app.community_play ? apps_[i].community_play == app.community_play
+                                     : !strcmp(apps_[i].descriptor.app_id, app.app_id))
                 return true;
         return false;
     }
@@ -531,13 +532,14 @@ class AmoledFactoryApplication : public Application {
                 snprintf(screen_.download_code, sizeof screen_.download_code, "%s", download_code_);
             } else if (page_ == Page::kDownloadHelp) {
                 title(Tr("下载码在哪里？", "Where is the code?"));
-                snprintf(screen_.info, sizeof screen_.info, "%s",
-                         Tr("在网页平台找到想安装的玩法，查看六位下载码。\n\n"
-                            "在设备上输入下载码，查询详情后确认下载安装。\n\n"
-                            "投稿审核通过后，由管理员分配下载码。",
-                            "Find an app on the web platform and check its six-digit download code.\n\n"
-                            "Enter it here, review the app, then confirm installation.\n\n"
-                            "Administrators assign codes after submission approval."));
+                snprintf(
+                    screen_.info, sizeof screen_.info, "%s",
+                    Tr("在网页平台找到想安装的玩法，查看六位下载码。\n\n"
+                       "在设备上输入下载码，查询详情后确认下载安装。\n\n"
+                       "固件审核并公开发布后，可在网页详情页查看下载码。",
+                       "Find an app on the web platform and check its six-digit download code.\n\n"
+                       "Enter it here, review the app, then confirm installation.\n\n"
+                       "Find the code on the firmware page after approval and publication."));
                 row(Tr("返回输入下载码", "Enter download code"));
             } else if (page_ == Page::kCatalog) {
                 char heading[64];
@@ -667,6 +669,10 @@ class AmoledFactoryApplication : public Application {
         return "-";
     }
     static const char* InstallReason(esp_err_t error, agent_system::InstallStage stage) {
+        if (error == agent_system::kCertificateError)
+            return Tr("下载服务器证书校验失败，请更新启动器或检查设备时间后重试。",
+                      "Server certificate verification failed. Update the Launcher or check the "
+                      "device time.");
         if (error == agent_system::kCancelled)
             return Tr("下载已中断，下次需从头下载。",
                       "Download interrupted. Next attempt starts over.");
