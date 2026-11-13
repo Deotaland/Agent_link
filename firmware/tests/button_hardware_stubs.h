@@ -13,8 +13,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "../components/amoled_ui/include/amoled_hardware_test.h"
 using esp_err_t = int;
 constexpr int ESP_OK = 0, ESP_FAIL = -1, ESP_ERR_INVALID_STATE = 0x103, ESP_ERR_NO_MEM = 0x101,
+              ESP_ERR_INVALID_ARG = 0x102,
               ESP_ERR_TIMEOUT = 0x107;
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
@@ -45,6 +47,7 @@ inline bool adc_fail = false, adc_read_fail = false, calibration_fail = false, i
             imu_read_fail = false;
 inline int adc_creations = 0, adc_samples = 0, adc_mv = 1300;
 inline uint8_t identity = 5, registers[256]{};
+inline int16_t imu_axes[]{8192, -8192, 16384, 512, -1024, 32767};
 inline std::atomic<bool> amplifier{false}, amplifier_used{false};
 inline std::atomic<int> channels{0}, peak{0}, pcm_allocations{0};
 inline int audio_read_error = 0, audio_tx_error = 0;
@@ -188,8 +191,7 @@ inline int i2c_master_transmit_receive(void*, const uint8_t* reg, size_t, void* 
         return ESP_OK;
     }
     assert(*reg == 0x35 && size == 12);
-    const int16_t axes[]{8192, -8192, 16384, 512, -1024, 32767};
-    memcpy(out, axes, 12);
+    memcpy(out, button_fixture::imu_axes, 12);
     return ESP_OK;
 }
 constexpr int I2S_NUM_0 = 0, I2S_NUM_1 = 1, I2S_ROLE_MASTER = 0, I2S_DATA_BIT_WIDTH_32BIT = 32,
@@ -358,14 +360,20 @@ inline const char* SettingsPartition() {
 }
 }  // namespace agent_system
 namespace amoled_ui {
-enum class TouchAction { kBack, kHome, kRow };
+enum class TouchAction { kBack, kHome, kRow, kTouchPoint };
+enum class View { kList, kHardwareTest };
 struct Input {
     TouchAction action;
     int row;
+    int x = -1, y = -1;
 };
 struct Screen {
     char rows[12][112]{}, title[96]{}, info[384]{}, hardware_status[64]{};
     int row_count = 0;
+    View kind = View::kList;
+    bool local_mode = false;
+    HardwareTest hardware_test;
+    char detail[192]{};
     int battery_percent = -1;
     bool wifi_connected = false, wifi_setup_active = false;
     char wifi_setup_ssid[33]{};
@@ -394,5 +402,6 @@ class AmoledSystemMenu {
         bool (*handle)(const amoled_ui::Input&, void*);
         void (*render)(amoled_ui::Screen&, void*);
         void (*close)(void*);
+        void (*open_brightness)(void*);
     };
 };

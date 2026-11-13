@@ -60,6 +60,78 @@ class FirmwareArchitectureTests(unittest.TestCase):
         self.assertEqual((factory["partition"], factory["app_offset"]), ("factory", 0x10000))
         self.assertEqual(self.plan["app_max_bytes"], 0x2F2000)
 
+    def test_software_crypto_policy_is_only_for_sdgoods_factory(self):
+        profile = self.profiles["sdgoods-wifi"]
+        software = {"CONFIG_MBEDTLS_HARDWARE_SHA": "n", "CONFIG_MBEDTLS_HARDWARE_AES": "n"}
+        self.assertEqual(build.image_config_overrides(profile, "factory"), software)
+        self.assertEqual(build.image_config_overrides(profile, "standard"), {})
+        self.assertEqual(build.image_config_overrides(self.profile, "factory"), {})
+        actual = build.expected_settings(profile)
+        actual.update(CONFIG_IDF_TARGET='"esp32s3"', CONFIG_AGENT_LINK_BUILD_FACTORY="y",
+                      CONFIG_MBEDTLS_HARDWARE_SHA="y", CONFIG_MBEDTLS_HARDWARE_AES="y")
+        problems = build.validate_settings(profile, actual)
+        self.assertTrue(any("CONFIG_MBEDTLS_HARDWARE_SHA" in item for item in problems))
+        self.assertTrue(any("CONFIG_MBEDTLS_HARDWARE_AES" in item for item in problems))
+        actual.update(software)
+        self.assertEqual(build.validate_settings(profile, actual), [])
+
+    def test_factory_crypto_overrides_restore_application_config(self):
+        profile = self.profiles["sdgoods-wifi"]
+        config = self.folder / "crypto-sdkconfig"
+        state = self.folder / "crypto-state.json"
+        state.write_text("{}", encoding="utf-8")
+        # Preserve an explicit local software-AES setting as well as enabled SHA.
+        config.write_text("CONFIG_AGENT_LINK_BUILD_FACTORY=y\nCONFIG_LOG_DEFAULT_LEVEL=4\n"
+                          "CONFIG_MBEDTLS_HARDWARE_SHA=y\n# CONFIG_MBEDTLS_HARDWARE_AES is not set\n",
+                          encoding="utf-8")
+        with patch.object(build, "STATE", state):
+            build.prepare_image_config(profile, config)
+            values = build.settings(config)
+            self.assertEqual(values["CONFIG_MBEDTLS_HARDWARE_SHA"], "n")
+            self.assertEqual(values["CONFIG_MBEDTLS_HARDWARE_AES"], "n")
+            self.assertFalse(build.prepare_image_config(profile, config))
+            # IDF may place the overrides in the middle of sdkconfig.
+            config.write_text("# CONFIG_MBEDTLS_HARDWARE_AES is not set\n"
+                              "CONFIG_AGENT_LINK_BUILD_FACTORY=y\n"
+                              "# CONFIG_MBEDTLS_HARDWARE_SHA is not set\n"
+                              "CONFIG_LOG_DEFAULT_LEVEL=4\n", encoding="utf-8")
+            ordered = config.read_bytes()
+            self.assertFalse(build.prepare_image_config(profile, config))
+            self.assertEqual(config.read_bytes(), ordered)
+            build.select_image_role(profile, config, "standard")
+            build.prepare_image_config(profile, config)
+            values = build.settings(config)
+            self.assertEqual(values["CONFIG_MBEDTLS_HARDWARE_SHA"], "y")
+            self.assertEqual(values["CONFIG_MBEDTLS_HARDWARE_AES"], "n")
+            self.assertEqual(values["CONFIG_LOG_DEFAULT_LEVEL"], "4")
+            self.assertNotIn("image_config", build.read_state())
+            # Fresh configurations have no explicit crypto settings. Return to
+            # absent values so normal SDK defaults apply to application builds.
+            config.write_text("CONFIG_AGENT_LINK_BUILD_FACTORY=y\n", encoding="utf-8")
+            build.prepare_image_config(profile, config)
+            build.select_image_role(profile, config, "standard")
+            build.prepare_image_config(profile, config)
+            self.assertNotIn("CONFIG_MBEDTLS_HARDWARE_SHA", build.settings(config))
+            self.assertNotIn("CONFIG_MBEDTLS_HARDWARE_AES", build.settings(config))
+
+    def test_image_policy_runs_when_profile_fingerprint_is_unchanged(self):
+        profile = self.profiles["sdgoods-wifi"]
+        config = self.folder / "crypto-prepare-sdkconfig"
+        state = self.folder / "crypto-prepare-state.json"
+        config.write_text("CONFIG_AGENT_LINK_BUILD_FACTORY=y\n"
+                          "CONFIG_MBEDTLS_HARDWARE_SHA=y\nCONFIG_MBEDTLS_HARDWARE_AES=y\n",
+                          encoding="utf-8")
+        state.write_text(json.dumps({"schema": build.SCHEMA, "profile": profile["name"],
+                                     "fingerprint": build.fingerprint(profile["name"], profile)}),
+                         encoding="utf-8")
+        with patch.object(build, "STATE", state):
+            self.assertTrue(build.prepare_config(profile["name"], profile, config))
+            self.assertFalse(build.prepare_config(profile["name"], profile, config))
+            build.select_image_role(profile, config, "standard")
+            self.assertTrue(build.prepare_config(profile["name"], profile, config))
+            for key in ("CONFIG_MBEDTLS_HARDWARE_SHA", "CONFIG_MBEDTLS_HARDWARE_AES"):
+                self.assertEqual(build.settings(config)[key], "y")
+
     def test_sdgoods_all_images_and_font_fit_24bit_flash_mapping(self):
         profile = self.profiles['sdgoods-wifi']
         plan = flash_plan(profile, 'standard')

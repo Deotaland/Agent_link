@@ -80,6 +80,17 @@ int main() {
     assert(audio.StopAndWait());
     Wait(audio);
     assert(audio.State() == sdgoods::Audio::Stage::kStopped);
+    // Include a plateau beyond the driver's 320-sample fade at either end.
+    int16_t clip[1024];std::fill(std::begin(clip),std::end(clip),4000);
+    assert(audio.PlayClip(nullptr,256)==ESP_ERR_INVALID_ARG);
+    assert(audio.PlayClip(clip,160001)==ESP_ERR_INVALID_ARG);
+    audio.SetVolume(50);peak.store(0);amplifier_used.store(false);
+    assert(audio.PlayClip(clip,std::size(clip))==ESP_OK);
+    Wait(audio);
+    assert(audio.State()==sdgoods::Audio::Stage::kDone && amplifier_used.load() && peak.load()==2000);
+    audio_tx_error=ESP_FAIL;
+    assert(audio.PlayClip(clip,std::size(clip))==ESP_FAIL);
+    Wait(audio);audio_tx_error=0;
     AmoledHardware hardware;
     hardware.sensors_.Init((void*)1);
     nvs["agent_nvs/al_wifi/ssid"] = 7;
@@ -116,11 +127,83 @@ int main() {
     row(1);
     service->Tick(true);
     auto motion = render();
-    assert(strstr(motion.info, "Accel (g)"));
+    assert(motion.kind == amoled_ui::View::kHardwareTest && !motion.hardware_test.valid);
+    // Flat, still samples must remain centered for a full second. Movement,
+    // free-fall, read failures and upright placement cannot pass the test.
+    const auto sample = [&] {
+        now += 100000;
+        service->Tick(true);
+        return render().hardware_test;
+    };
+    const auto axes = [&](int x, int y, int z, int speed = 0) {
+        imu_axes[0] = x; imu_axes[1] = y; imu_axes[2] = z;
+        imu_axes[3] = speed; imu_axes[4] = imu_axes[5] = 0;
+    };
+    axes(0, 0, 8192);
+    assert(sample().centered && !render().hardware_test.passed);
+    for (int n = 0; n < 9; ++n) sample();
+    assert(!render().hardware_test.passed);
+    axes(1000, 0, 8131);
+    assert(!sample().centered);
+    axes(0, 0, 8192, 6000);
+    assert(!sample().centered);
+    axes(0, 0, 0);
+    assert(!sample().valid);
+    axes(8192, 0, 0);
+    assert(sample().valid && !render().hardware_test.centered);
+    axes(0, 0, 8192);
+    for (int n = 0; n < 11; ++n) sample();
+    assert(render().hardware_test.passed);
+    row(0); // Restart clears the receipt and the hold timer.
+    assert(!render().hardware_test.passed);
+    sample();
+    imu_read_fail = true;
+    assert(!sample().valid && !render().hardware_test.centered);
+    imu_read_fail = false;
+    axes(0, 0, 8192);
+    for (int n = 0; n < 11; ++n) sample();
+    assert(render().hardware_test.passed);
     back();
+    assert(registers[8] == 0x40);
+    row(6);
+    assert(strstr(render().rows[0], "Start touch"));
+    row(0);
+    const auto tap = [&](int x, int y) {
+        return menu.handle({amoled_ui::TouchAction::kTouchPoint, 0, x, y}, menu.context);
+    };
+    tap(98, 132); // The wrong target shows coordinates but cannot advance.
+    assert(render().hardware_test.x == 98 && render().hardware_test.completed == 0);
+    tap(-1, 500);
+    assert(render().hardware_test.x == 98);
+    tap(205, 180); // Outside the 24px hit radius.
+    assert(render().hardware_test.completed == 0);
+    for (int n = 0; n < 5; ++n) {
+        const auto target = render().hardware_test;
+        tap(target.target_x, target.target_y);
+        assert(render().hardware_test.completed == n + 1);
+    }
+    assert(render().hardware_test.passed);
+    tap(180, 180);
+    assert(render().hardware_test.completed == 5);
+    row(0);
+    assert(!render().hardware_test.passed && render().hardware_test.completed == 0);
+    back(); // Touch -> display page -> hardware root.
+    assert(strstr(render().title, "Display and touch"));
+    back();
+    assert(menu.open_brightness);
+    menu.open_brightness(menu.context);
+    assert(strstr(render().title, "Screen brightness"));
+    assert(!back()); // Settings shortcut returns directly to the settings root.
     row(4);
     row(0);
     assert(brightness == 65 && nvs.at("agent_nvs/button_hw/bright") == 65);
+    for (int n = 0; n < 12; ++n) row(0);
+    assert(brightness == 5);
+    for (int n = 0; n < 12; ++n) row(1);
+    assert(brightness == 100);
+    auto restored = CreateFactoryHardwareServices(hardware);
+    assert(brightness == 100);
+    restored.reset();
     back();
     row(5);
     row(0);
@@ -159,6 +242,6 @@ int main() {
     Finish();
     puts(
         "Sugarat Factory: ADC calibration/fallback/failures, median filter, six-axis units, audio "
-        "playback/capture/cancel/errors/PSRAM release, hardware pages, persistent brightness and "
+        "playback/capture/cancel/errors/PSRAM release, guided touch targets, level stability, persistent brightness and "
         "guarded power actions passed. No hardware I/O.");
 }

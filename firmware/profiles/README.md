@@ -139,6 +139,13 @@ beside the layout. `sdkconfig` remains generated. A manifest migration within th
 same profile retains local log levels and the saved application/factory selection;
 an explicit profile switch or `--reset-config` still reapplies that profile.
 
+A managed image may declare boolean `config_overrides` in its own manifest.
+The build preparation applies them only to that selected image, validates the
+result, and restores prior values when returning to another image. Sugarat's
+Factory uses this for software SHA/AES after startup audio; its application and
+other boards do not inherit the override. Both the build tool and VS Code use
+the same preparation path.
+
 A layout is stable across applications on a board. Adding an app does not add a
 CSV; compatible profiles can share a layout. Change the layout ID/version and plan
 an explicit USB migration when addresses change. Managed layouts own installation

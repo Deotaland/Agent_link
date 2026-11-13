@@ -26,7 +26,8 @@ private:
 enum class Swipe { kNone, kLeft, kRight, kHome, kSystem };
 class SwipeTracker {
 public:
-    Swipe Update(bool down, int x, int y, uint32_t view, int64_t now, bool blocked = false) {
+    Swipe Update(bool down, int x, int y, uint32_t view, int64_t now, bool blocked = false,
+                 [[maybe_unused]] bool edge_system_swipe = false) {
         if (!down) { tracking_ = false; return Swipe::kNone; }
         if (!tracking_) {
             tracking_ = true; consumed_ = blocked; x_ = x; y_ = y; view_ = view; at_ = now;
@@ -35,7 +36,9 @@ public:
         const int dx = x - x_, dy = std::abs(y - y_);
         if (view != view_ || now - at_ > 1200000) consumed_ = true;
 #ifdef AGENT_SYSTEM_ENABLED
-        if (!consumed_ && y_ >= 25 && y_ <= 85 && x_ >= 140 && x_ <= 326 &&
+        const bool system_start = y_ >= (edge_system_swipe ? 0 : 25) && y_ <= 85 &&
+            (edge_system_swipe || (x_ >= 140 && x_ <= 326));
+        if (!consumed_ && system_start &&
             y - y_ >= 55 && y - y_ > std::abs(dx) * 2) {
             consumed_ = true; return Swipe::kSystem;
         }

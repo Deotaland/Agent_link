@@ -12,6 +12,7 @@ class AmoledSystemMenu {
         bool (*handle)(const amoled_ui::Input&, void*) = nullptr;
         void (*render)(amoled_ui::Screen&, void*) = nullptr;
         void (*close)(void*) = nullptr;
+        void (*open_brightness)(void*) = nullptr;
     };
     void SetExtraPage(ExtraPage page) {
         extra_ = page;

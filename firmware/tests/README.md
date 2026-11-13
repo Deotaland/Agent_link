@@ -27,6 +27,8 @@ python firmware/tests/test_agent_system.py
 python firmware/tests/test_agent_system.py --download-codes
 python firmware/tests/test_factory_store_job.py
 python firmware/tests/test_amoled_ui.py --sdgoods
+python firmware/tests/test_sdgoods_hardware.py
+python firmware/tests/test_boot_animation.py
 python firmware/tests/test_amoled_ui.py --carousel --rotation 90
 ```
 

@@ -5,7 +5,11 @@
     "app_id": "agent.launcher",
     "name": "Agent_link Launcher",
     "shared_app": "",
-    "requires": ["app_update", "esp_wifi"],
+    "config_overrides": {
+      "CONFIG_MBEDTLS_HARDWARE_SHA": "n",
+      "CONFIG_MBEDTLS_HARDWARE_AES": "n"
+    },
+    "requires": ["app_update", "esp_wifi", "fatfs", "esp_jpeg", "esp_rom"],
     "sources": [
       "factory_services.cc",
       "ui/factory_view.cc"

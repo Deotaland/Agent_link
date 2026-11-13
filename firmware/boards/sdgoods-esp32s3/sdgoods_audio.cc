@@ -175,6 +175,21 @@ void Audio::Release() {
         tx_ = nullptr;
     }
 }
+esp_err_t Audio::PlayClip(const int16_t* pcm, size_t frames) {
+    if (!pcm || !frames || frames > kRate * 10)
+        return ESP_ERR_INVALID_ARG;
+    bool idle = false;
+    if (!busy_.compare_exchange_strong(idle, true))
+        return ESP_ERR_INVALID_STATE;
+    stop_.store(false);
+    stage_.store(Stage::kPreparing);
+    const auto error = Play(pcm, frames);
+    Release();
+    error_.store(error);
+    stage_.store(error != ESP_OK ? Stage::kFailed : stop_.load() ? Stage::kStopped : Stage::kDone);
+    busy_.store(false);
+    return error;
+}
 void Audio::Entry(void* context) {
     static_cast<Audio*>(context)->Run();
 }

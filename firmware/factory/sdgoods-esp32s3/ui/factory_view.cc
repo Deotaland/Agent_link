@@ -3,6 +3,7 @@
  * Layout and palette inspired by suoyousheng-bot/sugarat-sdgoods, launcher c07957f.
  */
 #include "factory_view.h"
+#include "../factory_diagnostics.h"
 #include "amoled_fonts.h"
 #include "amoled_cover_cache.h"
 #include "amoled_label_layout.h"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 
 namespace amoled_factory {
 namespace {
@@ -26,6 +28,9 @@ lv_obj_t *launch, *remove, *launch_text, *remove_text, *detail_back;
 lv_obj_t *progress_ring, *progress_label, *busy_title, *busy_detail;
 lv_obj_t *download_title, *download_hint, *code_boxes[6], *code_labels[6];
 lv_obj_t *query_key, *query_text, *detail_hint;
+lv_obj_t *diagnostics, *test_title, *test_hint, *test_info, *retry_text;
+lv_obj_t *touch_plot, *touch_targets[5], *touch_numbers[5], *touch_dot, *touch_pass;
+lv_obj_t *level_plot, *level_ball;
 
 void Show(lv_obj_t* obj, bool on) {
     if (on) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -101,7 +106,7 @@ struct CoverView {
 void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) {
     root = Box(parent, 0, 0, 360, 360, 0, kBg);
     home = Box(root, 0, 0, 360, 360, 0, kBg);
-    Text(Label(home, &lv_font_montserrat_16, 62, 30, 236, 24, kText), "Agent_link Launcher");
+    Text(Label(home, &lv_font_montserrat_16, 62, 30, 236, 24, kText), "Sugarat Launcher");
     hero = Box(home, 50, 64, 260, 96, 24, 0x443027); bind(hero, 3);
     installed_label = Label(hero, fonts.Small(), 18, 10, 145, 20, kBrand, false);
     count_label = Label(hero, &lv_font_montserrat_36, 18, 31, 145, 42, kText, false);
@@ -185,10 +190,39 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     lv_label_set_long_mode(busy_title, LV_LABEL_LONG_WRAP);
     busy_detail = Label(busy, fonts.Small(), 78, 244, 204, 44, kMuted);
     lv_label_set_long_mode(busy_detail, LV_LABEL_LONG_WRAP);
+    diagnostics = Box(root, 0, 0, 360, 360, 0, kBg);
+    Back(diagnostics, bind);
+    test_title = Label(diagnostics, fonts.Title(), 108, 42, 180, 28, kText);
+    test_hint = Label(diagnostics, fonts.Small(), 52, 78, 256, 36, kMuted);
+    lv_label_set_long_mode(test_hint, LV_LABEL_LONG_WRAP);
+    touch_plot = Box(diagnostics, 0, 108, 360, 180, 0, kBg);
+    for (int i = 0; i < 5; ++i) {
+        touch_targets[i] = Box(touch_plot, sugarat_factory::kTouchTargets[i][0]-24,
+                              sugarat_factory::kTouchTargets[i][1]-108-24, 48, 48, 24, kCard);
+        lv_obj_set_style_border_width(touch_targets[i], 2, 0);
+        touch_numbers[i] = Label(touch_targets[i], &lv_font_montserrat_16, 0, 0, 48, 48, kText);
+        char number[2]{char('1'+i),0}; Text(touch_numbers[i], number);
+    }
+    // The touch marker may be anywhere on the physical display, outside the plot.
+    touch_dot = Box(diagnostics, 0, 0, 10, 10, 5, kText);
+    touch_pass = Label(touch_plot, fonts.Title(), 50, 45, 260, 40, 0x72C69C);
+    level_plot = Box(diagnostics, 100, 125, 160, 160, 80, kCard);
+    lv_obj_set_style_border_color(level_plot, lv_color_hex(kMuted), 0);
+    lv_obj_set_style_border_width(level_plot, 1, 0);
+    Box(level_plot, 79, 5, 1, 150, 0, 0x514B43);
+    Box(level_plot, 5, 79, 150, 1, 0, 0x514B43);
+    auto* center = Box(level_plot, 64, 64, 32, 32, 16, kCard);
+    lv_obj_set_style_border_width(center, 2, 0);
+    lv_obj_set_style_border_color(center, lv_color_hex(0x72C69C), 0);
+    level_ball = Box(level_plot, 70, 70, 20, 20, 10, kBrand);
+    test_info = Label(diagnostics, fonts.Small(), 60, 293, 240, 22, kText);
+    auto* retry = Box(diagnostics, 122, 320, 116, 30, 15, kCard); bind(retry, 0);
+    retry_text = Label(retry, fonts.Small(), 0, 0, 116, 30, kText);
     Show(root, false);
 }
 bool Accepts(const amoled_ui::Screen& screen) {
-    return screen.kind == amoled_ui::View::kFactoryHome || screen.kind == amoled_ui::View::kAppGrid ||
+    return screen.kind == amoled_ui::View::kHardwareTest ||
+           screen.kind == amoled_ui::View::kFactoryHome || screen.kind == amoled_ui::View::kAppGrid ||
            screen.kind == amoled_ui::View::kDownloadCode || screen.kind == amoled_ui::View::kDownloadDetail ||
            screen.kind == amoled_ui::View::kAppActions ||
            (screen.kind == amoled_ui::View::kInfo && screen.busy);
@@ -199,11 +233,40 @@ void Update(const amoled_ui::Screen& screen) {
     const bool is_grid = screen.kind == amoled_ui::View::kAppGrid;
     const bool is_busy = screen.kind == amoled_ui::View::kInfo && screen.busy;
     const bool is_download = screen.kind == amoled_ui::View::kDownloadCode;
+    const bool is_test = screen.kind == amoled_ui::View::kHardwareTest;
     Show(root, true); Show(home, is_home); Show(apps, is_grid);
     Show(busy, is_busy); Show(download, is_download);
-    Show(details, !is_home && !is_grid && !is_busy && !is_download);
+    Show(details, !is_home && !is_grid && !is_busy && !is_download && !is_test);
+    Show(diagnostics, is_test);
     char text[96];
-    if (is_download) {
+    if (is_test) {
+        const auto& test = screen.hardware_test;
+        const bool touch = test.kind == amoled_ui::HardwareTest::Kind::kTouch;
+        Text(test_title, screen.title); Text(test_hint, screen.detail);
+        Text(test_info, !touch && !test.valid ? "X --  Y --" : screen.info);
+        Text(retry_text, Tr("重新测试", "Restart test"));
+        lv_obj_set_style_text_color(test_hint, lv_color_hex(test.passed ? 0x72C69C : kMuted), 0);
+        Show(touch_plot, touch); Show(level_plot, !touch);
+        Show(touch_dot, touch && test.x >= 0);
+        if (touch) {
+            lv_obj_set_pos(touch_dot, test.x-5, test.y-5);
+            Show(touch_pass, test.passed);
+            Text(touch_pass, Tr("触摸测试通过", "Touch test passed"));
+            for (int i = 0; i < 5; ++i) {
+                Show(touch_targets[i], !test.passed);
+                const auto color = i < test.completed ? 0x72C69C : i == test.completed ? kBrand : 0x514B43;
+                lv_obj_set_style_border_color(touch_targets[i], lv_color_hex(color), 0);
+                lv_obj_set_style_text_color(touch_numbers[i], lv_color_hex(color), 0);
+            }
+        } else {
+            Show(level_ball, test.valid);
+            float x = test.tilt_x * 4, y = test.tilt_y * 4;
+            const float radius = std::sqrt(x*x+y*y);
+            if (radius > 62) { x *= 62/radius; y *= 62/radius; }
+            lv_obj_set_pos(level_ball, 70+int(std::lround(x)), 70+int(std::lround(y)));
+            lv_obj_set_style_bg_color(level_ball, lv_color_hex(test.centered ? 0x72C69C : kBrand), 0);
+        }
+    } else if (is_download) {
         Text(download_title, Tr("下载应用", "Download"));
         Text(download_hint, Tr("输入平台上的六位下载码", "Enter the 6-digit download code"));
         const size_t length = strlen(screen.download_code);
@@ -284,9 +347,13 @@ void Update(const amoled_ui::Screen& screen) {
     }
 }
 void Hide() { Show(root, false); }
+bool CaptureTestTap(int x, int y) {
+    return y >= 80 && !(x >= 122 && x < 238 && y >= 320 && y < 350);
+}
 }  // namespace
 const amoled_ui::CardRenderer& Renderer() {
-    static const amoled_ui::CardRenderer renderer{Create, Update, Hide, Accepts, &kPalette};
+    static const amoled_ui::CardRenderer renderer{
+        Create, Update, Hide, Accepts, &kPalette, CaptureTestTap, {true, 18, 10, true}};
     return renderer;
 }
 }  // namespace amoled_factory

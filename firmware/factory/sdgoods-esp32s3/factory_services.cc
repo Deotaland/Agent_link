@@ -1,4 +1,5 @@
 #include "../common/factory_hardware_services.h"
+#include "factory_diagnostics.h"
 #include "amoled_hardware.h"
 #include "amoled_ui_language.h"
 #include "agent_system.h"
@@ -12,6 +13,7 @@
 #include "nvs.h"
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 
 namespace {
 using amoled_ui::Tr;
@@ -43,7 +45,13 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                 [](amoled_ui::Screen& screen, void* context) {
                     static_cast<ButtonFactoryServices*>(context)->Render(screen);
                 },
-                [](void* context) { static_cast<ButtonFactoryServices*>(context)->Close(); }};
+                [](void* context) { static_cast<ButtonFactoryServices*>(context)->Close(); },
+                [](void* context) {
+                    auto* self = static_cast<ButtonFactoryServices*>(context);
+                    self->Close();
+                    self->page_ = Page::kBrightness;
+                    self->brightness_shortcut_ = true;
+                }};
     }
     bool SetVolume(int value) override {
         hardware_.audio_.SetVolume(value);
@@ -97,6 +105,8 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         if (now < next_sample_)
             return false;
         hardware_.sensors_.Poll(page_ == Page::kMotion);
+        if (page_ == Page::kMotion)
+            UpdateLevel(now);
         next_sample_ = now + (page_ == Page::kMotion ? 100000 : 1000000);
         return true;
     }
@@ -138,13 +148,51 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
     }
 
    private:
-    enum class Page { kRoot, kBattery, kMotion, kAudio, kBrightness, kPower, kConfirm, kDisplay };
+    enum class Page { kRoot, kBattery, kMotion, kAudio, kBrightness, kPower, kConfirm, kDisplay, kTouch };
     enum class Action { kNone, kSleep, kOff, kRestart };
+    void UpdateLevel(int64_t now) {
+        const auto& state = hardware_.sensors_.Read();
+        const float ax = state.acceleration[0], ay = state.acceleration[1], az = state.acceleration[2];
+        const float gravity = std::sqrt(ax * ax + ay * ay + az * az);
+        test_.valid = state.imu_valid && std::isfinite(gravity) && gravity >= 0.85f && gravity <= 1.15f;
+        if (!test_.valid) {
+            level_filtered_ = false;
+            level_since_ = 0;
+            test_.centered = false;
+            return;
+        }
+        constexpr float kDegrees = 57.2957795f;
+        const float x = std::atan2(ax, std::sqrt(ay * ay + az * az)) * kDegrees;
+        const float y = std::atan2(ay, std::sqrt(ax * ax + az * az)) * kDegrees;
+        test_.tilt_x = level_filtered_ ? test_.tilt_x + 0.35f * (x - test_.tilt_x) : x;
+        test_.tilt_y = level_filtered_ ? test_.tilt_y + 0.35f * (y - test_.tilt_y) : y;
+        level_filtered_ = true;
+        // Use unfiltered tilt for acceptance so smoothing cannot mask motion.
+        const float tilt = std::atan2(std::sqrt(ax * ax + ay * ay), std::fabs(az)) * kDegrees;
+        const auto* gyro = state.angular_velocity;
+        const float speed = std::sqrt(gyro[0] * gyro[0] + gyro[1] * gyro[1] + gyro[2] * gyro[2]);
+        test_.centered = tilt <= 3.0f && std::isfinite(speed) && speed <= 5.0f;
+        if (!test_.centered)
+            level_since_ = 0;
+        else if (!level_since_)
+            level_since_ = now;
+        else if (now - level_since_ >= 1000000)
+            test_.passed = true;
+    }
+    void StartTest(amoled_ui::HardwareTest::Kind kind) {
+        test_ = {};
+        test_.kind = kind;
+        level_since_ = 0;
+        level_filtered_ = false;
+        next_sample_ = 0;
+    }
     void Close() {
         hardware_.audio_.Stop();
         hardware_.sensors_.Suspend();
         page_ = Page::kRoot;
         next_sample_ = 0;
+        brightness_shortcut_ = false;
+        test_ = {};
     }
     void Error(esp_err_t error) {
         if (error == ESP_OK)
@@ -158,7 +206,26 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         if (input.action == TouchAction::kBack || input.action == TouchAction::kHome) {
             if (page_ == Page::kRoot)
                 return false;
+            if (page_ == Page::kTouch) {
+                page_ = Page::kDisplay;
+                test_ = {};
+                return true;
+            }
+            const bool shortcut = brightness_shortcut_;
             Close();
+            return !shortcut;
+        }
+        if (page_ == Page::kTouch && input.action == TouchAction::kTouchPoint) {
+            if (input.x < 0 || input.x >= 360 || input.y < 0 || input.y >= 360)
+                return true;
+            test_.x = input.x;
+            test_.y = input.y;
+            if (!test_.passed) {
+                const int dx = input.x - sugarat_factory::kTouchTargets[test_.completed][0];
+                const int dy = input.y - sugarat_factory::kTouchTargets[test_.completed][1];
+                if (dx * dx + dy * dy <= 24 * 24)
+                    test_.passed = ++test_.completed == 5;
+            }
             return true;
         }
         if (input.action != TouchAction::kRow)
@@ -170,7 +237,7 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                     break;
                 case 1:
                     page_ = Page::kMotion;
-                    next_sample_ = 0;
+                    StartTest(amoled_ui::HardwareTest::Kind::kLevel);
                     break;
                 case 2:
                 case 3:
@@ -189,6 +256,12 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                     page_ = Page::kDisplay;
                     break;
             }
+        } else if (page_ == Page::kDisplay && input.row == 0) {
+            page_ = Page::kTouch;
+            StartTest(amoled_ui::HardwareTest::Kind::kTouch);
+        } else if ((page_ == Page::kTouch || page_ == Page::kMotion) && input.row == 0) {
+            StartTest(page_ == Page::kTouch ? amoled_ui::HardwareTest::Kind::kTouch
+                                          : amoled_ui::HardwareTest::Kind::kLevel);
         } else if (page_ == Page::kAudio && input.row == 0)
             hardware_.audio_.Stop();
         else if (page_ == Page::kBrightness) {
@@ -247,12 +320,12 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         if (page_ == Page::kRoot) {
             title(Tr("硬件与电源", "Hardware and power"));
             row(Tr("电量与电压", "Battery and voltage"));
-            row(Tr("六轴传感器", "Motion sensors"));
+            row(Tr("水平仪与六轴测试", "Level and motion test"));
             row(Tr("扬声器测试", "Test speaker"));
             row(Tr("录音 3 秒并回放", "Record 3 seconds and play"));
             row(Tr("屏幕亮度", "Screen brightness"));
             row(Tr("休眠、关机与重启", "Sleep, power off, restart"));
-            row(Tr("显示与触摸状态", "Display and touch status"));
+            row(Tr("显示与触摸", "Display and touch"));
         } else if (page_ == Page::kBattery) {
             title(Tr("电量与电压", "Battery and voltage"));
             if (state.percent >= 0)
@@ -269,17 +342,32 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                          Tr("电池采样暂不可用。\n充电状态：未知",
                             "Battery reading unavailable.\nCharging: unknown"));
         } else if (page_ == Page::kMotion) {
-            title(Tr("六轴传感器", "Motion sensors"));
-            if (state.imu_valid)
-                snprintf(screen.info, sizeof screen.info,
-                         "QMI8658\nAccel (g)\nX %+.2f  Y %+.2f  Z %+.2f\nGyro (deg/s)\nX %+.1f  Y "
-                         "%+.1f  Z %+.1f",
-                         state.acceleration[0], state.acceleration[1], state.acceleration[2],
-                         state.angular_velocity[0], state.angular_velocity[1],
-                         state.angular_velocity[2]);
+            title(Tr("水平仪", "Spirit level"));
+            screen.kind = amoled_ui::View::kHardwareTest;
+            screen.local_mode = true;
+            screen.hardware_test = test_;
+            snprintf(screen.detail, sizeof screen.detail, "%s",
+                     !test_.valid ? Tr("请放稳设备；传感器未就绪时重试", "Place still; retry if sensor unavailable")
+                     : test_.passed ? Tr("测试通过 · 可继续观察水平", "Passed - level stays live")
+                     : test_.centered ? Tr("已居中，请保持 1 秒", "Centered - hold for 1 second")
+                                      : Tr("屏幕朝上放平，让小球居中", "Screen up; move the ball to center"));
+            snprintf(screen.info, sizeof screen.info, "X %+.1f  Y %+.1f deg", test_.tilt_x, test_.tilt_y);
+        } else if (page_ == Page::kTouch) {
+            title(Tr("触摸测试", "Touch test"));
+            screen.kind = amoled_ui::View::kHardwareTest;
+            screen.local_mode = true;
+            screen.hardware_test = test_;
+            if (!test_.passed) {
+                screen.hardware_test.target_x = sugarat_factory::kTouchTargets[test_.completed][0];
+                screen.hardware_test.target_y = sugarat_factory::kTouchTargets[test_.completed][1];
+            }
+            snprintf(screen.detail, sizeof screen.detail, "%s",
+                     test_.passed ? Tr("测试通过 · 五个位置均已命中", "Passed - all five targets hit")
+                                  : Tr("依次轻点亮起的圆圈", "Tap each highlighted circle"));
+            if (test_.x >= 0)
+                snprintf(screen.info, sizeof screen.info, "X %d  Y %d   |   %d / 5", test_.x, test_.y, test_.completed);
             else
-                snprintf(screen.info, sizeof screen.info, "%s",
-                         Tr("传感器未就绪或读取失败", "Sensor not ready or read failed"));
+                snprintf(screen.info, sizeof screen.info, "%s", Tr("等待触摸 · 0 / 5", "Waiting for touch - 0 / 5"));
         } else if (page_ == Page::kAudio) {
             title(Tr("音频自检", "Audio self-test"));
             const char* text = Tr("测试就绪", "Ready");
@@ -344,6 +432,7 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                      hardware_.panel_.Ready() ? "OK" : "unavailable",
                      hardware_.touch_.Ready() ? "OK" : "unavailable", hardware_.panel_.TeEdges(),
                      hardware_.panel_.TeTimeouts());
+            row(Tr("开始触摸测试", "Start touch test"));
         }
     }
     AmoledHardware& hardware_;
@@ -352,6 +441,9 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
     int brightness_ = 75;
     int64_t next_sample_ = 0, button_at_ = 0;
     bool button_armed_ = false, long_handled_ = false;
+    bool brightness_shortcut_ = false, level_filtered_ = false;
+    int64_t level_since_ = 0;
+    amoled_ui::HardwareTest test_;
 };
 }  // namespace
 std::unique_ptr<FactoryHardwareServices> CreateFactoryHardwareServices(AmoledHardware& hardware) {

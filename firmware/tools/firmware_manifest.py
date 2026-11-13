@@ -144,6 +144,11 @@ def system_images(profile, root=ROOT):
               role: dict(app, path=f"apps/{profile['app']}", partition=layout["app_slots"][0])}
     for key, image in images.items():
         directory = contained(root, image["path"])
+        overrides = image.get("config_overrides", {})
+        if (not isinstance(overrides, dict) or
+                any(not re.fullmatch(r"CONFIG_[A-Z0-9_]+", symbol) or value not in {"y", "n"}
+                    for symbol, value in overrides.items())):
+            raise ValueError(f"Invalid image config overrides: {key}")
         if (not re.fullmatch(r"[a-zA-Z0-9._-]{1,31}", image["app_id"]) or
                 not 0 < len(image["name"].encode()) < 64 or not any(directory.glob("*.cc"))):
             raise ValueError(f"Invalid image: {key}")

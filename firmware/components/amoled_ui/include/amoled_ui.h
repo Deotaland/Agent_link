@@ -2,17 +2,18 @@
 #include "agent_link.h"
 #include "round_display.h"
 #include "amoled_ui_layout.h"
+#include "amoled_hardware_test.h"
 #include "lvgl.h"
 class AmoledFonts;
 
 namespace amoled_ui {
-enum class TouchAction { kMenu, kHome, kRow, kBack, kLoadBefore, kLoadAfter, kVolume, kSystem, kPreviousCard, kNextCard };
-enum class View { kHome, kLauncher, kList, kInfo, kFriend, kCarousel, kAppActions, kFactoryHome, kAppGrid, kDownloadCode, kDownloadDetail };
+enum class TouchAction { kMenu, kHome, kRow, kBack, kLoadBefore, kLoadAfter, kVolume, kSystem, kPreviousCard, kNextCard, kTouchPoint };
+enum class View { kHome, kLauncher, kList, kInfo, kFriend, kCarousel, kAppActions, kFactoryHome, kAppGrid, kDownloadCode, kDownloadDetail, kHardwareTest };
 struct GridItem {
     int cover_slot = -1;
     uint32_t cover_revision = 0;
 };
-struct Input { TouchAction action; int row = 0; uint32_t view = 0; int64_t at = 0; bool commit = false; };
+struct Input { TouchAction action; int row = 0; uint32_t view = 0; int64_t at = 0; bool commit = false; int x = -1, y = -1; };
 inline bool CurrentInput(const Input& input, uint32_t view, int64_t now) {
     return input.view == view && now >= input.at && now - input.at < 500000;
 }
@@ -29,6 +30,7 @@ struct Screen {
     bool wifi_connected = false, wifi_setup_active = false;
     char wifi_setup_ssid[33] = {};
     GridItem grid[4];
+    HardwareTest hardware_test;
     char app_id[32] = {};
     int row_count = 0;
     size_t row_offset = 0;
@@ -52,6 +54,15 @@ struct CardRenderer {
         uint32_t background, card, text, muted, accent, pressed;
     };
     const Palette* palette = nullptr;
+    // Return false over application-owned controls that need normal LVGL clicks.
+    bool (*capture_test_tap)(int x, int y) = nullptr;
+    struct TouchPolicy {
+        bool full_circle = false;
+        int button_slop = 12;
+        int back_padding = 0;
+        bool edge_system_swipe = false;
+    };
+    TouchPolicy touch{};
 };
 enum class DisplayPerformance { kBalanced, kLauncher };
 esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, void* context,

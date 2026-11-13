@@ -99,7 +99,7 @@ bool click_cancelled_ = true;
 bool contact_down_ = false;
 lv_obj_t* pressed_obj_ = nullptr;
 int contact_x_ = 0, contact_y_ = 0, list_direction_ = 0;
-uint32_t shown_view_ = 0, pressed_view_ = 0;
+uint32_t shown_view_ = 0, pressed_view_ = 0, contact_view_ = 0;
 View shown_kind_ = View::kHome;
 SwipeTracker swipe_;
 
@@ -211,10 +211,13 @@ lv_obj_t* Card(lv_obj_t* parent, int radius = 20) {
     lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
     return obj;
 }
-bool Dispatch(TouchAction action, int row = 0) {
-    if (pending_ || (shown_busy_ && action != TouchAction::kHome) || !handler_)
+bool Dispatch(TouchAction action, int row = 0, int x = -1, int y = -1) {
+    const bool system_swipe = action == TouchAction::kSystem && card_renderer_ &&
+        card_renderer_->touch.edge_system_swipe;
+    if (pending_ || (shown_busy_ && action != TouchAction::kHome && !system_swipe) || !handler_)
         return false;
     Input input{}; input.action = action; input.row = row;
+    input.x = x; input.y = y;
     input.view = shown_view_; input.at = esp_timer_get_time();
     if (!handler_(input, context_)) return false;
     pending_ = true;
@@ -244,6 +247,8 @@ void Click(lv_event_t* event) {
 }
 void BindClick(lv_obj_t* obj, int id) {
     lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    if (id == -1 && card_renderer_)
+        lv_obj_set_ext_click_area(obj, card_renderer_->touch.back_padding);
     auto* data = reinterpret_cast<void*>(static_cast<intptr_t>(id));
     lv_obj_add_event_cb(obj, Click, LV_EVENT_PRESSED, data);
     lv_obj_add_event_cb(obj, Click, LV_EVENT_PRESS_LOST, data);
@@ -389,9 +394,15 @@ void TrackTap(const cst9217::Point& next) {
     if (!next.pressed) return;  // Keep cancellation latched through the release/click events.
     if (first) {
         contact_x_ = next.x; contact_y_ = next.y; list_direction_ = 0;
+        contact_view_ = shown_view_;
         click_cancelled_ = false; pressed_obj_ = nullptr;
-    } else if (std::abs(static_cast<int>(next.x) - contact_x_) > 12 ||
-               std::abs(static_cast<int>(next.y) - contact_y_) > 12) {
+    }
+    // Only standalone buttons get more finger jitter tolerance. List rows keep
+    // the existing scroll guard, and free touch-test targets keep their precision.
+    const int slop = card_renderer_ && pressed_obj_ && lv_obj_get_parent(pressed_obj_) != list_
+        ? card_renderer_->touch.button_slop : 12;
+    if (std::abs(static_cast<int>(next.x) - contact_x_) > slop ||
+        std::abs(static_cast<int>(next.y) - contact_y_) > slop) {
         click_cancelled_ = true;
     }
     const lv_point_t position{next.x, next.y};
@@ -462,11 +473,23 @@ void Render(void*) {
                     next.x = logical.x; next.y = logical.y;
                 }
             }
+            // Test taps use the last pressed coordinates (release frames have none).
+            // Keep the top Back control on its ordinary LVGL click path. Only a
+            // short, uncancelled tap counts; motion and I2C errors never pass a target.
+            const bool touch_test = screen.kind == View::kHardwareTest &&
+                screen.hardware_test.kind == HardwareTest::Kind::kTouch;
+            if (touch_test && touch_ok && point_.pressed && !next.pressed &&
+                contact_view_ == shown_view_ &&
+                !click_cancelled_ && !swallow_ && card_renderer_ && card_renderer_->capture_test_tap &&
+                card_renderer_->capture_test_tap(point_.x, point_.y) &&
+                Inside(point_.x, point_.y, kDisplaySize / 2))
+                Dispatch(TouchAction::kTouchPoint, 0, point_.x, point_.y);
             if (touch_ok) TrackTap(next);
-            // Edge gestures use the physical circle; ordinary taps retain the
-            // inset content boundary and cannot activate controls outside it.
+            // Native card layouts can place visible buttons outside the shared
+            // list inset. Their taps must use the same physical circle as gestures.
             const bool gesture_down = next.pressed && Inside(next.x, next.y, kDisplaySize / 2);
-            if (next.pressed && !Inside(next.x, next.y)) {
+            const bool full_circle = touch_test || (card_renderer_ && card_renderer_->touch.full_circle);
+            if (next.pressed && !Inside(next.x, next.y, full_circle ? kDisplaySize / 2 : kContentRadius)) {
                 next.pressed = false; click_cancelled_ = true;
             }
             if (gesture_down) {
@@ -485,9 +508,12 @@ void Render(void*) {
                 swallow_ = false;
             const bool volume_touch = !lv_obj_has_flag(volume_box_, LV_OBJ_FLAG_HIDDEN) &&
                 contact_y_ >= kVolume.y - 10 && contact_y_ <= kVolume.y + kVolume.h + 10;
+            const bool edge_system_swipe = card_renderer_ && card_renderer_->touch.edge_system_swipe;
+            const bool test_target = touch_test && (!edge_system_swipe || contact_y_ >= Scale(85));
             const Swipe direction =
                 swipe_.Update(gesture_down && !swallow_, next.x * 466 / DISPLAY_WIDTH,
-                              next.y * 466 / DISPLAY_HEIGHT, shown_view_, now, volume_touch);
+                              next.y * 466 / DISPLAY_HEIGHT, shown_view_, now,
+                              volume_touch || test_target, edge_system_swipe);
             bool sent = false;
             if (direction == Swipe::kSystem) sent = Dispatch(TouchAction::kSystem);
             else if ((shown_kind_ == View::kCarousel || shown_kind_ == View::kFactoryHome) && direction == Swipe::kLeft) sent = Dispatch(TouchAction::kNextCard);
@@ -709,6 +735,13 @@ esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, 
     return ESP_OK;
 }
 bool SameScreen(const Screen& a, const Screen& b) {
+    const auto& ta = a.hardware_test;
+    const auto& tb = b.hardware_test;
+    if (ta.kind != tb.kind || ta.x != tb.x || ta.y != tb.y ||
+        ta.target_x != tb.target_x || ta.target_y != tb.target_y || ta.completed != tb.completed ||
+        ta.tilt_x != tb.tilt_x || ta.tilt_y != tb.tilt_y || ta.valid != tb.valid ||
+        ta.centered != tb.centered || ta.passed != tb.passed)
+        return false;
     if (a.kind != b.kind || a.busy != b.busy || a.calling != b.calling ||
         a.local_mode != b.local_mode || a.previous != b.previous || a.next != b.next ||
         a.ended != b.ended || a.volume_control != b.volume_control ||

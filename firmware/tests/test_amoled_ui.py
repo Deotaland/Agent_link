@@ -63,6 +63,7 @@ prefix = r'''
 #include "amoled_fonts.h"
 #include "amoled_ui_layout.h"
 #include "amoled_ui_controls.h"
+#include "amoled_hardware_test.h"
 #include "amoled_label_layout.h"
 #include "amoled_orientation.h"
 
@@ -430,6 +431,21 @@ void CheckSystemMenu() {
     assert(!strcmp(s.title,amoled_ui::Tr("系统菜单","System")));
     menu.OpenNetwork();input.action=amoled_ui::TouchAction::kHome;menu.Handle(input);
     assert(!menu.Active());
+    bool brightness_opened=false;
+    menu.SetExtraPage({&brightness_opened,
+        [](const amoled_ui::Input&,void*) {return false;},
+        [](amoled_ui::Screen& screen,void* context) {
+            snprintf(screen.title,sizeof screen.title,"%s",*static_cast<bool*>(context) ? "Brightness" : "Hardware");
+        },
+        [](void* context) {*static_cast<bool*>(context)=false;},
+        [](void* context) {*static_cast<bool*>(context)=true;}});
+    agent_system::menu_launcher=true;menu.Open();menu.Render(s,1,1,70,false);
+    assert(s.row_count==9 && !strcmp(s.rows[8],amoled_ui::Tr("屏幕亮度","Screen brightness")));
+    input.action=amoled_ui::TouchAction::kRow;input.row=8;menu.Handle(input);
+    menu.Render(s,1,1,70,false);assert(brightness_opened && !strcmp(s.title,"Brightness"));
+    input.action=amoled_ui::TouchAction::kBack;menu.Handle(input);menu.Render(s,1,1,70,false);
+    assert(!brightness_opened && s.row_count==9);
+    menu.Close();menu.SetExtraPage({});agent_system::menu_launcher=false;
     puts("System menu: standalone hides return, installed app can return, stale input rejected and launcher cover page retained.");
 }
 '''
@@ -562,7 +578,7 @@ std::shared_ptr<const CoverPixels> AcquireCover(const Cover& cover) {
 }
 }
 """
-    factory_source = '\n'.join(line for line in (factory_ui/'factory_view.cc').read_text(encoding='utf-8').splitlines() if not line.startswith('#include'))+'\n'
+    factory_source = '\n#include "../factory_diagnostics.h"\n' + '\n'.join(line for line in (factory_ui/'factory_view.cc').read_text(encoding='utf-8').splitlines() if not line.startswith('#include'))+'\n'
     post = (root/'tests/sdgoods_ui_fixture.cc').read_text(encoding='utf-8')
 
 generated.write_text(prefix+header+fonts+factory_source+source+post,encoding='utf-8')

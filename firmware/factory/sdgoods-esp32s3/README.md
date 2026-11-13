@@ -1,4 +1,4 @@
-# Agent_link Launcher for Sugarat Button
+# Sugarat Launcher for Sugarat Button
 
 This Factory also supports the same Sugarat Button hardware sold by SDGOODS.
 
@@ -8,6 +8,46 @@ of [Sugarat's launcher](https://github.com/suoyousheng-bot/sugarat-sdgoods/tree/
 The home summary shows installed app count, free app-pool space and an allocation
 ring. Three tiles open **My apps**, **Download apps** and **Settings**. The grid,
 app actions and download progress use the same palette, in Chinese and English.
+
+## Startup movie
+
+Factory plays the prepared movie once, with its original soundtrack resampled
+for the mono 16 kHz speaker, before starting LVGL and entering the home page.
+Video targets 360x360 at 24 fps; late frames are skipped to keep sound and video
+on the same timeline. Existing volume settings apply. Missing/corrupt media,
+mount/allocation/decoder failures skip playback and continue to home. FAT is
+never automatically formatted. Any previous install receipt remains accessible
+from **Download apps** after the home page opens.
+
+The fixed `appdata,data,fat,0x1000000,0x1000000` partition holds two root files:
+`START.MP4` preserves the supplied original; `START.BVA` contains bounded JPEG
+frames plus mono PCM, since this S3 launcher does not decode H.264/AAC directly.
+The player loads this small converted file into PSRAM, unmounts appdata before
+playback, and releases its buffers before the normal UI starts. File framing,
+dimensions, offsets, duration and CRC are checked before playback.
+
+In the activated SDK environment, from the repository root:
+
+```powershell
+python firmware/tools/build_firmware.py sdgoods-wifi --image-role factory --jobs 2
+python firmware/tools/prepare_boot_animation.py dist/start.mp4 --package-factory
+python firmware/tests/test_boot_animation.py
+```
+
+The source video is a local input in ignored `dist/`; it is not required to build
+the player. Output is in `firmware/build/boot-animation/`:
+
+- `appdata.bin`: verified 16 MiB wear-levelled FAT image for **0x1000000**.
+- `factory-with-animation-merged.bin`: verified initial 32 MiB USB package for **0x0**.
+- `animation.json` and `flash-files.json`: geometry, media details, hashes and flash files.
+
+Writing `appdata.bin` replaces all existing appdata files. The initial merged
+package also replaces settings and installed apps. Ordinary Factory build/flash
+metadata deliberately excludes appdata so later firmware-only updates preserve it.
+Build/packaging commands never flash a device. On-device playback, sound, frame
+rate and transition still require hardware acceptance.
+
+## Launcher behavior
 
 - Open **My apps** (or swipe left on home) for a four-app grid with page controls.
   Up to 16 apps occupy four pages; the empty state opens download-code entry.
@@ -19,6 +59,9 @@ app actions and download progress use the same palette, in Chinese and English.
 - Tap an app to open its actions; removal requires confirmation.
 - The upper-left arrow returns one level. Swiping up from the physical bottom
   edge returns directly home, including from settings and download progress.
+  Return arrows have a 10px invisible touch margin. Native launcher buttons use
+  the full round touch surface, including the bottom Delete and Find keys, with
+  up to 18px finger jitter; scrolling list rows retain their stricter drag guard.
 - Download-code queries and installation run on a dedicated worker. Going home leaves
   a download running; **Download apps** reopens its progress or unacknowledged
   result. Opening another app asks whether to interrupt the download and start
@@ -28,7 +71,10 @@ app actions and download progress use the same palette, in Chinese and English.
   details until acknowledged. Installation outcomes are stored in `app_nvs` and
   survive restart; pending outcomes are checked against the actual installed
   image after reboot. Partial images remain unavailable.
-- Pull down from the top for WiFi, app service, device, language and cover settings.
+- Pull down from the physical top edge for WiFi, app service, device, language
+  and cover settings. The top cap accepts the gesture from its center or sides,
+  including on the download/progress and hardware-test pages. A normal tap or
+  list scroll does not open the menu.
 - **Settings > WiFi** uses the common Agent Link provisioning flow and existing
   isolated settings. App downloads use the production community download-code API;
   provisioning continues to use the common Agent Link flow.
@@ -37,9 +83,22 @@ app actions and download progress use the same palette, in Chinese and English.
   a disconnected station instead links to network settings. Code lookup
   and installation direct users there first. Installed apps stay accessible and
   launch normally offline; connecting WiFi restores the storage summary.
-- Open **Hardware and power** for battery voltage/estimated level, six-axis sensor
-  readings, speaker tone, three-second record/playback, persistent brightness and
+- Open **Hardware and power** for battery voltage/estimated level, a live spirit
+  level, speaker tone, three-second record/playback, persistent brightness and
   sleep/power/restart controls. The existing volume page controls self-test audio.
+- **Settings > Screen brightness** also opens the saved 5–100% brightness control
+  directly. Changes take effect immediately and survive a restart.
+- **Hardware and power > Display and touch > Start touch test** guides five taps
+  (center and four quadrants). Each short tap displays its screen X/Y position;
+  only the highlighted target counts within a 24px radius. All five must pass.
+  Dragging does not count. **Restart test** clears progress; Back returns to display status.
+- **Level and motion test** presents a live bubble level driven by QMI8658 gravity
+  readings, with X/Y tilt in degrees. Place the device screen-up and hold the bubble
+  centered within 3 degrees for one second, with rotation below 5 degrees/second,
+  to pass. Acceleration outside 0.85–1.15 g or read failures cannot pass; the bubble
+  is hidden until valid readings return. This is a functional check, not a calibrated
+  measuring instrument or independent verification of every gyroscope axis.
+  Test screens stay awake, and neither test writes calibration data.
 - Hold the key for 1.2 seconds to open power controls. Sleep/off asks for confirmation,
   waits for idle background work and drains the display before changing power.
   GPIO6 wakes deep sleep; USB-powered off uses deep sleep as a fallback.
@@ -76,6 +135,14 @@ app actions and download progress use the same palette, in Chinese and English.
   seconds to recover Factory without erasing application files or settings.
 
 ## Memory and transfers
+
+Only this board's Factory image uses software SHA and AES in mbedTLS. The
+image-scoped build policy avoids the reported ESP32-S3 I2S/GDMA crypto interaction
+after startup audio, while retaining the soundtrack and normal HTTPS certificate
+and hostname verification. This is a workaround pending on-device acceptance.
+The application image and other boards keep their existing crypto settings;
+switching away from this Factory restores the prior values rather than retaining
+its override in the shared build directory.
 
 The LVGL heap is 2 MiB in external BSS/PSRAM. Two native RGB565 full-frame draw
 buffers plus one asynchronous transfer staging buffer occupy 777,600 bytes

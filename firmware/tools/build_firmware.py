@@ -199,6 +199,60 @@ def select_image_role(profile, config, role):
     config.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
+def image_config_overrides(profile, role):
+    bundle = system_images(profile)
+    return bundle["images"][role].get("config_overrides", {}) if bundle else {}
+
+
+def prepare_image_config(profile, config):
+    """Apply image policy and restore the saved values when leaving that image.
+
+    Both CLI and VS Code call --prepare before IDF reads sdkconfig. Keep these
+    settings out of board/profile defaults so application builds do not inherit
+    a Factory-only workaround through the reused build directory.
+    """
+    state = read_state()
+    previous = state.get("image_config", {}).get("saved", {})
+    overrides = image_config_overrides(profile, selected_image_role(profile, config))
+    if not previous and not overrides:
+        return False
+    if set(overrides) & PRIVATE_KEYS:
+        raise ValueError("Image config overrides must not contain private settings")
+    actual = settings(config)
+    values = dict(actual)
+    # Restore the baseline before capturing the next image's overrides. A missing
+    # value is removed, allowing IDF to choose its normal SDK/profile default.
+    for key, value in previous.items():
+        if value is None:
+            values.pop(key, None)
+        else:
+            values[key] = value
+    saved = {key: values.get(key) for key in overrides}
+    values.update(overrides)
+    affected = previous.keys() | overrides.keys()
+    original = config.read_text(encoding="utf-8-sig")
+    lines = []
+    for line in original.splitlines():
+        match = SETTING.fullmatch(line.strip()) or UNSET.fullmatch(line.strip())
+        if not match or match[1] not in affected:
+            lines.append(line)
+    lines += [f"# {key} is not set" if values[key] == "n" else f"{key}={values[key]}"
+              for key in sorted(affected) if key in values]
+    updated = "\n".join(lines) + "\n"
+    if overrides:
+        state["image_config"] = {"saved": saved}
+    else:
+        state.pop("image_config", None)
+    # IDF rewrites sdkconfig in Kconfig order. Leave it byte-for-byte alone when
+    # the values already match, keeping ordinary incremental builds incremental.
+    changed = any(actual.get(key) != values.get(key) for key in affected)
+    if changed:
+        config.write_text(updated, encoding="utf-8", newline="\n")
+    if state != read_state():
+        STATE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    return changed
+
+
 def load_profiles():
     profiles = resolve_profiles(ROOT)
     seen = set()
@@ -390,7 +444,7 @@ def prepare_config(name, profile, config, reset=False):
     state = read_state()
     digest = fingerprint(name, profile)
     if not reset and not needs_regeneration(state, name, digest, config):
-        return False
+        return prepare_image_config(profile, config)
     imported = import_private(config, PRIVATE)
     backup = ROOT / "sdkconfig.before-profile"
     if config.exists() and not backup.exists():
@@ -423,10 +477,13 @@ def prepare_config(name, profile, config, reset=False):
             kept[profile_symbol(name)] = "y"
         config.write_text("\n".join(f"# {key} is not set" if value == "n" else f"{key}={value}"
                                    for key, value in kept.items()) + "\n", encoding="utf-8")
-    STATE.write_text(json.dumps({"schema": SCHEMA, "profile": name, "application_profile": saved_app,
-                                 "idf": idf_context(),
-                                 "fingerprint": fingerprint(name, profile)}, indent=2) + "\n",
+    record = {"schema": SCHEMA, "profile": name, "application_profile": saved_app,
+              "idf": idf_context(), "fingerprint": fingerprint(name, profile)}
+    if not reset and state.get("profile") == name and state.get("image_config"):
+        record["image_config"] = state["image_config"]
+    STATE.write_text(json.dumps(record, indent=2) + "\n",
                      encoding="utf-8")
+    prepare_image_config(profile, config)
     print(f"Applying firmware profile: {state.get('profile', 'unconfigured')} -> {name}.", flush=True)
     if imported:
         print(f"Preserved {imported} private settings (values hidden).", flush=True)
@@ -440,13 +497,17 @@ def needs_regeneration(state, name, digest, config):
 
 def validate_settings(profile, actual):
     problems = []
+    role = ("factory" if actual.get("CONFIG_AGENT_LINK_BUILD_FACTORY") == "y"
+            else default_image_role(profile, system_images(profile)))
+    expected = expected_settings(profile)
+    expected.update(image_config_overrides(profile, role))
     selected = {k for k, v in actual.items() if v == "y" and
                 k.startswith(("CONFIG_BOARD_TYPE_", "CONFIG_AGENT_LINK_TRANSPORT_"))}
     if selected != identity(profile):
         problems.append("board/backend does not match the firmware profile")
     if actual.get("CONFIG_IDF_TARGET") != json.dumps(profile["target"]):
         problems.append("target chip does not match the firmware profile")
-    for key, value in expected_settings(profile).items():
+    for key, value in expected.items():
         if actual.get("CONFIG_AGENT_LINK_BUILD_FACTORY") == "y" and key.startswith("CONFIG_AGENT_LINK_PROFILE_"):
             continue
         if actual.get(key, "n") != value:

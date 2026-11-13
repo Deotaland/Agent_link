@@ -10,6 +10,8 @@ class Audio {
     enum class Test { kSpeaker, kRecordPlayback };
     enum class Stage { kIdle, kPreparing, kRecording, kPlaying, kDone, kStopped, kFailed };
     esp_err_t Start(Test test);
+    // Blocking PCM playback on the caller's worker; PCM stays owned by that caller.
+    esp_err_t PlayClip(const int16_t* pcm, size_t frames);
     void SetVolume(int percent);
     void Stop();
     bool StopAndWait();

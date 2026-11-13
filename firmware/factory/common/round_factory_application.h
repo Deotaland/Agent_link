@@ -29,7 +29,9 @@
 using amoled_ui::Tr;
 class AmoledFactoryApplication : public Application {
    public:
-    explicit AmoledFactoryApplication(bool tile_home = false) : tile_home_(tile_home) {
+    using Startup = void (*)(AmoledHardware&);
+    explicit AmoledFactoryApplication(bool tile_home = false, Startup startup = nullptr)
+        : tile_home_(tile_home) {
         nvs_handle_t h;
         int8_t language = 0;
         if (nvs_open_from_partition(agent_system::SettingsPartition(), "amoled175", NVS_READONLY, &h) == ESP_OK) {
@@ -39,6 +41,7 @@ class AmoledFactoryApplication : public Application {
         amoled_ui::language.store(language == 1 ? amoled_ui::Language::kEnglish
                                                 : amoled_ui::Language::kChinese);
         hardware_.InitDisplayAndTouch(32);
+        if (startup) startup(hardware_);
         menu_.SetDefaultVolume(AUDIO_DEFAULT_VOLUME);
         hardware_services_ = CreateFactoryHardwareServices(hardware_);
         if (hardware_services_) {
@@ -58,7 +61,7 @@ class AmoledFactoryApplication : public Application {
         Home();
         if (tile_home_) {
             store_job_ = std::make_unique<FactoryStoreJob>();
-            if (store_job_->Restore(apps_, app_count_))
+            if (store_job_->Restore(apps_, app_count_) && !startup)
                 page_ = Page::kJobResult;
         }
         Publish();
@@ -456,7 +459,7 @@ class AmoledFactoryApplication : public Application {
             } else if (page_ == Page::kDashboard) {
                 screen_.kind = amoled_ui::View::kFactoryHome;
                 screen_.card_count = app_count_;
-                title("Agent_link Launcher");
+                title("Sugarat Launcher");
                 if (store_job_) {
                     const auto job = store_job_->Read();
                     if (job.running)

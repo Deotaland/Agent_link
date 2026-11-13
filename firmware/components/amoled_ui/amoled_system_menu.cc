@@ -119,6 +119,12 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
                 if (extra_.render)
                     page_ = Page::kExtra;
                 break;
+            case 8:
+                if (extra_.open_brightness) {
+                    extra_.open_brightness(extra_.context);
+                    page_ = Page::kExtra;
+                }
+                break;
         }
     } else if (page_ == Page::kNetwork && input.row == 0)
         Error(agent_link_wifi_setup());
@@ -170,6 +176,8 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
             row(Tr("返回应用选择器", "Return to launcher"));
         if (extra_.render)
             row(Tr("硬件与电源", "Hardware and power"));
+        if (extra_.open_brightness)
+            row(Tr("屏幕亮度", "Screen brightness"));
     } else if (page_ == Page::kNetwork) {
         snprintf(s.title, sizeof s.title, "%s", Tr("网络与配网", "Network"));
         if (!wifi.connected && wifi.setup_active) {

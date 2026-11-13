@@ -12,10 +12,17 @@ void Frame(const char* filename) {
     }
     fclose(out);
 }
-void Tap(Cst9217Touch& touch, int x, int y) {
-    touch.sample.x=x; touch.sample.y=y; touch.sample.pressed=true;
+void Feed(Cst9217Touch& touch, bool down, int x=0, int y=0) {
+    touch.sample={down,uint16_t(x),uint16_t(y)};
     clock_us+=40000; Render(nullptr);
-    touch.sample.pressed=false; clock_us+=40000; Render(nullptr);
+}
+void Tap(Cst9217Touch& touch, int x, int y) {
+    Feed(touch,true,x,y); Feed(touch,false);
+}
+void SwipeDown(Cst9217Touch& touch, int x, int y) {
+    const unsigned before=clicks;
+    Feed(touch,true,x,y); Feed(touch,true,x,y+70); Feed(touch,false);
+    assert(clicks==before+1 && last_input.action==TouchAction::kSystem);
 }
 int main(int argc, char** argv) {
     // CST816 register 02 frames: explicit hardware corner vectors, including
@@ -55,6 +62,9 @@ int main(int argc, char** argv) {
     Cst9217Touch touch; touch_=&touch;
     pointer_=lv_indev_create(); lv_indev_set_type(pointer_,LV_INDEV_TYPE_POINTER);
     lv_indev_set_display(pointer_,display); lv_indev_set_read_cb(pointer_,ReadTouch);
+    const auto fresh_input=[&] {
+        state.view++; SetScreen(state); clock_us+=40000; Render(nullptr);
+    };
     for(int i=0;i<3;++i) {
         state.view++; SetScreen(state); Frame("sdgoods-home.ppm");
         const unsigned before=clicks; Tap(touch,90+i*90,220);
@@ -138,6 +148,25 @@ int main(int argc, char** argv) {
         assert(last_input.action==TouchAction::kRow && last_input.row==ids[i]);
     }
     assert(!strcmp(lv_label_get_text(amoled_factory::code_labels[0]),"0"));
+    // Lower and outer painted portions used to be rejected by the 161px inset.
+    // Each contact must trigger exactly one key, including zero-coordinate releases.
+    const int key_edges[][3]{{102,322,10},{75,309,10},{129,319,10},
+                            {258,322,11},{285,309,11},{231,319,11},{180,322,0}};
+    for(const auto& key : key_edges) {
+        fresh_input(); const unsigned before=clicks;
+        Tap(touch,key[0],key[1]);
+        assert(clicks==before+1 && last_input.action==TouchAction::kRow && last_input.row==key[2]);
+    }
+    fresh_input(); unsigned before=clicks;
+    Feed(touch,true,248,307); Feed(touch,true,264,309); Feed(touch,false);
+    assert(clicks==before+1 && last_input.action==TouchAction::kRow && last_input.row==11);
+    fresh_input(); before=clicks;
+    Feed(touch,true,258,322); Feed(touch,true,258,297); Feed(touch,false);
+    assert(clicks==before); // A deliberate drag is still not a click.
+    fresh_input(); before=clicks;
+    Feed(touch,true,75,309); Feed(touch,true,0,0); Feed(touch,true,75,309); Feed(touch,false);
+    assert(clicks==before); // Leaving the physical circle cannot re-arm a key.
+    fresh_input(); SwipeDown(touch,180,2);
     language.store(Language::kEnglish); state.view++; SetScreen(state);
     Frame("sdgoods-download-code-en.ppm"); language.store(Language::kChinese);
     state.kind=View::kDownloadDetail; state.view++; state.navigation++;
@@ -148,33 +177,50 @@ int main(int argc, char** argv) {
     Tap(touch,120,290); assert(last_input.action==TouchAction::kRow && last_input.row==0);
     state.view++; SetScreen(state); Frame("sdgoods-download-detail.ppm");
     Tap(touch,240,290); assert(last_input.action==TouchAction::kRow && last_input.row==1);
-    state.kind=View::kList; state.view++; state.navigation++; state.row_count=8;
+    state.kind=View::kList; state.view++; state.navigation++; state.row_count=9;
     state.detail[0]=0;
     snprintf(state.title,sizeof state.title,"系统菜单");
     const char* rows[]{"网络与配网","当前应用","设备状态","应用服务","音量",
-                       "语言 / Language","应用封面与同步","硬件与电源"};
-    for(int i=0;i<8;++i) snprintf(state.rows[i],112,"%s",rows[i]);
+                       "语言 / Language","应用封面与同步","硬件与电源","屏幕亮度"};
+    for(int i=0;i<9;++i) snprintf(state.rows[i],112,"%s",rows[i]);
     SetScreen(state); Frame("sdgoods-settings.ppm");
     lv_obj_scroll_to_y(list_,kRowHeight,LV_ANIM_OFF); Frame("sdgoods-settings-scrolled.ppm");
     lv_obj_scroll_to_y(list_,0,LV_ANIM_OFF);
     language.store(Language::kEnglish); state.view++; state.navigation++;
     snprintf(state.title,sizeof state.title,"System");
     const char* english_rows[]{"Network and WiFi setup","Current application","Device status",
-        "App service","Volume","语言 / Language","App covers and sync","Hardware and power"};
-    for(int i=0;i<8;++i) snprintf(state.rows[i],112,"%s",english_rows[i]);
+        "App service","Volume","语言 / Language","App covers and sync","Hardware and power","Screen brightness"};
+    for(int i=0;i<9;++i) snprintf(state.rows[i],112,"%s",english_rows[i]);
     SetScreen(state); Frame("sdgoods-settings-en.ppm");
     language.store(Language::kChinese); state.view++; state.navigation++;
     snprintf(state.title,sizeof state.title,"系统菜单");
-    for(int i=0;i<8;++i) snprintf(state.rows[i],112,"%s",rows[i]);
+    for(int i=0;i<9;++i) snprintf(state.rows[i],112,"%s",rows[i]);
     SetScreen(state); Frame("sdgoods-settings.ppm");
     const auto coords=[](lv_obj_t* obj) { lv_area_t area; lv_obj_get_coords(obj,&area); return area; };
     const auto row=coords(rows_[0]); Tap(touch,(row.x1+row.x2)/2,(row.y1+row.y2)/2);
     assert(last_input.action==TouchAction::kRow && last_input.row==0);
+    // The common settings arrow gets the same generous hit margin as native arrows.
+    fresh_input(); const auto back=coords(back_); before=clicks;
+    Tap(touch,back.x1-8,(back.y1+back.y2)/2);
+    assert(clicks==before+1 && last_input.action==TouchAction::kBack);
+    fresh_input(); before=clicks;
+    Feed(touch,true,back.x1+3,back.y1+10);
+    Feed(touch,true,back.x1+19,back.y1+12); Feed(touch,false);
+    assert(clicks==before+1 && last_input.action==TouchAction::kBack);
+    fresh_input(); before=clicks;
+    Tap(touch,back.x1-20,(back.y1+back.y2)/2); assert(clicks==before);
+    fresh_input(); before=clicks;
+    Feed(touch,true,(row.x1+row.x2)/2,(row.y1+row.y2)/2);
+    Feed(touch,true,(row.x1+row.x2)/2,(row.y1+row.y2)/2+24); Feed(touch,false);
+    assert(clicks==before); // List scrolling keeps the stricter movement guard.
+    fresh_input(); SwipeDown(touch,180,2);
     state.kind=View::kInfo; state.busy=true; state.progress=63; state.view++; state.navigation++;
     snprintf(state.title,sizeof state.title,"下载安装应用");
     snprintf(state.info,sizeof state.info,"1326 / 2105 KB");
     SetScreen(state); Frame("sdgoods-progress.ppm");
     const unsigned busy_clicks=clicks; Tap(touch,120,290); assert(clicks==busy_clicks);
+    fresh_input(); SwipeDown(touch,180,2); // Menus remain accessible while the worker runs.
+    fresh_input();
     // Start on the last physical pixel, beyond the inset used for normal taps.
     touch.sample.x=180; touch.sample.y=359; touch.sample.pressed=true;
     clock_us+=40000; Render(nullptr); touch.sample.y=296; clock_us+=40000; Render(nullptr);
@@ -210,10 +256,78 @@ int main(int argc, char** argv) {
     clock_us+=40000; Render(nullptr); touch.sample.y=100; clock_us+=40000; Render(nullptr);
     assert(last_input.action==TouchAction::kSystem);
     touch.sample.pressed=false; clock_us+=40000; Render(nullptr);
+    fresh_input(); SwipeDown(touch,180,2);
+    fresh_input(); SwipeDown(touch,80,50); // Top cap sides used to be outside the gesture strip.
     state.view++; state.navigation++; SetScreen(state); Frame("sdgoods-home.ppm");
     touch.sample.x=180; touch.sample.y=325; touch.sample.pressed=true;
     clock_us+=40000; Render(nullptr); touch.sample.y=260; clock_us+=40000; Render(nullptr);
     assert(last_input.action==TouchAction::kHome);
+    touch.sample.pressed=false; clock_us+=40000; Render(nullptr);
+    state={}; state.kind=View::kHardwareTest; state.local_mode=true;
+    state.view=100; state.navigation=100;
+    state.hardware_test.kind=HardwareTest::Kind::kTouch;
+    snprintf(state.title,sizeof state.title,"触摸测试");
+    snprintf(state.detail,sizeof state.detail,"依次轻点亮起的圆圈");
+    snprintf(state.info,sizeof state.info,"等待触摸 · 0 / 5");
+    SetScreen(state); Frame("sdgoods-touch-test.ppm");
+    for(const auto& target : sugarat_factory::kTouchTargets) {
+        state.view++; SetScreen(state); Render(nullptr);
+        const unsigned before=clicks;
+        touch.sample={}; touch.sample.x=target[0]; touch.sample.y=target[1]; touch.sample.pressed=true;
+        clock_us+=40000; Render(nullptr);
+        touch.sample={}; // Real release frames have no coordinates.
+        clock_us+=40000; Render(nullptr);
+        assert(clicks==before+1 && last_input.action==TouchAction::kTouchPoint &&
+               last_input.x==target[0] && last_input.y==target[1]);
+    }
+    state.view++; SetScreen(state); Render(nullptr);
+    const unsigned before_drag=clicks;
+    touch.sample={true,180,180}; clock_us+=40000; Render(nullptr);
+    touch.sample.x=260; clock_us+=40000; Render(nullptr);
+    touch.sample={}; clock_us+=40000; Render(nullptr);
+    assert(clicks==before_drag); // Dragging cannot satisfy a target or leave the test.
+    state.view++; SetScreen(state); Render(nullptr);
+    touch.sample={true,180,180}; clock_us+=40000; Render(nullptr);
+    state.view++; SetScreen(state); Render(nullptr);
+    touch.sample={}; clock_us+=40000; Render(nullptr);
+    assert(clicks==before_drag); // A contact from a previous view must not pass.
+    state.view++; SetScreen(state); Render(nullptr);
+    Tap(touch,180,335);
+    assert(last_input.action==TouchAction::kRow && last_input.row==0);
+    state.view++; SetScreen(state); Render(nullptr);
+    Tap(touch,88,58); assert(last_input.action==TouchAction::kBack);
+    fresh_input(); before=clicks;
+    Tap(touch,62,58); assert(clicks==before+1 && last_input.action==TouchAction::kBack);
+    fresh_input(); SwipeDown(touch,180,2);
+    state.view++; state.hardware_test.x=262; state.hardware_test.y=262;
+    state.hardware_test.completed=5; state.hardware_test.passed=true;
+    snprintf(state.detail,sizeof state.detail,"测试通过 · 五个位置均已命中");
+    snprintf(state.info,sizeof state.info,"X 262  Y 262   |   5 / 5");
+    SetScreen(state); Frame("sdgoods-touch-passed.ppm");
+    assert(!lv_obj_has_flag(amoled_factory::touch_pass,LV_OBJ_FLAG_HIDDEN));
+    state.hardware_test={}; state.hardware_test.kind=HardwareTest::Kind::kLevel;
+    state.hardware_test.valid=true; state.hardware_test.tilt_x=8; state.hardware_test.tilt_y=-6;
+    snprintf(state.title,sizeof state.title,"水平仪");
+    snprintf(state.detail,sizeof state.detail,"屏幕朝上放平，让小球居中");
+    snprintf(state.info,sizeof state.info,"X +8.0  Y -6.0 deg");
+    state.view++; SetScreen(state); Frame("sdgoods-level.ppm");
+    assert(lv_obj_get_x(amoled_factory::level_ball)==102 && lv_obj_get_y(amoled_factory::level_ball)==46);
+    // Changes to the diagnostic snapshot alone must reach the renderer.
+    state.hardware_test.tilt_x=0; state.hardware_test.tilt_y=0;
+    state.hardware_test.centered=true; state.hardware_test.passed=true;
+    SetScreen(state); Frame("sdgoods-level-centered.ppm");
+    assert(lv_obj_get_x(amoled_factory::level_ball)==70 && lv_obj_get_y(amoled_factory::level_ball)==70);
+    snprintf(state.detail,sizeof state.detail,"测试通过 · 可继续观察水平");
+    snprintf(state.info,sizeof state.info,"X +0.0  Y +0.0 deg");
+    SetScreen(state); Frame("sdgoods-level-centered.ppm");
+    state.hardware_test.valid=false; SetScreen(state); Frame("sdgoods-level-unavailable.ppm");
+    assert(lv_obj_has_flag(amoled_factory::level_ball,LV_OBJ_FLAG_HIDDEN));
+    language.store(Language::kEnglish);
+    state.hardware_test.valid=true;
+    snprintf(state.title,sizeof state.title,"Spirit level");
+    snprintf(state.detail,sizeof state.detail,"Passed - level stays live");
+    SetScreen(state); Frame("sdgoods-level-en.ppm");
+    language.store(Language::kChinese);
     SetBacklight(42);
     Frame("sdgoods-backlight.ppm");
     assert(applied_backlight_ == (42*255+50)/100);
@@ -224,6 +338,6 @@ int main(int argc, char** argv) {
     Frame("sdgoods-resume.ppm");
     assert(!sleep_ready_.load() && applied_backlight_ == (42*255+50)/100);
     lv_indev_delete(pointer_); pointer_=nullptr; display_transfer_.Stop();
-    puts("SDGOODS: home tiles, four-cover grid, paging, empty state, actions, progress, settings and gestures passed.");
+    puts("SDGOODS: keypad edges, Back margins, button jitter, drag/circle/stale guards, top-edge menu on home/download/settings/progress/tests, live level and launcher pages passed.");
     return 0;
 }
