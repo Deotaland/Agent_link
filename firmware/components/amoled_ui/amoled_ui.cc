@@ -4,6 +4,7 @@
 #include "amoled_ui_controls.h"
 #include "amoled_orientation.h"
 #include "amoled_display_transfer.h"
+#include "amoled_label_layout.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -184,9 +185,13 @@ void Visible(lv_obj_t* obj, bool on) {
 }
 void Position(lv_obj_t* obj, const Rect& rect) {
     lv_obj_set_pos(obj, rect.x, rect.y); lv_obj_set_size(obj, rect.w, rect.h);
+    if (lv_obj_check_type(obj, &lv_label_class)) CenterLabelVertically(obj);
 }
 void Text(lv_obj_t* label, const char* text) {
-    if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+    if (strcmp(lv_label_get_text(label), text) != 0) {
+        lv_label_set_text(label, text);
+        CenterLabelVertically(label);
+    }
 }
 lv_obj_t* Label(lv_obj_t* parent, const lv_font_t* font, uint32_t color, bool center = false) {
     auto* label = lv_label_create(parent);
@@ -330,12 +335,14 @@ void Build() {
         rows_[i] = Card(list_, 18); BindClick(rows_[i], i);
         lv_obj_set_size(rows_[i], kList.w - Scale(5), kRowHeight - Scale(8));
         row_icons_[i] = Label(rows_[i], &lv_font_montserrat_20, kBlue, true);
-        lv_obj_set_pos(row_icons_[i], Scale(10), Scale(17)); lv_obj_set_size(row_icons_[i], Scale(28), Scale(26));
+        lv_obj_set_size(row_icons_[i], Scale(28), lv_font_get_line_height(&lv_font_montserrat_20));
+        lv_obj_align(row_icons_[i], LV_ALIGN_LEFT_MID, Scale(10), 0);
         row_labels_[i] = Label(rows_[i], fonts_.Body(), kWhite);
-        lv_obj_set_pos(row_labels_[i], Scale(48), Scale(7)); lv_obj_set_size(row_labels_[i], kList.w - Scale(84), Scale(46));
+        lv_obj_set_size(row_labels_[i], kList.w - Scale(84), lv_font_get_line_height(fonts_.Body()));
+        lv_obj_align(row_labels_[i], LV_ALIGN_LEFT_MID, Scale(48), 0);
         lv_label_set_long_mode(row_labels_[i], LV_LABEL_LONG_DOT);
         auto* arrow = Label(rows_[i], &lv_font_montserrat_14, kMuted);
-        Text(arrow, LV_SYMBOL_RIGHT); lv_obj_set_pos(arrow, kList.w - Scale(27), Scale(20));
+        Text(arrow, LV_SYMBOL_RIGHT); lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -Scale(10), 0);
     }
     volume_box_ = Card(root, 18); Position(volume_box_, kVolume);
     volume_label_ = Label(volume_box_, fonts_.Body(), kMuted, true);
@@ -573,7 +580,11 @@ void Render(void*) {
                 const char* code = setup ? status.code : screen.pair_code;
                 const bool show_code = code[0] && (!setup || status.phase == AGENT_LINK_PHASE_PAIRING);
                 Visible(list_code_, show_code);
-                if (show_code) { Text(list_code_, code); lv_obj_set_pos(list_code_, 0, y); lv_obj_set_size(list_code_, kList.w - Scale(6), Scale(60)); y += Scale(68); }
+                if (show_code) {
+                    Text(list_code_, code); lv_obj_set_pos(list_code_, 0, y);
+                    lv_obj_set_size(list_code_, kList.w - Scale(6), Scale(60));
+                    CenterLabelVertically(list_code_); y += Scale(68);
+                }
                 const char* description = setup ? status.hint : screen.info;
                 Visible(list_info_, description[0]);
                 if (description[0]) {
@@ -595,6 +606,7 @@ void Render(void*) {
                 if (screen.next || screen.previous) {
                     Text(list_hint_, screen.next ? Tr("继续上滑加载更多", "Scroll for more") : Tr("已到末尾", "End of list"));
                     lv_obj_set_pos(list_hint_, 0, y); lv_obj_set_size(list_hint_, kList.w - Scale(6), Scale(30));
+                    CenterLabelVertically(list_hint_);
                 }
                 Mark(UiStage::kListLayout); lv_obj_update_layout(list_);
                 const int scroll_y = new_page ? 0 : WindowScroll(old_y, offset, screen.row_offset, kRowHeight);

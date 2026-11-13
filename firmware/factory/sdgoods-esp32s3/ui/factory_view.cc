@@ -5,6 +5,7 @@
 #include "factory_view.h"
 #include "amoled_fonts.h"
 #include "amoled_cover_cache.h"
+#include "amoled_label_layout.h"
 #include "agent_cover.h"
 #include <algorithm>
 #include <cstdio>
@@ -31,7 +32,10 @@ void Show(lv_obj_t* obj, bool on) {
     else lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
 }
 void Text(lv_obj_t* obj, const char* text) {
-    if (strcmp(lv_label_get_text(obj), text)) lv_label_set_text(obj, text);
+    if (strcmp(lv_label_get_text(obj), text)) {
+        lv_label_set_text(obj, text);
+        amoled_ui::CenterLabelVertically(obj);
+    }
 }
 lv_obj_t* Box(lv_obj_t* parent, int x, int y, int w, int h, int radius, uint32_t color) {
     auto* obj = lv_obj_create(parent); lv_obj_remove_style_all(obj);
@@ -65,7 +69,7 @@ lv_obj_t* Ring(lv_obj_t* parent, int x, int y, int edge, int width, uint32_t tra
 }
 lv_obj_t* Back(lv_obj_t* parent, void (*bind)(lv_obj_t*, int)) {
     auto* button = Box(parent, 70, 40, 36, 36, 18, kCard); bind(button, -1);
-    Text(Label(button, &lv_font_montserrat_20, 0, 8, 36, 24, kText), LV_SYMBOL_LEFT);
+    Text(Label(button, &lv_font_montserrat_20, 0, 0, 36, 36, kText), LV_SYMBOL_LEFT);
     return button;
 }
 
@@ -77,8 +81,8 @@ struct CoverView {
     void Create(lv_obj_t* parent, int x, int y, int edge) {
         box = Box(parent, x, y, edge, edge, 18, 0x443027);
         picture = lv_image_create(box); lv_obj_remove_flag(picture, LV_OBJ_FLAG_CLICKABLE);
-        glyph = Label(box, &lv_font_montserrat_24, 0, 0, edge, 30, kBrand);
-        Text(glyph, LV_SYMBOL_FILE); lv_obj_center(glyph);
+        glyph = Label(box, &lv_font_montserrat_24, 0, 0, edge, edge, kBrand);
+        Text(glyph, LV_SYMBOL_FILE);
     }
     void Update(int slot, uint32_t revision, int edge, const char* title) {
         auto source = agent_system::AcquireCover({slot, revision});
@@ -103,12 +107,12 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     count_label = Label(hero, &lv_font_montserrat_36, 18, 31, 145, 42, kText, false);
     free_label = Label(hero, fonts.Small(), 18, 73, 145, 20, kMuted, false);
     usage_ring = Ring(hero, 172, 10, 76, 7, 0x5A3E31);
-    usage_label = Label(hero, &lv_font_montserrat_16, 178, 37, 64, 24, kText);
+    usage_label = Label(hero, &lv_font_montserrat_16, 178, 10, 64, 76, kText);
     wifi_title = Label(hero, fonts.Body(), 18, 6, 208, 24, kBrand, false);
     wifi_step = Label(hero, fonts.Small(), 18, 33, 224, 19, kText, false);
     wifi_ap = Label(hero, fonts.Small(), 18, 53, 224, 19, kText, false);
     wifi_url = Label(hero, fonts.Small(), 18, 73, 224, 19, kMuted, false);
-    wifi_arrow = Label(hero, &lv_font_montserrat_14, 228, 12, 20, 20, kBrand);
+    wifi_arrow = Label(hero, &lv_font_montserrat_14, 228, 6, 20, 24, kBrand);
     Text(wifi_arrow, LV_SYMBOL_RIGHT);
     const uint32_t colors[]{kAccent, 0x7F6CF0, 0x514B43};
     const char* symbols[]{LV_SYMBOL_LIST, LV_SYMBOL_DOWNLOAD, LV_SYMBOL_SETTINGS};
@@ -116,7 +120,7 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
         home_tiles[i] = Box(home, 49 + 90 * i, 172, 82, 104, 22, kCard);
         bind(home_tiles[i], i);
         auto* badge = Box(home_tiles[i], 17, 12, 48, 48, 16, colors[i]);
-        Text(Label(badge, &lv_font_montserrat_24, 0, 11, 48, 30, 0xFFFDF8), symbols[i]);
+        Text(Label(badge, &lv_font_montserrat_24, 0, 0, 48, 48, 0xFFFDF8), symbols[i]);
         home_names[i] = Label(home_tiles[i], fonts.Small(), 2, 73, 78, 24, kText);
     }
     status = Label(home, fonts.Small(), 67, 297, 226, 24, kMuted);
@@ -130,37 +134,37 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     }
     previous = Box(apps, 108, 310, 36, 32, 16, kCard); bind(previous, 4);
     next = Box(apps, 216, 310, 36, 32, 16, kCard); bind(next, 5);
-    Text(Label(previous, &lv_font_montserrat_16, 0, 7, 36, 22, kText), LV_SYMBOL_LEFT);
-    Text(Label(next, &lv_font_montserrat_16, 0, 7, 36, 22, kText), LV_SYMBOL_RIGHT);
-    page_label = Label(apps, &lv_font_montserrat_14, 145, 316, 70, 22, kMuted);
+    Text(Label(previous, &lv_font_montserrat_16, 0, 0, 36, 32, kText), LV_SYMBOL_LEFT);
+    Text(Label(next, &lv_font_montserrat_16, 0, 0, 36, 32, kText), LV_SYMBOL_RIGHT);
+    page_label = Label(apps, &lv_font_montserrat_14, 145, 310, 70, 32, kMuted);
     empty = Box(apps, 60, 106, 240, 184, 24, kCard);
     Text(Label(empty, &lv_font_montserrat_36, 0, 16, 240, 46, kBrand), LV_SYMBOL_LIST);
     empty_text = Label(empty, fonts.Body(), 12, 76, 216, 30, kText);
     empty_button = Box(empty, 44, 123, 152, 44, 22, kAccent); bind(empty_button, 0);
-    empty_button_text = Label(empty_button, fonts.Body(), 0, 10, 152, 26, kText);
+    empty_button_text = Label(empty_button, fonts.Body(), 0, 0, 152, 44, kText);
 
     details = Box(root, 0, 0, 360, 360, 0, kBg); detail_back = Back(details, bind);
     Text(Label(details, fonts.Small(), 109, 45, 177, 24, kMuted), "Agent_link Launcher");
     detail_cover.Create(details, 128, 84, 104);
-    detail_name = Label(details, fonts.Title(), 60, 201, 240, 40, kText);
+    detail_name = Label(details, fonts.Title(), 60, 196, 240, 44, kText);
     lv_label_set_long_mode(detail_name, LV_LABEL_LONG_WRAP);
     detail_version = Label(details, fonts.Small(), 80, 245, 200, 20, kMuted);
-    detail_hint = Label(details, fonts.Small(), 60, 214, 240, 48, kMuted);
+    detail_hint = Label(details, fonts.Small(), 60, 228, 240, 36, kMuted);
     lv_label_set_long_mode(detail_hint, LV_LABEL_LONG_WRAP);
     launch = Box(details, 64, 270, 112, 44, 22, kAccent); bind(launch, 0);
     remove = Box(details, 184, 270, 112, 44, 22, kCard); bind(remove, 1);
-    launch_text = Label(launch, fonts.Body(), 0, 10, 112, 26, kText);
-    remove_text = Label(remove, fonts.Body(), 0, 10, 112, 26, kMuted);
+    launch_text = Label(launch, fonts.Body(), 0, 0, 112, 44, kText);
+    remove_text = Label(remove, fonts.Body(), 0, 0, 112, 44, kMuted);
 
     download = Box(root, 0, 0, 360, 360, 0, kBg); Back(download, bind);
     download_title = Label(download, fonts.Title(), 111, 43, 140, 28, kText);
     auto* help = Box(download, 254, 40, 36, 36, 18, kCard); bind(help, 12);
-    Text(Label(help, &lv_font_montserrat_20, 0, 7, 36, 26, kBrand), "?");
+    Text(Label(help, &lv_font_montserrat_20, 0, 0, 36, 36, kBrand), "?");
     download_hint = Label(download, fonts.Small(), 52, 82, 256, 23, kMuted);
     for (int i = 0; i < 6; ++i) {
         code_boxes[i] = Box(download, 58 + i * 41, 111, 38, 44, 10, kCard);
         lv_obj_set_style_border_width(code_boxes[i], 1, 0);
-        code_labels[i] = Label(code_boxes[i], &lv_font_montserrat_24, 0, 7, 38, 30, kText);
+        code_labels[i] = Label(code_boxes[i], &lv_font_montserrat_24, 0, 0, 38, 44, kText);
     }
     const int keys[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 11};
     for (int i = 0; i < 12; ++i) {
@@ -168,7 +172,7 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
                         keys[i] == 11 ? kAccent : kCard);
         bind(key, keys[i]);
         auto* label = Label(key, keys[i] == 11 ? fonts.Small() : &lv_font_montserrat_20,
-                            0, 5, 70, 27, kText);
+                            0, 0, 70, 36, kText);
         char digit[2]{static_cast<char>('0' + keys[i]), 0};
         Text(label, keys[i] == 10 ? LV_SYMBOL_BACKSPACE : keys[i] == 11 ? "" : digit);
         if (keys[i] == 11) { query_key = key; query_text = label; }
@@ -266,10 +270,13 @@ void Update(const amoled_ui::Screen& screen) {
         Text(busy_detail, screen.progress >= 0 ? screen.info : screen.detail);
     } else {
         const bool actions = screen.kind == amoled_ui::View::kAppActions;
+        lv_obj_set_y(detail_name, actions ? 196 : 194);
+        lv_obj_set_height(detail_name, actions ? 44 : 24);
+        lv_label_set_long_mode(detail_name, actions ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_DOT);
         Text(detail_name, screen.title); Text(detail_version, screen.detail);
         detail_cover.Update(actions ? screen.cover_slot : -1, screen.cover_revision, 104, screen.title);
         Show(detail_version, actions); Show(detail_hint, !actions);
-        lv_obj_set_y(detail_name, actions ? 201 : 184);
+        amoled_ui::CenterLabelVertically(detail_name);
         Text(detail_hint, screen.detail);
         Show(remove, true); Show(detail_back, true);
         Text(launch_text, actions ? Tr("启动", "Open") : screen.rows[0]);

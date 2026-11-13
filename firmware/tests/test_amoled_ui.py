@@ -63,6 +63,7 @@ prefix = r'''
 #include "amoled_fonts.h"
 #include "amoled_ui_layout.h"
 #include "amoled_ui_controls.h"
+#include "amoled_label_layout.h"
 #include "amoled_orientation.h"
 
 constexpr int DISPLAY_ROTATION_CW=0;

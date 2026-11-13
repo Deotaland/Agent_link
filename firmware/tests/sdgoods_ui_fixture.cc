@@ -148,11 +148,24 @@ int main(int argc, char** argv) {
     Tap(touch,120,290); assert(last_input.action==TouchAction::kRow && last_input.row==0);
     state.view++; SetScreen(state); Frame("sdgoods-download-detail.ppm");
     Tap(touch,240,290); assert(last_input.action==TouchAction::kRow && last_input.row==1);
-    state.kind=View::kList; state.view++; state.navigation++; state.row_count=5;
+    state.kind=View::kList; state.view++; state.navigation++; state.row_count=8;
     state.detail[0]=0;
-    snprintf(state.title,sizeof state.title,"系统设置");
-    const char* rows[]{"WiFi 网络","应用服务","设备信息","语言 / Language","封面同步"};
-    for(int i=0;i<5;++i) snprintf(state.rows[i],112,"%s",rows[i]);
+    snprintf(state.title,sizeof state.title,"系统菜单");
+    const char* rows[]{"网络与配网","当前应用","设备状态","应用服务","音量",
+                       "语言 / Language","应用封面与同步","硬件与电源"};
+    for(int i=0;i<8;++i) snprintf(state.rows[i],112,"%s",rows[i]);
+    SetScreen(state); Frame("sdgoods-settings.ppm");
+    lv_obj_scroll_to_y(list_,kRowHeight,LV_ANIM_OFF); Frame("sdgoods-settings-scrolled.ppm");
+    lv_obj_scroll_to_y(list_,0,LV_ANIM_OFF);
+    language.store(Language::kEnglish); state.view++; state.navigation++;
+    snprintf(state.title,sizeof state.title,"System");
+    const char* english_rows[]{"Network and WiFi setup","Current application","Device status",
+        "App service","Volume","语言 / Language","App covers and sync","Hardware and power"};
+    for(int i=0;i<8;++i) snprintf(state.rows[i],112,"%s",english_rows[i]);
+    SetScreen(state); Frame("sdgoods-settings-en.ppm");
+    language.store(Language::kChinese); state.view++; state.navigation++;
+    snprintf(state.title,sizeof state.title,"系统菜单");
+    for(int i=0;i<8;++i) snprintf(state.rows[i],112,"%s",rows[i]);
     SetScreen(state); Frame("sdgoods-settings.ppm");
     const auto coords=[](lv_obj_t* obj) { lv_area_t area; lv_obj_get_coords(obj,&area); return area; };
     const auto row=coords(rows_[0]); Tap(touch,(row.x1+row.x2)/2,(row.y1+row.y2)/2);
