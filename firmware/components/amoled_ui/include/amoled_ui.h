@@ -68,6 +68,7 @@ enum class DisplayPerformance { kBalanced, kLauncher };
 esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, void* context,
                   const CardRenderer* cards = nullptr, DisplayPerformance performance = DisplayPerformance::kBalanced);
 void SetScreen(const Screen& screen);
+bool UiResponsive();  // A recent completed UI loop, for Launcher first-boot confirmation.
 void SetStatus(const agent_link_status_t& status);
 void SetBattery(int percent, bool charging);
 void SetVolume(int percent);

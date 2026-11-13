@@ -10,6 +10,7 @@ import struct
 import subprocess
 import sys
 import zlib
+from firmware_manifest import resolve_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
 HEADER = struct.Struct('<8s10I')
@@ -74,14 +75,16 @@ def convert(source, output):
 
 
 def package(output, info, include_factory=False):
+    profile = resolve_profiles()['sdgoods-wifi']
+    geometry = profile['layout_info']['partitions']['appdata']
     idf = Path(os.environ['IDF_PATH'])
     script = idf / 'components/fatfs/wl_fatfsgen.py'
     subprocess.run([sys.executable, str(script), str(output/'appdata'),
-                    '--output_file', str(output/'appdata.bin'), '--partition_size', '0x1000000',
+                    '--output_file', str(output/'appdata.bin'), '--partition_size', hex(geometry['size']),
                     '--sector_size', '4096'], check=True)
     image = output/'appdata.bin'
-    if image.stat().st_size != 0x1000000:
-        raise ValueError('appdata image must exactly match the 16 MiB partition')
+    if image.stat().st_size != geometry['size']:
+        raise ValueError('appdata image must exactly match the selected partition')
     # Round-trip the generated wear-levelled filesystem with IDF's own parser.
     # The temporary extraction is checked to remain inside this output directory.
     extracted = (output/'verify-fat').resolve()
@@ -104,21 +107,27 @@ def package(output, info, include_factory=False):
     finally:
         if extracted.resolve().is_relative_to(output.resolve()):
             shutil.rmtree(extracted)
-    info.update(partition='appdata', offset='0x1000000', size=0x1000000,
+    info.update(layout_id=profile['layout_info']['id'], layout_version=profile['layout_info']['version'],
+                app_abi=profile['layout_info']['app_abi'], partition='appdata', offset=hex(geometry['offset']), size=geometry['size'],
                 appdata_sha256=hashlib.sha256(image.read_bytes()).hexdigest(),
                 settings_impact='Writing appdata.bin replaces the entire appdata filesystem.')
-    plan_path = ROOT/'build/flash-plan.json'
     if include_factory:
-        plan = json.loads(plan_path.read_text(encoding='utf-8'))
+        factory = ROOT/'build/images/sdgoods-wifi/factory'
+        plan = json.loads((factory/'flash-plan.json').read_text(encoding='utf-8'))
         if plan['profile'] != 'sdgoods-wifi' or plan['role'] != 'factory':
             raise ValueError('Build sdgoods-wifi --image-role factory before packaging')
+        from firmware_manifest import flash_plan
+        from package_firmware import checked_artifacts
+        if plan != flash_plan(profile, 'factory'):
+            raise ValueError('Factory plan is stale; rebuild the selected V5 layout')
+        checked_artifacts(factory, profile, 'factory')
         partition = plan['partitions']['appdata']
-        if (partition['offset'], partition['size']) != (0x1000000, 0x1000000):
+        if partition != geometry:
             raise ValueError('Factory appdata geometry does not match animation package')
-        metadata = json.loads((ROOT/'build/flasher_args.json').read_text(encoding='utf-8'))
-        files = {offset: str((ROOT/'build'/file).resolve())
+        metadata = json.loads((factory/'flasher_args.json').read_text(encoding='utf-8'))
+        files = {offset: str((factory/file).resolve())
                  for offset, file in metadata['flash_files'].items()}
-        files['0x1000000'] = str(image.resolve())
+        files[hex(geometry['offset'])] = str(image.resolve())
         merged = output/'factory-with-animation-merged.bin'
         command = [sys.executable, '-m', 'esptool', '--chip', 'esp32s3', 'merge-bin', '-o', str(merged)]
         for key, value in metadata['flash_settings'].items():
@@ -135,6 +144,9 @@ def package(output, info, include_factory=False):
         (output/'flash-files.json').write_text(json.dumps(dict(chip='esp32s3',
             flash_files=files, flash_settings=metadata['flash_settings']), indent=2)+'\n', encoding='utf-8')
         info['merged_sha256'] = hashlib.sha256(merged.read_bytes()).hexdigest()
+        info.update(merged_bytes=merged.stat().st_size, merged_offset='0x0',
+                    factory_sha256=hashlib.sha256((factory/'agent_link.bin').read_bytes()).hexdigest(),
+                    merged_settings_impact='Initial V5 USB package replaces settings, applications and appdata.')
     (output/'animation.json').write_text(json.dumps(info, indent=2)+'\n', encoding='utf-8')
 
 

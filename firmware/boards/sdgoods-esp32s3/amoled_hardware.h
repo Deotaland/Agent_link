@@ -50,9 +50,13 @@ private:
  bool interrupt_ok_ = false;
  std::atomic<bool> interrupt_pending_{true};
 };
-// The shared round Factory controller uses this hardware facade.
+using AmoledAudio = sdgoods::Audio;
+
+// The shared round Factory and voice controllers use this hardware facade.
 class AmoledHardware {
 public:
+    void Init(int volume);
+    esp_err_t SetSpeakerEnabled(bool enabled) { return codec_.SetSpeakerEnabled(enabled); }
     void InitDisplayAndTouch(uint16_t stripe_rows = 12);
     void Battery(int* percent, bool* charging);
     esp_err_t EnterSleep(bool power_off);
@@ -61,5 +65,7 @@ public:
     BadgeTouch touch_;
     sdgoods::Sensors sensors_;
     sdgoods::Audio audio_;
+    AmoledAudio codec_;
+    bool codec_ok_ = false;
     bool power_ok_ = false, bus_ok_ = false, button_ok_ = false;
 };

@@ -23,3 +23,9 @@ Moving shared UI code does not enable the non-C multi-app system on that board.
 Host checks: `python firmware/tests/test_amoled_voice.py`,
 `python firmware/tests/test_amoled_touch.py` and
 `python firmware/tests/test_amoled_175.py`.
+
+`apps/sdgoods-wifi` also selects this implementation, with its own SDGOODS
+hardware facade and the restricted app-control policy. Its GPIO6 key controls
+calls, bottom gestures stay inside the app, and Launcher exit is available only
+in the pull-down menu. Managed applications store preferences through the system
+settings partition, preserving SDGOODS agent_nvs isolation from vendor NVS.

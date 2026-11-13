@@ -3,6 +3,7 @@
 #include "community_cover.h"
 #endif
 #include "image_identity.h"
+#include "slot_identity.h"
 #include "sha256.h"
 #include <algorithm>
 #include <cstdio>
@@ -26,13 +27,7 @@ CoverStatus statuses[kAppSlotCount];
 std::shared_ptr<const CoverPixels> images[kAppSlotCount];
 uint32_t revisions[kAppSlotCount]{};
 int Index(const char* slot) {
-    unsigned index;
-    char extra;
-    if (!slot || sscanf(slot, "ota_%u%c", &index, &extra) != 1 || index >= kAppSlotCount)
-        return -1;
-    char canonical[8];
-    snprintf(canonical, sizeof canonical, "ota_%u", index);
-    return strcmp(slot, canonical) ? -1 : static_cast<int>(index);
+    return SlotIndex(slot);
 }
 const esp_partition_t* Partition(const char* slot) {
     const int index = Index(slot);

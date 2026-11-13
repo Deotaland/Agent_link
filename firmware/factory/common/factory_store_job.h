@@ -133,7 +133,7 @@ class FactoryStoreJob {
     // Called after the real installed-app scan, before starting the worker.
     bool Restore(const agent_system::App* apps, size_t count) {
         nvs_handle_t handle;
-        if (nvs_open_from_partition("app_nvs", "factory_job", NVS_READONLY, &handle) != ESP_OK)
+        if (nvs_open_from_partition(agent_system::kMetadataPartition, "factory_job", NVS_READONLY, &handle) != ESP_OK)
             return false;
         size_t size = sizeof result_;
         const auto error = nvs_get_blob(handle, "result_v2", &result_, &size);
@@ -181,7 +181,7 @@ class FactoryStoreJob {
     }
     esp_err_t Save() {
         nvs_handle_t handle;
-        auto error = nvs_open_from_partition("app_nvs", "factory_job", NVS_READWRITE, &handle);
+        auto error = nvs_open_from_partition(agent_system::kMetadataPartition, "factory_job", NVS_READWRITE, &handle);
         if (error != ESP_OK)
             return error;
         error = nvs_set_blob(handle, "result_v2", &result_, sizeof result_);

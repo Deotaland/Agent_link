@@ -44,3 +44,11 @@
 #define AUDIO_SPK_DOUT GPIO_NUM_47
 #define AUDIO_SPK_MCLK GPIO_NUM_15
 #define AUDIO_PA_PIN GPIO_NUM_3
+
+// The voice application reuses the common realtime controller and PCM workers.
+#define AUDIO_SAMPLE_RATE 16000
+#define AUDIO_PLAY_BUF_BYTES (256 * 1024)
+#define AMOLED_AUDIO_DESCRIPTION "SDGOODS mono 32-bit I2S RX -> PCM16 16kHz; separate stereo I2S TX"
+#define CLOUD_BASE_URL DEOTALAND_PLATFORM_BASE_URL
+#define CLOUD_PRODUCT_ID AGENT_LINK_PRODUCT_ID
+#define CLOUD_CHIP_TYPE "esp32-s3"

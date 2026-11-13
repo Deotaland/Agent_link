@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 from build_firmware import ROOT, PRIVATE, PRIVATE_KEYS, settings, load_profiles, default_image_role, system_images
-from firmware_image import boot_data, image_info
+from firmware_image import boot_data, image_info, partition_records
 from firmware_manifest import flash_plan
 
 
@@ -24,6 +24,15 @@ def checked_artifacts(folder, profile, role):
     for name, digest in record["sha256"].items():
         if hashlib.sha256((folder / name).read_bytes()).hexdigest() != digest:
             raise ValueError(f"Build artifact changed: {name}")
+    from dynamic_layout import ENTRY, SUBTYPES
+    expected = []
+    for label, entry in profile["layout_info"]["partitions"].items():
+        sub = entry["subtype"]
+        value = 0x10 + int(sub[4:]) if sub.startswith("ota_") else SUBTYPES[sub] if sub in SUBTYPES else int(sub, 0)
+        expected.append(ENTRY.pack(0x50AA, 0 if entry["type"] == "app" else 1, value,
+                                   entry["offset"], entry["size"], label.encode(), 0))
+    if partition_records((folder / "partition_table/partition-table.bin").read_bytes()) != expected:
+        raise ValueError("Build partition table does not match the selected layout CSV")
     return record
 
 
@@ -51,10 +60,10 @@ def package(profile, output):
         from dynamic_layout import verify_bootloader
         for source in (factory, app):
             verify_bootloader(source / 'bootloader/bootloader.bin', profile)
-            if (source / 'flash_assets/pt_guard.bin').read_bytes() != b'\xff' * 0x4000:
+            if (source / ('flash_assets/' + plan['dynamic_slots']['guard_partition'] + '.bin')).read_bytes() != b'\xff' * 0x4000:
                 raise ValueError('Full USB package must reset the partition recovery journal')
     factory_info = image_info(factory / "agent_link.bin", profile["model"], bundle["layout"],
-                              plan["partitions"]["factory"]["size"], chip=plan["chip"])
+                              flash_plan(profile, 'factory')["app_max_bytes"], chip=plan["chip"])
     app_info = image_info(app / "agent_link.bin", profile["model"], bundle["layout"], plan["app_max_bytes"], chip=plan["chip"])
     if factory_info["app_id"] != "agent.launcher" or app_info["app_id"] != plan["app_id"]:
         raise ValueError("Factory/application identity does not match package plan")
@@ -114,6 +123,20 @@ def package(profile, output):
                         settings_impact="Initial merged USB packages replace settings and installed apps.")
     if plan.get("dynamic_slots"):
         package_info.update(app_abi=bundle["layout"], dynamic_slots=plan["dynamic_slots"])
+    if plan.get("launcher_ab"):
+        import struct
+        cap = struct.unpack_from("<8sIIII", (factory / "agent_link.bin").read_bytes(), 0x1E4)
+        if cap[0] != b"ALAB0001":
+            raise ValueError("Launcher release capability is missing")
+        recovery_file = "recovery/SDGOODS_LAUNCHER.bin"
+        recovery = image_info(factory / recovery_file, profile["model"], bundle["layout"],
+                              plan["partitions"][plan["recovery_partition"]]["size"], chip=plan["chip"])
+        package_info.update(chip=plan["chip"], flash_address="0x0", launcher_ab=plan["launcher_ab"],
+                            launcher=dict(factory_info, file="factory.bin", partition=plan["launcher_ab"]["a"],
+                                          policy=cap[1], version_code=cap[2], product_id=cap[3]),
+                            recovery=dict(recovery, file=recovery_file, partition=plan["recovery_partition"]),
+                            appdata=dict(plan["partitions"]["appdata"], included=False,
+                                         migration="Back up and recreate the 13 MiB FAT volume before using V5."))
     package_files = set(full_files.values()) | {"merged.bin", "factory-only-merged.bin", "flasher_args.json",
                                                "factory.elf", "factory.map", role + ".elf", role + ".map", "fonts-OFL.txt"}
     package_files.update(notices)

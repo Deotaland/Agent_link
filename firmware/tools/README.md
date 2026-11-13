@@ -54,8 +54,8 @@ python firmware/tools/build_firmware.py waveshare-epaper-397-wifi --jobs 2
 
 Use `--jobs 1` when lower CPU/memory use is preferred. Omitting `--image-role`
 keeps the saved Application/Factory target for a compatible profile; it does not
-always select Application. Currently only the non-C AMOLED 1.75 board supports
-Factory. Its Voice image targets `ota_0` at `0x310000`; Factory targets `factory`
+always select Application. The non-C AMOLED 1.75 and Sugarat Button support
+Factory. The AMOLED Voice image targets `ota_0` at `0x310000`; Factory targets `factory`
 at `0x10000`. Other profiles keep their own layout and application role.
 
 The selected build writes `firmware/build/agent_link.bin`, matching ELF/MAP and
@@ -180,3 +180,10 @@ Build and package commands never flash or open a device. Flashing still needs an
 explicit request for that run. See [profiles](../profiles/README.md) for defaults,
 [layouts](../partitions/README.md) for storage and
 [Factory](../factory/waveshare-amoled-175/README.md) for package contents.
+
+Sugarat Button uses only sdgoods-v5: `recovery` at 0x10000, `launcher_a` at
+0x90000, dynamic `app_pool` at 0x390000, and `launcher_b` at 0x1D00000.
+Use package_firmware.py sdgoods-wifi --jobs 2 for initial USB packages. App-only
+USB writes are refused; later apps are pure .bin files installed by Launcher.
+The shared developer `appdata` label remains unchanged. When migrating from a
+16 MiB volume, back up files and recreate the 13 MiB FAT volume separately.

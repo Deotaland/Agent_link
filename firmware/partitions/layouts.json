@@ -61,6 +61,21 @@
     "cover_reserve": 57344,
     "defaults": "partitions/amoled-175-v1.defaults"
   },
+  "sdgoods-v5": {
+    "version": 5,
+    "app_abi": 3,
+    "mode": "managed",
+    "csv": "partitions/sdgoods-v5.csv",
+    "targets": ["esp32s3"],
+    "app_slots": ["app_pool"],
+    "recovery_partition": "recovery",
+    "metadata_partition": "app_meta",
+    "cover_reserve": 57344,
+    "dynamic_slots": {"pool_partition": "app_pool", "guard_partition": "layout_journal", "max_slots": 16, "user_slots": 14,
+      "slot_labels": ["app_00", "app_01", "app_02", "app_03", "app_04", "app_05", "app_06", "app_07", "app_08", "app_09", "app_10", "app_11", "app_12", "app_13"]},
+    "launcher_ab": {"a": "launcher_a", "b": "launcher_b", "state": "launcher_state"},
+    "defaults": "partitions/sdgoods-v5.defaults"
+  },
   "sdgoods-v4": {
     "version": 4,
     "app_abi": 3,

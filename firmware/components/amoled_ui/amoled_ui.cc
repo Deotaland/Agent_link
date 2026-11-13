@@ -56,6 +56,7 @@ uint8_t applied_backlight_ = DISPLAY_BRIGHTNESS;
 int64_t toast_until_ = 0;
 std::atomic<uint32_t> revision_{1}, wake_{0}, applied_{0}, flushes_{0}, max_flush_us_{0};
 std::atomic<int64_t> heartbeat_{0};
+std::atomic<uint32_t> ui_heartbeat_{0};
 enum class UiStage { kStarting, kFonts, kTouch, kSnapshot, kHeader, kReplyMeasure, kReplyText,
     kReplyLayout, kReplyScroll, kList, kListLayout, kBrightness, kTimers, kPanel, kMemory, kIdle };
 std::atomic<UiStage> stage_{UiStage::kStarting};
@@ -665,6 +666,7 @@ void Render(void*) {
             Brightness(std::min<uint8_t>(backlight, DISPLAY_BRIGHTNESS_DIM));
         }
         Mark(UiStage::kTimers); const uint32_t next_timer_ms = lv_timer_handler();
+        ui_heartbeat_.store(panel_fault_ ? 0 : static_cast<uint32_t>(esp_timer_get_time() / 1000));
         if (now >= memory_at) {
             Mark(UiStage::kMemory);
             lv_mem_monitor_t memory{}; lv_mem_monitor(&memory);
@@ -681,6 +683,12 @@ void Render(void*) {
     }
 }
 }  // namespace
+
+bool UiResponsive() {
+    const auto at = ui_heartbeat_.load();
+    return at && completed_frames_.load() &&
+           static_cast<uint32_t>(esp_timer_get_time() / 1000) - at < 1000;
+}
 
 esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, void* context,
                   const CardRenderer* cards, DisplayPerformance performance) {

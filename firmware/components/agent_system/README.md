@@ -136,3 +136,9 @@ I/O operations and retries. Connection failures and transient gateway errors may
 retry; long server cooldowns, invalid/expired tickets and image validation failures stop.
 Code assignment through `PATCH /api/v1/admin/plays/{playId}` remains an administrator
 action on the platform, including after submission approval; it is not a device API.
+
+For Sugarat Button's active V5 layout, application metadata lives in `app_meta`,
+table transactions in `layout_journal`, and app labels are `app_00`..`app_13`.
+Native images require AGLCAP01 capability version 2 because the earlier SDK used
+literal app_nvs/ota_N lookups. Original SDGOODS pure images use their separate
+compatibility path; appdata, boot subtypes and launcher return identity are preserved.

@@ -634,9 +634,19 @@ def archive_build(profile, role, build_dir):
         info = image_info(build_dir / "agent_link.bin", plan["model"], plan.get("app_abi", plan["layout_version"]), plan["app_max_bytes"], chip=plan["chip"])
         if info["app_id"] != plan["app_id"]:
             raise ValueError("Built application identity differs from the selected target")
+    if plan.get('launcher_ab'):
+        recovery = 'recovery/SDGOODS_LAUNCHER.bin'
+        if files.get('0x10000') != recovery:
+            raise ValueError('Full flash metadata must include the immutable recovery entry')
+        image_info(build_dir / recovery, plan['model'], plan['app_abi'],
+                   plan['partitions'][plan.get('recovery_partition', 'factory')]['size'], chip=plan['chip'])
+        if (build_dir / 'launcher-state-reset.bin').read_bytes() != b'\xff' * 8192:
+            raise ValueError('Initial package must reset Launcher trial state')
     output = build_dir / "images" / profile["name"] / role
     output.mkdir(parents=True, exist_ok=True)
     names = set(files.values()) | {"agent_link.elf", "agent_link.map", "flasher_args.json", "flash-plan.json"}
+    if plan.get('launcher_ab'):
+        names.update({'recovery/SDGOODS_LAUNCHER.elf', 'recovery/SDGOODS_LAUNCHER.map'})
     if profile.get("community_store"):
         names.update({"webp-LICENSE.txt", "webp-NOTICE.txt", "lodepng-LICENSE.txt"})
     for filename in ("LICENSE", "NOTICE"):

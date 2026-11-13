@@ -24,7 +24,7 @@ python tools/build_firmware.py korvo-wifi --jobs 2
 | Waveshare ESP32-S3-ePaper-3.97 | `waveshare-epaper-397-wifi` | WiFi; ESP32-S3 |
 | Mozhifang paper V2 | `paper-s31-wifi` | WiFi; ESP32-S31 |
 | Mozhifang paper V2 4.0-inch monochrome | `paper-s31-4in0-wifi` | WiFi; ESP32-S31; independent three-key desktop |
-| Sugarat Button / SDGOODS (360px LCD, 32 MB) | `sdgoods-wifi` | WiFi; Factory launcher + Device status |
+| Sugarat Button / SDGOODS (360px LCD, 32 MB) | `sdgoods-wifi` | WiFi; Factory launcher + Agent Voice |
 | OJBadge | `ojbadge-wifi` | Local ESP-NOW friends; no platform backend |
 
 S3/C3 profiles support ESP-IDF 5.5.x and 6.1.x. S31 needs an S31-capable 6.1 SDK.
@@ -75,11 +75,17 @@ with it. Initial merged packages replace settings and installed apps. Applicatio
 builds deliberately do not leave `build/merged.bin`: its padding would erase the
 launcher. See the [factory guide](../factory/waveshare-amoled-175/README.md).
 The Sugarat Button profile (`sdgoods-wifi`, also for units bought from SDGOODS)
-uses managed physical layout sdgoods-v4 (application ABI 3), with a 10 MiB dynamic
-pool and up to 16 app records. A guarded bootloader journals partition changes;
-install/remove restarts Factory. App-only USB writes are refused. Executable images and
-the shared font stay below 16 MiB; a vendor file partition occupies the upper
-16 MiB of the physical 32 MiB flash. Migration from a different layout
+uses managed physical layout sdgoods-v5 (application ABI 3), with a 10 MiB dynamic
+pool (`app_pool`, expanded to `app_00`..`app_13`) for up to 14 apps, two 3 MiB
+A/B Launchers (`launcher_a/b`) and a 512 KiB fixed `recovery` entry.
+`app_meta` stores installation metadata; `layout_journal` stores table transactions.
+ESP-IDF boot subtypes and the vendor `appdata` label are preserved. Native apps
+require capability version 2 for these labels.
+A guarded bootloader journals partition changes and rejects unconfirmed Launcher
+trials; install/remove restarts through recovery. App-only USB writes are refused.
+Vendor applications and the shared font stay below 16 MiB. Vendor appdata has
+13 MiB; Launcher B occupies the final 3 MiB and requires experimental 32-bit
+quad-flash cache mapping, pending physical-device acceptance. Migration from a different layout
 requires a full USB package. See its [Factory guide](../factory/sdgoods-esp32s3/README.md).
 Other boards retain their existing single-app A/B layouts and flash behavior.
 

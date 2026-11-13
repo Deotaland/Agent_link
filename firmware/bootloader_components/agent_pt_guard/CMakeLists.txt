@@ -25,4 +25,5 @@ target_link_libraries(${COMPONENT_LIB} INTERFACE "-u bootloader_after_init" "-u 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_plan_path}"
     "${_firmware}/partitions/layouts.json" "${_firmware}/partitions/sdgoods-v4.csv"
+    "${_firmware}/partitions/sdgoods-v5.csv"
     "${_firmware}/tools/dynamic_layout.py")

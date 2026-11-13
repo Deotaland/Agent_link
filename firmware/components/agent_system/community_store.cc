@@ -538,7 +538,7 @@ esp_err_t SaveBinding(const char* slot, const CatalogApp& app) {
         Text(binding.release_version, sizeof binding.release_version, app.release_version);
     }
     nvs_handle_t handle;
-    auto error = nvs_open_from_partition("app_nvs", "al_apps", NVS_READWRITE, &handle);
+    auto error = nvs_open_from_partition(kMetadataPartition, "al_apps", NVS_READWRITE, &handle);
     if (error != ESP_OK)
         return error;
     char key[16];
@@ -551,7 +551,7 @@ esp_err_t SaveBinding(const char* slot, const CatalogApp& app) {
 }
 void ReadBinding(App* app) {
     nvs_handle_t handle;
-    if (nvs_open_from_partition("app_nvs", "al_apps", NVS_READONLY, &handle) != ESP_OK)
+    if (nvs_open_from_partition(kMetadataPartition, "al_apps", NVS_READONLY, &handle) != ESP_OK)
         return;
     Binding binding;
     size_t size = sizeof binding;

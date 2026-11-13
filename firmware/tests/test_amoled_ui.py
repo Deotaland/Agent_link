@@ -579,6 +579,21 @@ std::shared_ptr<const CoverPixels> AcquireCover(const Cover& cover) {
 }
 """
     factory_source = '\n#include "../factory_diagnostics.h"\n' + '\n'.join(line for line in (factory_ui/'factory_view.cc').read_text(encoding='utf-8').splitlines() if not line.startswith('#include'))+'\n'
+    # Compile the actual update-page renderer into the native LVGL preview.
+    update_header = (root/'components/agent_system/include/launcher_update.h').read_text(encoding='utf-8')
+    factory_source += '\n'.join(line for line in update_header.splitlines() if not line.startswith(('#include', '#pragma'))) + '\n'
+    factory_source += '''namespace agent_system::launcher {
+Status preview_update;
+bool preview_busy = false;
+Status Read() { return preview_update; }
+bool Busy() { return preview_busy; }
+}
+using amoled_ui::Tr;
+'''
+    controller = (root/'factory/common/round_factory_application.h').read_text(encoding='utf-8')
+    start = controller.index('    void RenderUpdate(')
+    end = controller.index('    bool launcher_confirmed_', start)
+    factory_source += 'struct UpdatePreview {\n' + controller[start:end] + '};\n'
     post = (root/'tests/sdgoods_ui_fixture.cc').read_text(encoding='utf-8')
 
 generated.write_text(prefix+header+fonts+factory_source+source+post,encoding='utf-8')

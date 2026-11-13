@@ -227,6 +227,11 @@ void AmoledHardware::InitDisplayAndTouch(uint16_t rows) {
     sensors_.Init(bus);
     power_ok_ = sensors_.BatteryReady();
 }
+void AmoledHardware::Init(int volume) {
+    InitDisplayAndTouch();
+    codec_ok_ = codec_.Init(volume) == ESP_OK;
+    if (!codec_ok_) ESP_LOGE(TAG, "Voice audio initialization failed");
+}
 void AmoledHardware::Battery(int* percent, bool* charging) {
     sensors_.Poll(sensors_.MotionEnabled());
     *percent = sensors_.Read().percent;

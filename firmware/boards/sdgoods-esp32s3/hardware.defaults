@@ -1,7 +1,6 @@
 # Physical SDGOODS ESP32-S3 hardware, verified with the vendor BSP.
 CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
-# sdgoods-v3 keeps all executable images and mmap assets below 16 MB.
-# CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH is not set
+# The versioned layout owns the Launcher B flash mapping policy.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=n
 CONFIG_SPIRAM_MODE_OCT=y

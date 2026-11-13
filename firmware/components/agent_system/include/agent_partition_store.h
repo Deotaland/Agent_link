@@ -32,6 +32,9 @@ typedef struct {
     uint32_t table, guard, pool_start, pool_end, slots;
     size_t fixed_count;
     const alpt_entry* fixed;
+    uint32_t reserved_mask;
+    const char* pool_label;
+    const char (*slot_labels)[16];
 } alpt_policy;
 typedef struct {
     void* context;
@@ -75,6 +78,12 @@ static inline void alpt_label(char out[16], unsigned index) {
     } else
         out[4] = (char)('0' + index);
 }
+static inline void alpt_slot_label(const alpt_policy* cfg, char out[16], unsigned index) {
+    if (cfg->slot_labels && index < 16)
+        memcpy(out, cfg->slot_labels[index], 16);
+    else
+        alpt_label(out, index);
+}
 static inline int alpt_validate(const alpt_policy* cfg, const alpt_io* io, const uint8_t* table,
                                 int seed_allowed) {
     uint32_t mask = 0, fixed_mask = 0;
@@ -101,12 +110,12 @@ static inline int alpt_validate(const alpt_policy* cfg, const alpt_io* io, const
                 return 0;
             if (mask == 0xFFFFu)
                 return 1;
-            if (!seed_allowed || mask != 1u)
+            if (!seed_allowed || mask != (1u | cfg->reserved_mask))
                 return 0;
             for (j = 0; j < count; ++j) {
                 alpt_entry p;
                 memcpy(&p, table + j * 32, 32);
-                if (alpt_ota(&p))
+                if (alpt_ota(&p) && p.subtype == 0x10)
                     return p.offset == cfg->pool_start && p.size == cfg->pool_end - cfg->pool_start;
             }
             return 0;
@@ -116,10 +125,22 @@ static inline int alpt_validate(const alpt_policy* cfg, const alpt_io* io, const
         if (alpt_ota(&part)) {
             unsigned slot = part.subtype - 0x10;
             char label[16];
-            alpt_label(label, slot);
-            if (mask & (1u << slot) || memcmp(label, part.label, 16))
+            alpt_slot_label(cfg, label, slot);
+            const int seed = seed_allowed && slot == 0 && cfg->pool_label &&
+                             !strcmp(part.label, cfg->pool_label) &&
+                             part.offset == cfg->pool_start && part.size == cfg->pool_end - cfg->pool_start;
+            if (mask & (1u << slot) || (!seed && memcmp(label, part.label, 16)))
                 return 0;
             mask |= 1u << slot;
+            if (cfg->reserved_mask & (1u << slot)) {
+                for (j = 0; j < cfg->fixed_count; ++j)
+                    if (!memcmp(&part, &cfg->fixed[j], 32))
+                        break;
+                if (j == cfg->fixed_count || (fixed_mask & (1u << j)))
+                    return 0;
+                fixed_mask |= 1u << j;
+                continue;
+            }
             if (!part.size) {
                 if (part.offset != cfg->pool_end)
                     return 0;
@@ -244,11 +265,13 @@ static inline int alpt_commit(const alpt_policy* cfg, const alpt_io* io, const u
 static inline int alpt_build(const alpt_policy* cfg, const alpt_io* io, const alpt_entry slots[16],
                              uint8_t* table) {
     alpt_entry entries[48];
-    size_t i, j, n = cfg->fixed_count + 16;
+    size_t i, j, n = cfg->fixed_count;
     if (n > 48)
         return ALPT_INVALID;
     memcpy(entries, cfg->fixed, cfg->fixed_count * 32);
-    memcpy(entries + cfg->fixed_count, slots, 16 * 32);
+    for (i = 0; i < 16; ++i)
+        if (!(cfg->reserved_mask & (1u << i)))
+            entries[n++] = slots[i];
     for (i = 1; i < n; ++i) {
         alpt_entry value = entries[i];
         j = i;
@@ -273,7 +296,7 @@ static inline void alpt_empty(const alpt_policy* cfg, unsigned i, alpt_entry* en
     entry->magic = 0x50AA;
     entry->subtype = (uint8_t)(0x10 + i);
     entry->offset = cfg->pool_end;
-    alpt_label(entry->label, i);
+    alpt_slot_label(cfg, entry->label, i);
 }
 static inline int alpt_slots(const uint8_t* table, alpt_entry slots[16]) {
     size_t i;
@@ -305,7 +328,10 @@ static inline int alpt_allocate(const alpt_policy* cfg, const alpt_io* io, const
         reserve > cfg->pool_end - cfg->pool_start - bytes)
         return ALPT_NONE;
     need = (bytes + reserve + 0xFFFFu) & ~0xFFFFu;
+    free_mask &= ~cfg->reserved_mask;
     for (i = 0; i < 16; ++i) {
+        if (cfg->reserved_mask & (1u << i))
+            continue;
         if (free_mask & (1u << i)) {
             alpt_empty(cfg, i, &slots[i]);
             if (i < limit && chosen == 16)

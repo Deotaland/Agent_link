@@ -39,10 +39,10 @@ deep sleep, power off/restart and display/touch status. Recorded PCM uses 96,000
 bytes of PSRAM and is freed after each test; I2S/DMA channels are released too.
 The amplifier stays off outside playback, on mute and after cancellation/errors.
 The microphone self-test keeps WiFi connected and does not upload or save audio.
-The common volume slider controls these tests. This does not enable Agent voice
-sessions in Factory or the Device status app.
+The common volume slider controls these tests. Factory self-tests do not create
+Agent sessions; launch the separately installed Agent Voice app for realtime calls.
 
-Brightness is stored in private `agent_nvs/button_hw/bright`. Short key press
+Brightness is stored in private `agent_nvs/button_hw/bright`. In Factory, a short key press
 returns home; holding it for 1.2 seconds opens power controls. Sleep/off requires
 confirmation, an idle cover worker and released key. Audio stops and UI/DMA drain
 before peripheral rails change; deep sleep holds the GPIO7 latch and wakes from
@@ -53,7 +53,7 @@ The public hardware name is **Sugarat Button**. The existing build profile
 `sdgoods-wifi` and image compatibility model `SDGOODS-ESP32S3` remain stable so
 previously built Agent Link images keep their hardware identity. The platform product is
 `sdgoods` (ID 13, enterprise 0, supplied by the developer). Its installable
-application is Device status; audio/voice capabilities are not advertised.
+application is Agent Voice; microphone/speaker capabilities are advertised only after successful audio initialization. Its historical app_id remains agent.status for installed-app identity compatibility.
 The board-bound [Factory](../../factory/sdgoods-esp32s3/README.md) owns app
 management, with the existing round-screen controller and its own native UI.
 
@@ -65,23 +65,26 @@ From the repository root in an ESP-IDF 5.5.x or 6.1.x terminal:
 python firmware/tools/build_firmware.py sdgoods-wifi --image-role factory --jobs 2
 ```
 
-Use `--image-role standard` for Device status. Build the initial launcher +
-status application package sequentially in the same `firmware/build` directory:
+Use `--image-role standard` for Agent Voice. Build the initial launcher +
+voice application package sequentially in the same `firmware/build` directory:
 
 ```sh
 python firmware/tools/package_firmware.py sdgoods-wifi --jobs 2
 ```
 
-The **sdgoods-v4** bootstrap partition table (physical version 4, application ABI 3)
-has a 3 MiB Factory and a **10 MiB dynamic application pool**. Factory allocates
-up to 16 OTA records on demand, using 64 KiB alignment and 56 KiB per-app cover
-reserve. A single image can be at most **10,428,416 bytes**; multiple apps share
-the pool. Deletion returns space. The largest contiguous gap limits an install;
-live apps are not moved to compact fragmented space.
-All apps and the memory-mapped font are below 16 MB; physical flash capacity
-is 32 MiB. The upper 16 MiB is the vendor-compatible `appdata` FAT partition;
-it uses flash reads/writes, not memory mapping. Experimental 32-bit cache
-mapping is not enabled. `agent_nvs` isolates Agent Link WiFi credentials,
+The **sdgoods-v5** bootstrap table (physical version 5, application ABI 3)
+contains a 512 KiB `recovery`, two 3 MiB `launcher_a` / `launcher_b` images and
+a **10 MiB `app_pool`**. Recovery expands the pool into `app_00` through `app_13`.
+Their ESP-IDF subtypes remain ota_0 through ota_13; launcher_a/b retain ota_14/ota_15.
+Each installed image reserves 56 KiB for its cover and uses 64 KiB alignment.
+A single image can be at most **10,428,416 bytes**; all apps share this pool.
+Deletion returns space, but live applications are never moved to compact gaps.
+`app_meta` stores installation metadata; `layout_journal` protects table changes.
+The shared **13 MiB `appdata` FAT filesystem** starts at 0x1000000. It retains
+its original label and `/appdata/<app_id>/` interface for SDGOODS developer apps;
+Factory startup media also uses this space. Launcher B starts at 0x1D00000 and
+requires experimental 32-bit quad-flash cache mapping. Hardware acceptance is pending.
+`agent_nvs` isolates Agent Link WiFi credentials,
 device identity, platform binding and app-catalog URL from vendor default-NVS
 cleanup. An app-catalog URL stored by an earlier V3 build is migrated when read.
 If default vendor NVS has an unsupported version or no usable pages, Factory
@@ -91,7 +94,7 @@ application's own flow; Factory does not inject platform credentials into it.
 
 Native Agent Link images must use layout descriptor 3; older native layouts are
 rejected. Original SDGOODS applications use their standard IDF `project_name`
-and do not require an Agent Link descriptor. Changing from V2/V3 or vendor firmware requires
+and do not require an Agent Link descriptor. Changing from V2/V3/V4, the earlier V5 labels or vendor firmware requires
 the full USB package and replaces settings and installed applications. Updating
 only an app is insufficient. The full package starts Factory. No full-chip erase
 is required.
@@ -99,7 +102,7 @@ is required.
 ## Agent_link Launcher and the reviewed application catalog
 
 The public launcher name is **Agent_link Launcher**. For Sugarat Button, Factory
-uses physical **sdgoods-v4**, retaining application ABI **3**. Other boards keep their
+uses physical **sdgoods-v5**, retaining application ABI **3**. Other boards keep their
 own layouts. Vendor pure applications keep their original bytes and use runtime
 partition discovery; they are not rebuilt or given a fabricated native descriptor.
 
@@ -135,7 +138,7 @@ Replace the example size and digest with the published file's actual byte count
 and SHA-256. URLs may be absolute HTTPS or relative to the catalog's origin.
 Private-LAN HTTP remains available for testing. Up to eight catalog entries are
 supported per catalog. Up to 16 applications can coexist when space permits.
-Legacy native V3 applications require ota_0 or ota_1; newly compiled native apps
+Native applications for the renamed V5 layout require AGLCAP01 capability version 2; newly compiled native apps
 advertise support for all 16 records. Reviewed compatible vendor SDK apps use
 runtime partition discovery. Their image bytes remain unchanged.
 
@@ -178,15 +181,19 @@ and vendor standalone firmware updaters are outside this contract. Do not use
 an application's full-device updater to replace the Agent Link partition table.
 Source/host checks do not establish that every vendor application works on hardware.
 
-Dynamic table writes require the matching recovery bootloader and its two-bank
-`pt_guard` journal. Full USB packages initialize this journal. App-only USB flashing
-is refused; use Launcher for app downloads. Updating Factory alone over an old V3
-bootloader permits inspection/launch but refuses dynamic installs. First migration
-to V4 requires the full package and replaces settings/apps; no in-place migration
-is performed. Fixed NVS, font and appdata addresses remain those of V3.
+Dynamic table writes require the matching V5 recovery bootloader and its two-bank
+`layout_journal`. Full USB packages initialize this journal and Launcher trial state.
+App-only USB flashing is refused; use Launcher for app downloads. Migration requires
+the matching full V5 USB package and replaces settings and installed apps. Back up
+the old 16 MiB FAT volume and recreate it as 13 MiB; ordinary firmware-only packages
+do not rewrite appdata and therefore do not perform that filesystem migration.
+The named partitions change the layout policy even though V5 addresses stay fixed.
+Rebuild old Agent Link native apps against this V5 SDK: their former app_nvs/ota_N
+lookups are not compatible. The installer rejects old native capabilities before
+erasing flash. Original reviewed SDGOODS applications retain their exact bytes,
+FAT label, boot subtypes and SDGOODS_LAUNCHER return identity.
 
-The package directory includes `Sugarat-Button-full.bin` (Factory + Device
-status) and `Sugarat-Button-factory-full.bin` (Factory only). These are named
+The package directory includes `Sugarat-Button-full.bin` (Factory + Agent Voice) and `Sugarat-Button-factory-full.bin` (Factory only). These are named
 copies of the existing merged packages and use USB offset `0x0`. The package
 manifest includes Sugarat/Button display metadata and the SDGOODS search aliases;
 its `board` field remains the image compatibility model.
@@ -206,3 +213,23 @@ preservation, reboot persistence and GPIO6 boot recovery. Test representative
 vendor apps (display/input, file-backed media and networking), including power
 loss during install, before describing them as device-verified.
 Desktop rendering and a successful build do not establish these device results.
+
+## Agent realtime calls
+
+The installable `sdgoods-wifi` app reuses the shared AMOLED realtime controller
+and audio workers. After WiFi setup, claim the activation code and bind a voice
+Agent in the platform console. Swipe left for conversations, select an existing
+conversation or create one, then press GPIO6 to start/end a continuous call.
+The microphone opens only after session.ready. SDK reconnects preserve call
+intent; real capture pauses while disconnected. During replies the microphone
+uploads silence until speaker drain and echo tail complete; this is not AEC.
+System settings, volume, language and conversation selection use agent_nvs.
+
+Pull down from the top for the system menu. Only **Exit to launcher** exits the
+application. Bottom swipes return within the voice app or close its menu, and
+GPIO6 never exits to Launcher. Opening the pull-down menu preserves a live call;
+exiting first ends the call. Power-on recovery remains a separate boot mechanism.
+The board shares the tested I2S configuration with its Factory self-tests:
+16 kHz, left-channel 32-bit microphone samples converted to PCM16 mono, and
+separate 16-bit stereo speaker TX with software volume and board-owned PA.
+Hardware audio quality, echo, long calls and real network recovery remain unverified.

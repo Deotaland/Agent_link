@@ -1,6 +1,6 @@
 # WiFi realtime voice
 
-AI Passport, Korvo, StopWatch, Waveshare ePaper 3.97 and paper WiFi profiles use the Agent bound in the platform
+AI Passport, Korvo, StopWatch, Sugarat Button (sdgoods-wifi), Waveshare ePaper 3.97 and paper WiFi profiles use the Agent bound in the platform
 console. Devices list, create, select and delete that Agent's conversations and
 start/end calls. Agent selection and binding happen in the console.
 

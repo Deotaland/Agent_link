@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22)
+set(COMPONENTS main)
+set(PROJECT_VER "1.0.0")
+set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(SDGOODS_LAUNCHER)

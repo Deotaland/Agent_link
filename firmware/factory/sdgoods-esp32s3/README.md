@@ -19,7 +19,7 @@ mount/allocation/decoder failures skip playback and continue to home. FAT is
 never automatically formatted. Any previous install receipt remains accessible
 from **Download apps** after the home page opens.
 
-The fixed `appdata,data,fat,0x1000000,0x1000000` partition holds two root files:
+The `appdata,data,fat,0x1000000,0xD00000` partition holds two root files:
 `START.MP4` preserves the supplied original; `START.BVA` contains bounded JPEG
 frames plus mono PCM, since this S3 launcher does not decode H.264/AAC directly.
 The player loads this small converted file into PSRAM, unmounts appdata before
@@ -37,8 +37,8 @@ python firmware/tests/test_boot_animation.py
 The source video is a local input in ignored `dist/`; it is not required to build
 the player. Output is in `firmware/build/boot-animation/`:
 
-- `appdata.bin`: verified 16 MiB wear-levelled FAT image for **0x1000000**.
-- `factory-with-animation-merged.bin`: verified initial 32 MiB USB package for **0x0**.
+- `appdata.bin`: verified 13 MiB wear-levelled FAT image for **0x1000000**.
+- `factory-with-animation-merged.bin`: verified initial V5 USB package for **0x0**.
 - `animation.json` and `flash-files.json`: geometry, media details, hashes and flash files.
 
 Writing `appdata.bin` replaces all existing appdata files. The initial merged
@@ -50,7 +50,7 @@ rate and transition still require hardware acceptance.
 ## Launcher behavior
 
 - Open **My apps** (or swipe left on home) for a four-app grid with page controls.
-  Up to 16 apps occupy four pages; the empty state opens download-code entry.
+  Up to 14 apps occupy four pages; the empty state opens download-code entry.
 - **Download apps** opens six digit boxes and a numeric keypad, following the
   reference launcher's layout. Enter the code shown on the web platform (including
   leading zeroes), tap **Find**, review the app name/version/size and confirm
@@ -59,7 +59,7 @@ rate and transition still require hardware acceptance.
 - Tap an app to open its actions; removal requires confirmation.
 - The upper-left arrow returns one level. Swiping up from the physical bottom
   edge returns directly home, including from settings and download progress.
-  Return arrows have a 10px invisible touch margin. Native launcher buttons use
+  Return arrows and download-code Help have a 10px invisible touch margin. Native launcher buttons use
   the full round touch surface, including the bottom Delete and Find keys, with
   up to 18px finger jitter; scrolling list rows retain their stricter drag guard.
 - Download-code queries and installation run on a dedicated worker. Going home leaves
@@ -68,7 +68,7 @@ rate and transition still require hardware acceptance.
   over next time. After confirmation the worker stops at a safe boundary before
   the selected app boots. Atomic layout publication finishes before switching.
 - Errors retain their stage, code, received bytes and available HTTP/server
-  details until acknowledged. Installation outcomes are stored in `app_nvs` and
+  details until acknowledged. Installation outcomes are stored in `app_meta` and
   survive restart; pending outcomes are checked against the actual installed
   image after reboot. Partial images remain unavailable.
 - Pull down from the physical top edge for WiFi, app service, device, language
@@ -123,16 +123,76 @@ rate and transition still require hardware acceptance.
 - Reviewed original SDGOODS pure applications and native Agent Link applications
   keep their exact binary bytes. Installation discovers the actual image identity,
   validates chip/ABI/size/full image/SHA-256 and records the community play/version
-  separately in `app_nvs`. ZIP, UF2 and full-device packages cannot be installed by
+  separately in `app_meta`. ZIP, UF2 and full-device packages cannot be installed by
   the launcher; the backend must publish a reviewed pure `.bin`. This does not
   add an official SDGOODS browser or local firmware import endpoint on the device.
-- A 10 MiB dynamic pool supports up to 16 applications, subject to image sizes,
+- A 10 MiB dynamic pool supports up to 14 applications, subject to image sizes,
   alignment, cover reserve and contiguous free space. After installation choose
   **Finish and restart** to refresh the partition list and confirm the result.
-  Removal still restarts Factory. The matching V4 full USB package
-  is required initially; application ABI remains 3 for existing native images.
-  Vendor `appdata` occupies the upper 16 MiB. Hold GPIO6 at power-on for three
-  seconds to recover Factory without erasing application files or settings.
+  Removal still restarts the Launcher. The matching named-partition V5 full USB package
+  is required initially; application ABI remains 3, with native slot capability version 2 required for the renamed labels.
+  Vendor `appdata` has 13 MiB; the last 3 MiB hold Launcher B. Hold GPIO6 at power-on
+  for three seconds to enter recovery; keep it held to select a verified previous
+  Launcher when one exists. Application files and settings are not erased by this action.
+
+## A/B Launcher updates
+
+Settings includes **Firmware update**. The current version and numeric version code
+come from `launcher_version.h`; increment the code for every published release.
+Product ID is **13** (`SDGOODS`, product key `sdgoods`). The update
+origin is `https://bot.deotaland.cn`; the three endpoints must permit anonymous
+device access and must not require an account/user header:
+
+- `GET /api/firmware/check-update?product_id=13&current_version_code=20000&chip_type=esp32-s3`
+- `GET /api/firmware/{id}/download-url`
+- `GET /api/firmware/{id}/download` (bounded, validated redirects)
+
+Responses use `code=0`, `success=true` and `data`; HTTP and business failures remain
+visible on the update page. The check returns `data.has_update`. An update additionally
+requires `firmware_id`, `product_id=13`, `is_official=true`, `version`, monotonically
+increasing `version_code`, `chip_type=esp32-s3`, `file_size`, `file_md5`, optional
+`download_url`, `changelog` and `is_forced`. Publish the **pure** `agent_link.bin`,
+not a merged USB image. Its embedded version/code/product/layout capability must
+match the release metadata. There is no `firmware_type` field in the check response.
+The refreshed link is `data.download_url`; its `id`, `file_size` and `file_md5` must
+still match the selected release. An empty link uses the direct-download endpoint.
+USB metadata `flash_address` (including `0x0`) is not used
+as an arbitrary device write destination: the device selects its inactive slot.
+The initial USB destination of the complete Launcher image is **0x90000**.
+The initial release is `2.0.0` / `20000`; for an update test, build the next release
+as e.g. `2.0.1` / `20001` and publish those same values. An existing backend release
+`1` / `1` is older than this Launcher and will not trigger an update. Keep the
+immutable recovery image and merged USB image out of the OTA release catalog.
+
+V5 contains a fixed 512 KiB `recovery` entry, two 3 MiB Launchers (`launcher_a`/`launcher_b`, subtypes `ota_14`/`ota_15`),
+a separate 10 MiB `app_pool` (expanded to `app_00`..`app_13`, subtypes `ota_0`..`ota_13`), and 13 MiB appdata. The
+entry preserves `agent.launcher` / `SDGOODS_LAUNCHER` identity so reviewed vendor
+apps can return through Factory. It normalizes the initial table and routes to
+the current or pending Launcher. It is built in `build/recovery/` as a small
+subproject, using the production source in `recovery/sdgoods-esp32s3/`.
+
+Updates write only the inactive Launcher. Size, MD5, flash readback MD5, ESP image,
+board, product, version code and exact layout capability are checked before a
+two-sector boot-state journal publishes a trial. The new Launcher must complete
+10 seconds of responsive UI/display/touch operation; a 45-second confirmation
+deadline restarts an unresponsive trial. A bootloader hook rejects the next boot
+of an unconfirmed trial and routes back through recovery. Confirmed images are
+not copied, and the old image remains until the next update. This state is separate
+from vendor applications' `otadata`; global IDF app rollback stays disabled.
+
+The update page retains failures with HTTP status/reason and reports progress.
+Returning home leaves work running; application changes and power actions wait
+until it completes/cancels. A staged update offers **Restart into new version**.
+Forced updates are indicated but do not silently erase data or interrupt use.
+
+Migration requires a matching initial full USB image; a V4 app-only update cannot
+install this layout. Configuration/font/journal addresses move, and an existing
+16 MiB FAT volume must be backed up and recreated at 13 MiB. Launcher B executes
+above 16 MiB, requiring ESP-IDF's **experimental** 32-bit quad-flash cache mapping.
+Successful compilation/host tests do not establish support on the physical flash
+chip: A/B boots, vendor-app return, real power cuts and UI confirmation require
+device acceptance. If both Launchers are invalid the immutable entry stays in
+USB recovery and logs the reason; it does not erase user data or launch arbitrary apps.
 
 ## Memory and transfers
 
@@ -204,3 +264,16 @@ commands, pins, first-install migration and pending device checks. Audio is
 initialized on an explicit test request. A three-second recording consumes
 96,000 PSRAM bytes temporarily; it is not persisted or uploaded. ADC, I2S/PA,
 touch and power behavior still need on-device acceptance.
+
+## V5 partition names and developer storage
+
+Labels are `recovery`, `launcher_a`, `launcher_b`, `app_pool`, `app_00`..`app_13`,
+`app_meta` and `layout_journal`. Standard ESP-IDF boot subtypes are unchanged.
+`appdata` remains a shared 13 MiB developer filesystem, not firmware install space
+or a per-app quota. Preserve `/appdata/<app_id>/` directories; START.MP4/START.BVA
+are reserved Factory media. Ordinary app and Launcher updates do not format it.
+The named V5 policy requires a full USB migration, including matching bootloader
+and recovery. Back up and recreate older 16 MiB appdata as 13 MiB explicitly.
+Original SDGOODS pure applications remain byte-for-byte unchanged. Old Agent Link
+native images using app_nvs/ota_N must be rebuilt with slot capability version 2;
+they are rejected before allocation, rather than installed into an unusable layout.

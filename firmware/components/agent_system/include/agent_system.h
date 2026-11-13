@@ -9,6 +9,10 @@ namespace agent_system {
 #ifndef AGENT_SYSTEM_SLOT_COUNT
 #define AGENT_SYSTEM_SLOT_COUNT 3
 #endif
+#ifndef AGENT_SYSTEM_METADATA_PARTITION
+#define AGENT_SYSTEM_METADATA_PARTITION "app_nvs"
+#endif
+constexpr const char* kMetadataPartition = AGENT_SYSTEM_METADATA_PARTITION;
 constexpr int kAppSlotCount = AGENT_SYSTEM_SLOT_COUNT;
 static_assert(kAppSlotCount > 0 && kAppSlotCount <= 16);
 constexpr uint32_t kLayout = AGENT_SYSTEM_LAYOUT;

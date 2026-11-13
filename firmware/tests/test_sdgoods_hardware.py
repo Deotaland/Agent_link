@@ -29,7 +29,7 @@ if os.name=='nt':
 else: compiler='c++'
 sources=[root/'tests/button_hardware_test.cc',root/'boards/sdgoods-esp32s3/sdgoods_sensors.cc',
          root/'boards/sdgoods-esp32s3/sdgoods_audio.cc',root/'factory/sdgoods-esp32s3/factory_services.cc']
-includes=[stubs,root/'tests',root/'boards/sdgoods-esp32s3']
+includes=[stubs,root/'tests',root/'boards/common',root/'boards/sdgoods-esp32s3']
 binary=build/('hardware.exe' if os.name=='nt' else 'hardware')
 if os.name=='nt':
     command=[compiler,'/nologo','/std:c++17','/utf-8','/EHsc','/D_CRT_SECURE_NO_WARNINGS',

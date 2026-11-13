@@ -17,6 +17,9 @@ class AmoledSystemMenu {
     void SetExtraPage(ExtraPage page) {
         extra_ = page;
     }
+    void SetUpdatePage(ExtraPage page) {
+        update_ = page;
+    }
     void OpenExtraPage() {
         page_ = Page::kExtra;
         exit_ = false;
@@ -65,7 +68,8 @@ class AmoledSystemMenu {
         kVolume,
         kLanguage,
         kCovers,
-        kExtra
+        kExtra,
+        kUpdate
     };
     Page page_ = Page::kClosed;
     bool exit_ = false;
@@ -73,6 +77,7 @@ class AmoledSystemMenu {
     char cover_summary_[384]{};
     char device_info_[384]{};
     ExtraPage extra_{};
+    ExtraPage update_{};
     int volume_ = 70;
     int default_volume_ = 70;
     VolumeHandler volume_handler_ = nullptr;

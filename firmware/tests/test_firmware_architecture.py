@@ -132,35 +132,56 @@ class FirmwareArchitectureTests(unittest.TestCase):
             for key in ("CONFIG_MBEDTLS_HARDWARE_SHA", "CONFIG_MBEDTLS_HARDWARE_AES"):
                 self.assertEqual(build.settings(config)[key], "y")
 
-    def test_sdgoods_all_images_and_font_fit_24bit_flash_mapping(self):
+    def test_sdgoods_ab_layout_and_vendor_pool_boundaries(self):
         profile = self.profiles['sdgoods-wifi']
         plan = flash_plan(profile, 'standard')
-        self.assertEqual((plan['layout'], plan['layout_version']), ('sdgoods-v4', 4))
+        self.assertEqual((plan['layout'], plan['layout_version']), ('sdgoods-v5', 5))
         self.assertEqual(plan['app_abi'], 3)
         self.assertEqual(build.system_images(profile)['layout'], 3)
-        self.assertEqual(plan['app_slots'], ['ota_0'])
+        self.assertEqual(plan['app_slots'], ['app_pool'])
         self.assertEqual(plan['dynamic_slots']['max_slots'], 16)
         self.assertEqual(plan['app_max_bytes'], 0xA00000 - 0xE000)
         entries = plan['partitions']
         for name, entry in entries.items():
             with self.subTest(partition=name):
-                if name != 'appdata':
+                if name not in ('appdata', 'launcher_b'):
                     self.assertLessEqual(entry['offset'] + entry['size'], 1 << 24)
         for slot in plan['app_slots']:
             self.assertEqual(entries[slot]['size'], 0xA00000)
-        self.assertEqual((entries['pt_guard']['offset'], entries['pt_guard']['size']), (0xF62000, 0x4000))
-        for name, address in {'app_nvs':0xD12000, 'agent_nvs':0xD22000, 'nvs':0x9000}.items():
+        self.assertEqual((entries['layout_journal']['offset'], entries['layout_journal']['size']), (0xFE2000, 0x4000))
+        for name, address in {'app_meta':0xD92000, 'agent_nvs':0xDA2000, 'nvs':0x9000}.items():
             self.assertEqual(entries[name]['offset'], address)
-        self.assertEqual((entries['appdata']['offset'], entries['appdata']['size']), (0x1000000, 0x1000000))
+        self.assertEqual((entries['appdata']['offset'], entries['appdata']['size']), (0x1000000, 0xD00000))
+        self.assertEqual(entries['recovery']['size'], 0x80000)
+        self.assertEqual(entries['launcher_a']['size'], 0x300000)
+        self.assertEqual(entries['launcher_b']['size'], 0x300000)
+        self.assertEqual(flash_plan(profile, 'factory')['app_offset'], 0x90000)
+        self.assertEqual(plan['dynamic_slots']['user_slots'], 14)
         self.assertNotEqual(entries['agent_nvs']['offset'], entries['nvs']['offset'])
         font = entries['font_cjk']
-        self.assertEqual(font['offset'], 0xD32000)
+        self.assertEqual(font['offset'], 0xDB2000)
         self.assertLessEqual((ROOT / profile['flash_assets'][0]['file']).stat().st_size, font['size'])
         settings = build.expected_settings(profile)
         self.assertEqual(settings['CONFIG_ESPTOOLPY_FLASHSIZE_32MB'], 'y')
-        self.assertEqual(settings.get('CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH', 'n'), 'n')
+        self.assertEqual(settings.get('CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH', 'n'), 'y')
         self.assertEqual(initial_boot_slot(plan), 0)
         self.assertIsNone(initial_boot_slot(flash_plan(profile, 'factory')))
+
+    def test_named_slots_preserve_vendor_boot_subtypes_and_storage(self):
+        from dynamic_layout import header, definition
+        profile = self.profiles['sdgoods-wifi']
+        layout = profile['layout_info']
+        entries = layout['partitions']
+        self.assertEqual(entries['recovery']['subtype'], 'factory')
+        self.assertEqual(entries['launcher_a']['subtype'], 'ota_14')
+        self.assertEqual(entries['launcher_b']['subtype'], 'ota_15')
+        self.assertEqual(entries['app_pool']['subtype'], 'ota_0')
+        self.assertEqual(entries['appdata']['subtype'], 'fat')
+        self.assertEqual(layout['dynamic_slots']['slot_labels'], [f'app_{i:02}' for i in range(14)])
+        self.assertIn('ALPT_NATIVE_CAPABILITY_VERSION 2', header(profile))
+        changed = copy.deepcopy(profile)
+        changed['layout_info']['dynamic_slots']['slot_labels'][0] = 'other_app'
+        self.assertNotEqual(definition(profile)[2], definition(changed)[2])
 
     def test_dynamic_app_only_usb_update_is_refused_before_device_access(self):
         plan=flash_plan(self.profiles['sdgoods-wifi'],'standard')

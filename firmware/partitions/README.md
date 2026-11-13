@@ -11,6 +11,7 @@ Keep every layout's CSV and Kconfig defaults together in this directory.
 | `paper-s31-v1` | `paper-s31-v1` | Paper V2, ESP32-S31 | Two 4 MiB A/B slots |
 | `paper-4in0-v2` | `paper-4in0-v2` | Paper 4IN0, ESP32-S31 | Reserved 3 MiB Factory plus three 3 MiB application slots |
 | `amoled-175-v1` | `amoled-175-v1` | Non-C AMOLED 1.75, ESP32-S3 with 16 MiB flash | Factory launcher plus three 3 MiB application slots |
+| `sdgoods-v5` | `sdgoods-v5` | Sugarat Button, ESP32-S3 with 32 MiB flash | 512 KiB recovery, two 3 MiB Launchers, 10 MiB pool for 14 apps, 13 MiB appdata |
 
 The CSV is the only source of partition addresses and capacities. Build tools
 resolve it into `build/flash-plan.json`; CMake, package tools and USB updates
@@ -38,3 +39,11 @@ Validate with `python firmware/tools/build_firmware.py --check` from the
 repository root, then build the selected profile. See the
 [profile guide](../profiles/README.md) for configuration and the
 [Factory guide](../factory/waveshare-amoled-175/README.md) for initial packages.
+
+Sugarat Button's active layout is **sdgoods-v5**. Its labels describe roles:
+`recovery`, `launcher_a/b`, bootstrap `app_pool`, dynamic `app_00`..`app_13`,
+`app_meta` and `layout_journal`. ESP-IDF subtypes remain factory/ota_0..ota_15.
+`appdata` deliberately retains its vendor label and `/appdata/<app_id>/` interface;
+13 MiB is shared developer file storage, also containing optional Factory media.
+Older sdgoods CSVs are historical migration inputs and are not selected by this board.
+The former 16 MiB FAT volume must be backed up and recreated at 13 MiB on migration.

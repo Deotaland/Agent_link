@@ -1,6 +1,7 @@
 #include "agent_system_dynamic_stubs.h"
 #include "dynamic_layout_config.h"
 #include "agent_system.h"
+#include "../components/agent_system/slot_identity.h"
 #include "cJSON.h"
 #include <filesystem>
 #include <fstream>
@@ -52,7 +53,7 @@ void Empty() {
     assert(alpt_build(&alpt_config, &io, slots, table) == 0 &&
            alpt_commit(&alpt_config, &io, table, scratch) == 0);
     for (auto i = fixture::store.begin(); i != fixture::store.end();) {
-        if (i->first.find("app_nvs/al_apps/") == 0)
+        if (i->first.find(std::string(kMetadataPartition) + "/al_apps/") == 0)
             i = fixture::store.erase(i);
         else
             ++i;
@@ -83,7 +84,9 @@ int main(int argc, char** argv) {
     Put(0, Read(artifacts / "factory/bootloader/bootloader.bin"));
     const auto seed_table = Read(artifacts / "factory/partition_table/partition-table.bin");
     Put(0x8000, seed_table);
-    Put(0x10000, factory);
+    const auto recovery = Read(artifacts / "factory/recovery/SDGOODS_LAUNCHER.bin");
+    Put(0x10000, recovery);
+    Put(ALBOOT_A_OFFSET, factory);
     dynamic_fixture::Reload();
     assert(Init() == kRestartRequired);
     Reboot();
@@ -92,15 +95,16 @@ int main(int argc, char** argv) {
     // the image or the cover previously stored at the bootstrap pool's tail.
     memset(dynamic_fixture::flash.data() + alpt_config.guard, 255, 0x4000);
     Put(0x8000, seed_table);
-    Put(0x310000, Read(artifacts / "standard/agent_link.bin"));
-    fixture::store["app_nvs/al_apps/ota_0"] = {2};
+    Put(alpt_config.pool_start, Read(artifacts / "standard/agent_link.bin"));
+    char first_slot[16]; SlotLabel(first_slot, 0);
+    fixture::store[std::string(kMetadataPartition) + "/al_apps/" + first_slot] = {2};
     memset(dynamic_fixture::flash.data() + alpt_config.pool_end - kCoverReserveBytes, 0xA6,
            kCoverReserveBytes);
     dynamic_fixture::Reload();
     assert(Init() == kRestartRequired);
     Reboot();
     assert(Count() == 1);
-    const auto* seeded = esp_partition_find_first(0, 16, "ota_0");
+    const auto* seeded = esp_partition_find_first(0, 16, first_slot);
     assert(seeded && seeded->size < 0xA00000);
     for (size_t i = 0; i < kCoverReserveBytes; ++i)
         assert(dynamic_fixture::flash[seeded->address + seeded->size - kCoverReserveBytes + i] ==
@@ -134,7 +138,7 @@ int main(int argc, char** argv) {
     // Sentinel bytes in every persistent data region, including the upper FAT area.
     std::vector<std::pair<uint32_t, uint8_t>> sentinels;
     for (const auto& part : dynamic_fixture::partitions)
-        if (part.type == 1 && strcmp(part.label, "pt_guard") && strcmp(part.label, "otadata")) {
+        if (part.type == 1 && strcmp(part.label, ALPT_GUARD_PARTITION) && strcmp(part.label, "otadata")) {
             for (uint32_t offset : {uint32_t(0), part.size - 1}) {
                 const uint8_t value = static_cast<uint8_t>(sentinels.size() + 1);
                 dynamic_fixture::flash[part.address + offset] = value;
@@ -143,6 +147,10 @@ int main(int argc, char** argv) {
         }
     size_t transactions = 0;
     for (const auto& app : apps) {
+        if (app.format == ImageFormat::kAgentLink) {
+            assert(Install(app) == ESP_ERR_INVALID_VERSION);
+            continue;
+        }
         Empty();
         const auto original = fixture::responses.at(app.url);
         fixture::responses[app.url][512] ^= 1;
@@ -183,6 +191,9 @@ int main(int argc, char** argv) {
     }
     // Actual downloaded apps coexist beyond the old two-slot limit.
     auto ordered = apps;
+    ordered.erase(std::remove_if(ordered.begin(), ordered.end(), [](const auto& a) {
+        return a.format == ImageFormat::kAgentLink;
+    }), ordered.end());
     std::sort(ordered.begin(), ordered.end(),
               [](const auto& a, const auto& b) { return a.size < b.size; });
     Empty();
@@ -222,9 +233,10 @@ int main(int argc, char** argv) {
             ++installed;
             ++transactions;
         }
-    assert(installed == 2 && Install(*legacy) == kLegacySlotsFull && Count() == 2);
+    assert(installed == 2 && Install(*legacy) == ESP_ERR_INVALID_VERSION && Count() == 2);
     // The just-built native image advertises support for every dynamic subtype.
     CatalogApp native = *legacy;
+    snprintf(native.app_id, sizeof native.app_id, "agent.status");
     const auto bytes = Read(artifacts / "standard/agent_link.bin");
     fixture::responses[native.url] = bytes;
     native.size = static_cast<uint32_t>(bytes.size());
@@ -238,14 +250,15 @@ int main(int argc, char** argv) {
     for (unsigned i = 0; i < 32; ++i)
         sprintf(native.sha256 + i * 2, "%02x", digest[i]);
     InstallAndCheck(native);
-    assert(SlotFor(native.app_id) == "ota_2");
+    assert(SlotFor(native.app_id) == "app_02");
     ++transactions;
     for (const auto& item : sentinels)
         assert(dynamic_fixture::flash[item.first] == item.second);
     assert(fixture::store.at("agent_nvs/al_wifi/ssid") ==
            std::vector<uint8_t>({'h', 'o', 'm', 'e', 0}));
     assert(fixture::store.at("nvs/bmb_net/ssid") == std::vector<uint8_t>({'a', 'p', 'p', 0}));
-    assert(!memcmp(dynamic_fixture::flash.data() + 0x10000, factory.data(), factory.size()));
+    assert(!memcmp(dynamic_fixture::flash.data() + 0x10000, recovery.data(), recovery.size()));
+    assert(!memcmp(dynamic_fixture::flash.data() + ALBOOT_A_OFFSET, factory.data(), factory.size()));
     // A mismatched bootloader or encrypted flash cannot authorize table writes.
     dynamic_fixture::encrypted = true;
     assert(Init() == ESP_OK && Install(native) == kNeedsFullPackage);

@@ -1,5 +1,6 @@
 #include "factory_store_job_stubs.h"
 #define AGENT_SYSTEM_LAYOUT 3
+#define AGENT_SYSTEM_METADATA_PARTITION "app_meta"
 #define AGENT_SYSTEM_BOARD_MODEL "SDGOODS-ESP32S3"
 #include "../factory/common/factory_store_job.h"
 #include <cassert>

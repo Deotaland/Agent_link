@@ -42,6 +42,8 @@ def partitions(path, table_offset=0x8000):
         alignment = 0x10000 if kind in {"app", "0", "0x00"} else 0x1000
         start = number(offset) if offset else (end + alignment - 1) // alignment * alignment
         length = number(size)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,15}", label):
+            raise ValueError(f"Invalid partition label: {label}")
         if label in result or start < end or start % alignment or length <= 0 or length % 0x1000:
             raise ValueError(f"Overlapping, duplicate or unaligned partition: {label}")
         result[label] = dict(type=kind, subtype=subtype, offset=start, size=length)
@@ -59,15 +61,16 @@ def layout_info(layout_id, root=ROOT):
     layout["partitions"] = partitions(contained(root, layout["csv"]))
     entries = layout["partitions"]
     slots = layout.get("app_slots", [])
-    if not slots or slots != [f"ota_{i}" for i in range(len(slots))] or len(slots) > 16:
-        raise ValueError("OTA slots must be contiguous and start at ota_0")
-    for slot in slots:
-        if entries.get(slot, {}).get("type") != "app" or entries[slot]["subtype"] != slot:
+    if not slots or len(slots) > 16 or len(set(slots)) != len(slots):
+        raise ValueError("Layout needs unique application slots")
+    for index, slot in enumerate(slots):
+        if entries.get(slot, {}).get("type") != "app" or entries[slot]["subtype"] != f"ota_{index}":
             raise ValueError(f"Missing OTA app partition: {slot}")
     if entries.get("otadata", {}).get("subtype") != "ota" or entries["otadata"]["size"] != 0x2000:
         raise ValueError("Layout needs a two-sector otadata partition")
     if layout["mode"] == "managed":
-        if entries.get("factory", {}).get("subtype") != "factory":
+        recovery = entries.get(layout.get("recovery_partition", "factory"), {})
+        if recovery.get("type") != "app" or recovery.get("subtype") != "factory":
             raise ValueError("Managed layout needs a factory partition")
         reserve = layout.get("cover_reserve", 0)
         if not isinstance(reserve, int) or reserve % 0x1000 or any(entries[s]["size"] <= reserve for s in slots):
@@ -82,6 +85,30 @@ def layout_info(layout_id, root=ROOT):
                 guard.get("subtype") != "undefined" or guard.get("size") != 0x4000 or
                 not isinstance(layout.get("app_abi"), int) or layout["app_abi"] < 1):
             raise ValueError("Invalid dynamic application pool or recovery journal")
+        users = dynamic.get("user_slots", 16)
+        if not isinstance(users, int) or not 1 <= users <= 16:
+            raise ValueError("Invalid dynamic user slot count")
+        if "slot_labels" in dynamic:
+            labels = dynamic["slot_labels"]
+            if (not isinstance(labels, list) or len(labels) != users or
+                    any(not isinstance(s, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,15}", s) for s in labels) or
+                    len(set(labels)) != len(labels) or set(labels) & set(entries)):
+                raise ValueError("Invalid dynamic application labels")
+    ab = layout.get("launcher_ab")
+    if ab:
+        if not dynamic or dynamic.get("user_slots") != 14 or set(ab) != {"a", "b", "state"}:
+            raise ValueError("A/B Launcher requires fourteen user application slots")
+        for key, subtype in (("a", "ota_14"), ("b", "ota_15")):
+            p = entries.get(ab[key], {})
+            if p.get("type") != "app" or p.get("subtype") != subtype or p.get("size") != 0x300000:
+                raise ValueError("Invalid A/B Launcher partition")
+        state = entries.get(ab["state"], {})
+        if state.get("type") != "data" or state.get("size") != 0x2000:
+            raise ValueError("Invalid Launcher state partition")
+    if "metadata_partition" in layout:
+        meta = entries.get(layout["metadata_partition"], {})
+        if meta.get("type") != "data" or meta.get("subtype") != "nvs":
+            raise ValueError("Invalid application metadata partition")
     return layout
 
 
@@ -140,7 +167,7 @@ def system_images(profile, root=ROOT):
     if role == "factory" or launcher["app_id"] != "agent.launcher" or app["app_id"] == "agent.launcher":
         raise ValueError("Factory cannot be an installable application")
     layout = profile["layout_info"]
-    images = {"factory": dict(launcher, partition="factory"),
+    images = {"factory": dict(launcher, partition=layout.get("launcher_ab", {}).get("a", layout.get("recovery_partition", "factory"))),
               role: dict(app, path=f"apps/{profile['app']}", partition=layout["app_slots"][0])}
     for key, image in images.items():
         directory = contained(root, image["path"])
@@ -166,7 +193,7 @@ def flash_plan(profile, role):
     layout = profile["layout_info"]
     managed = layout["mode"] == "managed"
     image = system_images(profile)["images"][role] if managed else profile["application"]
-    partition = "factory" if role == "factory" else layout["app_slots"][0]
+    partition = image["partition"] if managed else layout["app_slots"][0]
     plan = dict(schema=1, profile=profile["name"], board=profile["board"], model=profile["model"],
                 chip=profile["target"], layout=layout["id"], layout_version=layout["version"],
                 mode=layout["mode"], role=role, app_id=image["app_id"], partition=partition,
@@ -177,13 +204,19 @@ def flash_plan(profile, role):
                 partition_table_offset=0x8000, partitions=layout["partitions"],
                 app_slots=layout["app_slots"], cover_reserve=layout.get("cover_reserve", 0),
                 flash_assets=profile.get("flash_assets", []))
+    if "recovery_partition" in layout:
+        plan["recovery_partition"] = layout["recovery_partition"]
+        plan["metadata_partition"] = layout["metadata_partition"]
     if layout.get("dynamic_slots"):
         plan.update(app_abi=layout["app_abi"], dynamic_slots=layout["dynamic_slots"])
+    if layout.get("launcher_ab"):
+        plan["launcher_ab"] = layout["launcher_ab"]
     return plan
 
 
 def initial_boot_slot(plan):
     """A reserved/installed Factory must not take precedence over a USB app install."""
-    if plan["partition"] == "factory" or "factory" not in plan["partitions"]:
+    recovery = plan.get("recovery_partition", "factory")
+    if plan["role"] == "factory" or plan["partition"] == recovery or recovery not in plan["partitions"]:
         return None
     return plan["app_slots"].index(plan["partition"])

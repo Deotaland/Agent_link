@@ -66,6 +66,10 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
         extra_.handle(input, extra_.context);
         return true;
     }
+    if (page_ == Page::kUpdate && update_.handle) {
+        update_.handle(input, update_.context);
+        return true;
+    }
     if (input.action == TouchAction::kVolume && page_ == Page::kVolume) {
         const int value = input.row < 0 ? 0 : input.row > 100 ? 100 : input.row;
         if (volume_handler_ && !volume_handler_(value, context_)) {
@@ -90,6 +94,13 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
     if (input.action != TouchAction::kRow)
         return true;
     if (page_ == Page::kRoot) {
+        const int update_row =
+            6 + (agent_system::IsLauncher() || agent_system::CanReturnToLauncher() ? 1 : 0) +
+            (extra_.render ? 1 : 0) + (extra_.open_brightness ? 1 : 0);
+        if (update_.render && input.row == update_row) {
+            page_ = Page::kUpdate;
+            return true;
+        }
         switch (input.row) {
             case 0:
                 page_ = Page::kNetwork;
@@ -173,11 +184,15 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
         if (agent_system::IsLauncher())
             row(Tr("应用封面与同步", "App covers and sync"));
         else if (agent_system::CanReturnToLauncher())
-            row(Tr("返回应用选择器", "Return to launcher"));
+            row(Tr("退出到启动器", "Exit to launcher"));
         if (extra_.render)
             row(Tr("硬件与电源", "Hardware and power"));
         if (extra_.open_brightness)
             row(Tr("屏幕亮度", "Screen brightness"));
+        if (update_.render)
+            row(Tr("固件更新", "Firmware update"));
+    } else if (page_ == Page::kUpdate && update_.render) {
+        update_.render(s, update_.context);
     } else if (page_ == Page::kNetwork) {
         snprintf(s.title, sizeof s.title, "%s", Tr("网络与配网", "Network"));
         if (!wifi.connected && wifi.setup_active) {

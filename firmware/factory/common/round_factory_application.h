@@ -11,6 +11,9 @@
 #include "factory_hardware_services.h"
 #include "factory_store_job.h"
 #include "agent_system.h"
+#ifdef AGENT_LAUNCHER_AB
+#include "launcher_update.h"
+#endif
 #include "agent_link_network.h"
 #include "esp_log.h"
 #include "esp_partition.h"
@@ -52,6 +55,17 @@ class AmoledFactoryApplication : public Application {
                 },
                 hardware_services_.get());
         }
+#ifdef AGENT_LAUNCHER_AB
+        ESP_ERROR_CHECK(agent_system::launcher::Init());
+        menu_.SetUpdatePage({this,
+                             [](const amoled_ui::Input& input, void* ctx) {
+                                 return static_cast<AmoledFactoryApplication*>(ctx)->HandleUpdate(
+                                     input);
+                             },
+                             [](amoled_ui::Screen& screen, void* ctx) {
+                                 static_cast<AmoledFactoryApplication*>(ctx)->RenderUpdate(screen);
+                             }});
+#endif
         events_ = xQueueCreate(8, sizeof(amoled_ui::Input));
         ESP_ERROR_CHECK(events_ ? ESP_OK : ESP_ERR_NO_MEM);
         ESP_ERROR_CHECK(amoled_ui::StartUi(&hardware_.panel_, &hardware_.touch_, OnInput, this,
@@ -208,6 +222,10 @@ class AmoledFactoryApplication : public Application {
             (void)agent_system::ReadCover(apps_[carousel_.Index()].slot, &cover_);
     }
     bool ReadyToDownload() {
+#ifdef AGENT_LAUNCHER_AB
+        if (UpdateBlocksApps())
+            return false;
+#endif
         if (tile_home_) {
             agent_link_wifi_info_t wifi{};
             if (agent_link_wifi_info(&wifi) != ESP_OK || !wifi.connected) {
@@ -329,11 +347,19 @@ class AmoledFactoryApplication : public Application {
                 break;
             case Page::kLocalDetail:
                 if (row == 0) {
+#ifdef AGENT_LAUNCHER_AB
+                    if (UpdateBlocksApps())
+                        break;
+#endif
                     if (StoreRunning())
                         page_ = Page::kInterrupt;
                     else
                         Check(agent_system::Launch(apps_[selected_].slot));
                 } else if (row == 1) {
+#ifdef AGENT_LAUNCHER_AB
+                    if (UpdateBlocksApps())
+                        break;
+#endif
                     if (StoreRunning() || NeedsRestart())
                         amoled_ui::Toast(
                             Tr("请先完成当前安装", "Finish the current installation first"));
@@ -812,6 +838,24 @@ class AmoledFactoryApplication : public Application {
         amoled_ui::ButtonDebounce button;
         int64_t next_update = 0;
         while (true) {
+#ifdef AGENT_LAUNCHER_AB
+            if (!launcher_confirmed_) {
+                if (!amoled_ui::UiResponsive() || !hardware_.panel_.Ready() ||
+                    !hardware_.touch_.Ready())
+                    healthy_since_ = 0;
+                else if (!healthy_since_)
+                    healthy_since_ = esp_timer_get_time();
+                else if (esp_timer_get_time() - healthy_since_ > 10000000 &&
+                         agent_system::launcher::ConfirmHealthy() == ESP_OK)
+                    launcher_confirmed_ = true;
+            }
+            const auto update = agent_system::launcher::Read();
+            if (update.revision != update_revision_) {
+                update_revision_ = update.revision;
+                ++view_;
+                Publish();
+            }
+#endif
             PollStoreJob();
             amoled_ui::Input input;
             const bool received = xQueueReceive(events_, &input, pdMS_TO_TICKS(30)) == pdTRUE;
@@ -887,7 +931,13 @@ class AmoledFactoryApplication : public Application {
                     ++navigation_;
                     Publish();
                 }
-                if (hardware_services_->Tick(!sync_busy_.load() && !StoreRunning())) {
+                if (hardware_services_->Tick(!sync_busy_.load() && !StoreRunning()
+#ifdef AGENT_LAUNCHER_AB
+                                             && !agent_system::launcher::Busy() &&
+                                             agent_system::launcher::Read().state !=
+                                                 agent_system::launcher::State::kReady
+#endif
+                                             )) {
                     char info[384]{};
                     hardware_services_->DeviceInfo(info, sizeof info);
                     menu_.SetDeviceInfo(info);
@@ -908,6 +958,11 @@ class AmoledFactoryApplication : public Application {
         }
     }
     void TickCoverSync() {
+#ifdef AGENT_LAUNCHER_AB
+        if (!launcher_confirmed_ || agent_system::launcher::Busy() ||
+            agent_system::launcher::Read().state == agent_system::launcher::State::kReady)
+            return;
+#endif
         // No new cover work or cached-partition scans while an install owns flash,
         // or after layout publication until IDF reloads the partition table.
         if (StoreRunning() || NeedsRestart())
@@ -1067,6 +1122,94 @@ class AmoledFactoryApplication : public Application {
         static_cast<AmoledFactoryApplication*>(context)->CoverLoop();
     }
     const bool tile_home_;
+#ifdef AGENT_LAUNCHER_AB
+    bool UpdateBlocksApps() {
+        if (launcher_confirmed_ && !agent_system::launcher::Busy() &&
+            agent_system::launcher::Read().state != agent_system::launcher::State::kReady)
+            return false;
+        amoled_ui::Toast(Tr("启动器正在验证或更新，请完成更新或取消后再操作应用",
+                            "Finish or cancel the Launcher update before using apps"),
+                         5000);
+        return true;
+    }
+    bool HandleUpdate(const amoled_ui::Input& input) {
+        if (input.action != amoled_ui::TouchAction::kRow)
+            return true;
+        using namespace agent_system::launcher;
+        const auto value = Read();
+        if (agent_system::launcher::Busy()) {
+            Cancel();
+            return true;
+        }
+        if (value.state == State::kReady) {
+            Check(Restart());
+            return true;
+        }
+        if (value.state == State::kAvailable && input.row == 0) {
+            if (StoreRunning() || NeedsRestart() || sync_busy_.load() || !launcher_confirmed_) {
+                amoled_ui::Toast(Tr("请等待当前任务完成后再更新启动器",
+                                    "Wait for the current task before updating"),
+                                 5000);
+                return true;
+            }
+            Check(Install());
+            return true;
+        }
+        agent_link_wifi_info_t wifi{};
+        if (agent_link_wifi_info(&wifi) != ESP_OK || !wifi.connected) {
+            menu_.OpenNetwork();
+            amoled_ui::Toast(
+                Tr("请先联网，再检查更新", "Connect WiFi before checking for updates"));
+        } else
+            Check(agent_system::launcher::Check());
+        return true;
+    }
+    void RenderUpdate(amoled_ui::Screen& screen) {
+        using namespace agent_system::launcher;
+        const auto value = Read();
+        screen.kind = amoled_ui::View::kList;
+        snprintf(screen.title, sizeof screen.title, "%s", Tr("固件更新", "Firmware update"));
+        snprintf(screen.detail, sizeof screen.detail, "%s (%lu)", value.current,
+                 (unsigned long)value.current_code);
+        snprintf(screen.footer, sizeof screen.footer, "%s",
+                 Tr("底部上滑回主页", "Swipe up from bottom: home"));
+        if (value.state == State::kAvailable)
+            snprintf(
+                screen.info, sizeof screen.info,
+                Tr("新版本：%s\n大小：%lu KB%s\n\n%.220s", "New: %s\nSize: %lu KB%s\n\n%.220s"),
+                value.version, (unsigned long)((value.size + 1023) / 1024),
+                value.forced ? Tr(" · 重要更新", " - Important") : "", value.changelog);
+        else if (agent_system::launcher::Busy())
+            snprintf(screen.info, sizeof screen.info, "%.260s\n\n%lu / %lu KB · %lu%%\n%lu KB/s",
+                     value.message, (unsigned long)(value.received / 1024),
+                     (unsigned long)(value.size / 1024),
+                     (unsigned long)(value.size ? uint64_t(value.received) * 100 / value.size : 0),
+                     (unsigned long)(value.elapsed_ms
+                                         ? uint64_t(value.received) * 1000 / value.elapsed_ms / 1024
+                                         : 0));
+        else
+            snprintf(screen.info, sizeof screen.info, "%.290s%s", value.message,
+                     value.state == State::kError
+                         ? Tr("\n\n旧启动器保持可用，可重新检查更新。",
+                              "\n\nThe previous Launcher is available. You can retry.")
+                         : "");
+        const auto row = [&](const char* label) {
+            snprintf(screen.rows[screen.row_count++], sizeof screen.rows[0], "%s", label);
+        };
+        if (agent_system::launcher::Busy())
+            row(Tr("取消更新", "Cancel update"));
+        else if (value.state == State::kReady)
+            row(Tr("重启并试运行新版", "Restart into new version"));
+        else {
+            if (value.state == State::kAvailable)
+                row(Tr("下载并安装更新", "Download and install"));
+            row(Tr("检查更新", "Check for updates"));
+        }
+    }
+    bool launcher_confirmed_ = false;
+    int64_t healthy_since_ = 0;
+    uint32_t update_revision_ = 0;
+#endif
     std::unique_ptr<FactoryStoreJob> store_job_;
     uint32_t seen_job_revision_ = 0;
     char pending_launch_[17]{};

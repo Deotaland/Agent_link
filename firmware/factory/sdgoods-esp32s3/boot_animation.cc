@@ -25,7 +25,7 @@ Bytes Allocate(size_t size) {
 Bytes Load(size_t* size) {
     const auto* partition = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, "appdata");
-    if (!partition || partition->address != 0x1000000 || partition->size != 0x1000000) {
+    if (!partition || partition->address != 0x1000000 || partition->size < 4096) {
         ESP_LOGW(kTag, "appdata layout mismatch; skipping animation");
         return {};
     }

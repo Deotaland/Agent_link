@@ -164,6 +164,7 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     download = Box(root, 0, 0, 360, 360, 0, kBg); Back(download, bind);
     download_title = Label(download, fonts.Title(), 111, 43, 140, 28, kText);
     auto* help = Box(download, 254, 40, 36, 36, 18, kCard); bind(help, 12);
+    lv_obj_set_ext_click_area(help, 10);
     Text(Label(help, &lv_font_montserrat_20, 0, 0, 36, 36, kBrand), "?");
     download_hint = Label(download, fonts.Small(), 52, 82, 256, 23, kMuted);
     for (int i = 0; i < 6; ++i) {

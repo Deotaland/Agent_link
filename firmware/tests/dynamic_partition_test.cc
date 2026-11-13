@@ -120,6 +120,7 @@ int main() {
     alpt_empty(&alpt_config, 0, &pool);
     pool.offset = alpt_config.pool_start;
     pool.size = alpt_config.pool_end - alpt_config.pool_start;
+    if (alpt_config.pool_label) snprintf(pool.label, sizeof pool.label, "%s", alpt_config.pool_label);
     seed.push_back(pool);
     memcpy(bootstrap.primary.data(), seed.data(), seed.size() * 32);
     bootstrap.primary[seed.size() * 32] = 0xEB;
@@ -156,7 +157,7 @@ int main() {
     assert(alpt_slots(current.data(), slots) == 0);
     unsigned occupied = 0;
     for (const auto& p : slots)
-        occupied += p.size != 0;
+        occupied += p.size != 0 && !(alpt_config.reserved_mask & (1u << (p.subtype - 0x10)));
     assert(occupied == 5);
     // Legacy native images must not be placed above ota_1.
     assert(alpt_allocate(&alpt_config, &io, current.data(), 1024, 0xE000, free_mask, 2, next,
@@ -201,6 +202,8 @@ int main() {
     current.assign(empty, empty + 4096);
     free_mask = 0xFFFF;
     for (unsigned i = 0; i < 16; ++i) {
+        if (alpt_config.reserved_mask & (1u << i))
+            continue;
         assert(alpt_allocate(&alpt_config, &io, current.data(), 512, 0xE000, free_mask, 16, next,
                              &index, &allocated) == 0);
         assert(index == i);
@@ -209,6 +212,14 @@ int main() {
     }
     assert(alpt_allocate(&alpt_config, &io, current.data(), 512, 0xE000, 0, 16, next, &index,
                          &allocated) == ALPT_NONE);
+    if (alpt_config.reserved_mask) {
+        assert(alpt_slots(current.data(), slots) == ALPT_OK);
+        const auto a = slots[14], b = slots[15];
+        assert(a.size == 0x300000 && b.size == 0x300000);
+        assert(alpt_allocate(&alpt_config, &io, current.data(), 512, 0xE000,
+                             alpt_config.reserved_mask, 16, next, &index, &allocated) == ALPT_NONE);
+        assert(a.offset < alpt_config.pool_start && b.offset >= 0x1000000);
+    }
     printf(
         "Dynamic layout: %u torn-write recovery scenarios; five apps, best-fit reuse, "
         "legacy subtype bounds, capacity and persistent-region protection passed.\n",

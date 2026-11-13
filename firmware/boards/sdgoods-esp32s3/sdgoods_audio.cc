@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iterator>
 
 namespace sdgoods {
@@ -12,12 +13,87 @@ constexpr size_t kRate = 16000, kRecordingFrames = kRate * 3, kBlock = 128;
 constexpr const char* kTag = "button.audio";
 }  // namespace
 void Audio::Amplifier(bool enabled) {
-    gpio_set_level(AUDIO_PA_PIN, enabled && !stop_.load() && volume_.load() > 0 ? 1 : 0);
+    (void)SetSpeakerEnabled(enabled);
 }
-void Audio::SetVolume(int percent) {
+esp_err_t Audio::SetSpeakerEnabled(bool enabled) {
+    speaker_requested_.store(enabled);
+    return gpio_set_level(AUDIO_PA_PIN, enabled && !stop_.load() && volume_.load() > 0 ? 1 : 0);
+}
+esp_err_t Audio::SetVolume(int percent) {
     volume_.store(std::clamp(percent, 0, 100));
-    if (!volume_.load())
-        Amplifier(false);
+    return SetSpeakerEnabled(speaker_requested_.load());
+}
+esp_err_t Audio::Init(int volume) {
+    bool idle = false;
+    if (!busy_.compare_exchange_strong(idle, true)) return ESP_ERR_INVALID_STATE;
+    stop_.store(false);
+    streaming_ = true;
+    auto error = SetVolume(volume);
+    if (error == ESP_OK) error = SetSpeakerEnabled(false);
+    if (error == ESP_OK) error = InitSpeaker();
+    if (error == ESP_OK) error = InitMicrophone(false);
+    if (error == ESP_OK) error = StopMic();
+    if (error != ESP_OK) Shutdown();
+    return error;
+}
+void Audio::Shutdown() {
+    if (!streaming_) return;
+    Stop(); Release(); streaming_ = false; busy_.store(false);
+}
+esp_err_t Audio::StartMic() {
+    if (!streaming_ || !rx_) return ESP_ERR_INVALID_STATE;
+    if (MicOn()) return ESP_OK;
+    const auto error = i2s_channel_enable(rx_);
+    if (error == ESP_OK) {
+        previous_ = filtered_ = 0; warmup_ = kRate / 5;
+        mic_on_.store(true);
+    }
+    return error;
+}
+esp_err_t Audio::StopMic() {
+    if (!rx_ || !MicOn()) return ESP_OK;
+    const auto error = i2s_channel_disable(rx_);
+    if (error == ESP_OK) mic_on_.store(false);
+    return error;
+}
+esp_err_t Audio::ReadPcm(int16_t* dest, size_t capacity, size_t* got) {
+    if (got) *got = 0;
+    if (!dest || !got || !capacity) return ESP_ERR_INVALID_ARG;
+    if (!rx_ || !MicOn()) return ESP_ERR_INVALID_STATE;
+    int32_t raw[kCaptureCapacity];
+    const size_t frames = std::min(capacity, kCaptureCapacity);
+    while (!stop_.load()) {
+        size_t bytes = 0;
+        const auto error = i2s_channel_read(rx_, raw, frames * sizeof(raw[0]), &bytes, 100);
+        if (error != ESP_OK) return error;
+        if (!bytes || bytes > frames * sizeof(raw[0]) || bytes % sizeof(raw[0])) return ESP_ERR_INVALID_SIZE;
+        const size_t count = bytes / sizeof(raw[0]);
+        if (warmup_) { warmup_ -= std::min(warmup_, count); continue; }
+        for (size_t i = 0; i < count; ++i) {
+            const int32_t input = std::clamp<int32_t>(raw[i] >> 14, -32768, 32767);
+            filtered_ = static_cast<int32_t>((int64_t(filtered_ + input - previous_) * 32604) / 32768);
+            previous_ = input;
+            dest[i] = static_cast<int16_t>(std::clamp<int32_t>(filtered_, -32768, 32767));
+        }
+        *got = count;
+        channels_ = {}; channels_[0].Add(dest, count);
+        return ESP_OK;
+    }
+    return ESP_ERR_INVALID_STATE;
+}
+esp_err_t Audio::WritePcm(const int16_t* pcm, size_t frames) {
+    if (!pcm || !frames) return ESP_ERR_INVALID_ARG;
+    if (!streaming_ || !tx_) return ESP_ERR_INVALID_STATE;
+    int16_t stereo[kBlock * 2];
+    for (size_t offset = 0; offset < frames; offset += kBlock) {
+        const size_t count = std::min(kBlock, frames - offset);
+        const int volume = volume_.load();
+        for (size_t n = 0; n < count; ++n)
+            stereo[n * 2] = stereo[n * 2 + 1] = static_cast<int16_t>(int32_t(pcm[offset + n]) * volume / 100);
+        const auto error = Write(stereo, count);
+        if (error != ESP_OK) return error;
+    }
+    return ESP_OK;
 }
 void Audio::Stop() {
     stop_.store(true);
@@ -69,7 +145,7 @@ esp_err_t Audio::InitSpeaker() {
         error = i2s_channel_enable(tx_);
     return error;
 }
-esp_err_t Audio::InitMicrophone() {
+esp_err_t Audio::InitMicrophone(bool enable) {
     i2s_chan_config_t channel = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
     channel.auto_clear = true;
     channel.dma_desc_num = 4;
@@ -88,33 +164,23 @@ esp_err_t Audio::InitMicrophone() {
     standard.gpio_cfg.dout = GPIO_NUM_NC;
     standard.gpio_cfg.din = AUDIO_MIC_DIN;
     error = i2s_channel_init_std_mode(rx_, &standard);
-    if (error == ESP_OK)
-        error = i2s_channel_enable(rx_);
+    if (error == ESP_OK && enable) error = i2s_channel_enable(rx_);
+    if (error == ESP_OK) mic_on_.store(enable);
     return error;
 }
 esp_err_t Audio::Capture(int16_t* pcm, size_t frames) {
     esp_err_t error = InitMicrophone();
     if (error != ESP_OK)
         return error;
-    int32_t raw[kBlock]{};
-    size_t offset = 0, warmup = kRate / 5;
-    int32_t previous = 0, filtered = 0;
+    int16_t pcm_block[kBlock];
+    size_t offset = 0;
+    warmup_ = kRate / 5; previous_ = filtered_ = 0;
     while (!stop_.load() && offset < frames) {
-        size_t bytes = 0;
-        error = i2s_channel_read(rx_, raw, sizeof raw, &bytes, 100);
-        if (error != ESP_OK || !bytes || bytes % sizeof(raw[0]))
-            return error == ESP_OK ? ESP_FAIL : error;
-        if (warmup) {
-            warmup -= std::min(warmup, bytes / sizeof(raw[0]));
-            continue;
-        }
+        size_t got = 0;
+        error = ReadPcm(pcm_block, std::min(kBlock, frames - offset), &got);
+        if (error != ESP_OK) return stop_.load() ? ESP_OK : error;
         stage_.store(Stage::kRecording);
-        for (size_t i = 0; i < bytes / sizeof(raw[0]) && offset < frames; ++i) {
-            const int32_t input = std::clamp<int32_t>(raw[i] >> 14, -32768, 32767);
-            filtered = static_cast<int32_t>((int64_t(filtered + input - previous) * 32604) / 32768);
-            previous = input;
-            pcm[offset++] = static_cast<int16_t>(std::clamp<int32_t>(filtered, -32768, 32767));
-        }
+        memcpy(pcm + offset, pcm_block, got * sizeof(int16_t)); offset += got;
     }
     return ESP_OK;
 }
@@ -168,6 +234,7 @@ void Audio::Release() {
         (void)i2s_channel_disable(rx_);
         (void)i2s_del_channel(rx_);
         rx_ = nullptr;
+        mic_on_.store(false);
     }
     if (tx_) {
         (void)i2s_channel_disable(tx_);

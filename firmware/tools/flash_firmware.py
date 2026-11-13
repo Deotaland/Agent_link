@@ -123,7 +123,7 @@ def preflight(plan, arguments, folder, run=subprocess.run):
         if not any(address == plan["partition_table_offset"] for address, _ in images):
             raise ValueError("A blank device requires full Flash, not app-flash")
     elif not plan.get("dynamic_slots"):
-        launcher = read(plan["partitions"]["factory"]["offset"], 0x200, "factory-header.bin") if plan["role"] != "factory" else b""
+        launcher = read(plan["partitions"][plan.get("recovery_partition", "factory")]["offset"], 0x200, "factory-header.bin") if plan["role"] != "factory" else b""
         target = read(plan["app_offset"], 0x200, "app-header.bin") if plan["role"] != "factory" else None
         check_device(plan, table, expected, launcher, target)
     print(f"Verified {plan['board']}: {plan['app_id']} -> {plan['partition']} @ {plan['app_offset']:#x}", flush=True)

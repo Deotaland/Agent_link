@@ -44,12 +44,17 @@ using amoled_application::Item;
 
 class WaveshareAmoledWifi : public Application {
 public:
-    WaveshareAmoledWifi() {
+    explicit WaveshareAmoledWifi(bool app_controls_only = false) : app_controls_only_(app_controls_only) {
+#ifdef AGENT_SYSTEM_ENABLED
+        (void)nvs_flash_init_partition(agent_system::SettingsPartition());
+#else
         (void)nvs_flash_init();
+#endif
         LoadSelection();
         hardware_.Init(volume_.load());
         amoled_ui::SetVolume(volume_.load());
 #ifdef AGENT_SYSTEM_ENABLED
+        system_menu_.SetDefaultVolume(AUDIO_DEFAULT_VOLUME);
         system_menu_.SetVolumeHandler([](int value, void* context) {
             auto* self = static_cast<WaveshareAmoledWifi*>(context);
             self->ChangeVolume(value); return self->volume_.load() == value;
@@ -66,7 +71,7 @@ public:
         if (hardware_.button_ok_ && xTaskCreate(KeyEntry, "amoled_key", 4096, this, 3, nullptr) == pdPASS)
             key_ok_ = true;
         else amoled_ui::Toast(Tr("按键任务不可用", "Key task unavailable"), 5000);
-        ESP_LOGI(TAG, "UI: BOOT toggles call; swipe left opens apps; bottom swipe up returns home; touch mirror X/Y enabled");
+        ESP_LOGI(TAG, "Call key toggles realtime; left swipe opens app menu; bottom swipe returns within app");
     }
 
     const char* Name() const override { return AMOLED_DEVICE_NAME; }
@@ -102,15 +107,22 @@ public:
     bool IsCharging() override { return charging_.load(); }
 
 private:
+    static esp_err_t OpenStorage(const char* name, nvs_open_mode_t mode, nvs_handle_t* handle) {
+#ifdef AGENT_SYSTEM_ENABLED
+        return nvs_open_from_partition(agent_system::SettingsPartition(), name, mode, handle);
+#else
+        return nvs_open(name, mode, handle);
+#endif
+    }
     void LoadSelection() {
         nvs_handle_t handle;
-        if (nvs_open("voice", NVS_READONLY, &handle) == ESP_OK) {
+        if (OpenStorage("voice", NVS_READONLY, &handle) == ESP_OK) {
             int8_t volume = AUDIO_DEFAULT_VOLUME;
             (void)nvs_get_i8(handle, "vol", &volume);
             volume_ = volume < 0 ? 0 : volume > 100 ? 100 : volume;
             nvs_close(handle);
         }
-        if (nvs_open("amoled175", NVS_READONLY, &handle) != ESP_OK) return;
+        if (OpenStorage("amoled175", NVS_READONLY, &handle) != ESP_OK) return;
         (void)nvs_get_i32(handle, "agent", &saved_agent_);
         int8_t lang = 0;
         (void)nvs_get_i8(handle, "language", &lang);
@@ -124,7 +136,7 @@ private:
 
     void SaveSelection() {
         nvs_handle_t handle;
-        if (nvs_open("amoled175", NVS_READWRITE, &handle) != ESP_OK) return;
+        if (OpenStorage("amoled175", NVS_READWRITE, &handle) != ESP_OK) return;
         esp_err_t error = nvs_set_i32(handle, "agent", agent_);
         if (error == ESP_OK) error = nvs_set_str(handle, "session", session_);
         if (error == ESP_OK) error = nvs_set_str(handle, "agent_name", agent_name_);
@@ -213,9 +225,9 @@ private:
         Clear(Page::kLauncher);
         Add(Action::kConversations, Tr("会话", "Sessions"));
         Add(Action::kSettings, Tr("设置", "Settings"));
-        Add(Action::kFriend, Tr("交友", "Nearby friends"));
+        if (!app_controls_only_) Add(Action::kFriend, Tr("交友", "Nearby friends"));
 #ifdef AGENT_SYSTEM_ENABLED
-        Add(Action::kSystem, Tr("系统菜单", "System"));
+        if (!app_controls_only_) Add(Action::kSystem, Tr("系统菜单", "System"));
 #endif
     }
     void Conversations() {
@@ -275,7 +287,7 @@ private:
         snprintf(session_, sizeof session_, "%s", created);
         snprintf(session_name_, sizeof session_name_, "%s", Tr("新会话", "New session"));
         SaveSelection(); Clear(Page::kHome);
-        amoled_ui::SetAnswer(Tr("会话已创建，短按 BOOT开始通话。", "Session created. Press BOOT to call."));
+        amoled_ui::SetAnswer(Tr("会话已创建，短按按键开始通话。", "Session created. Press key to call."));
     }
 
     void Select(int row = -1) {
@@ -298,7 +310,7 @@ private:
         switch (item.action) {
         case Action::kSystem:
 #ifdef AGENT_SYSTEM_ENABLED
-            OpenSystem();
+            if (!app_controls_only_) OpenSystem();
 #endif
             break;
         case Action::kConversations: Conversations(); break;
@@ -332,7 +344,7 @@ private:
                 agent_ = saved_agent_ = 0; voice_supported_ = false;
                 session_[0] = agent_name_[0] = session_name_[0] = '\0';
                 nvs_handle_t handle;
-                if (nvs_open("amoled175", NVS_READWRITE, &handle) == ESP_OK) {
+                if (OpenStorage("amoled175", NVS_READWRITE, &handle) == ESP_OK) {
                     (void)nvs_erase_all(handle); (void)nvs_commit(handle); nvs_close(handle);
                 }
                 Clear(Page::kHome); amoled_ui::SetAnswer("");
@@ -351,7 +363,7 @@ private:
             snprintf(session_, sizeof session_, "%s", sessions_[item.value].id);
             snprintf(session_name_, sizeof session_name_, "%s", sessions_[item.value].name);
             SaveSelection(); Clear(Page::kHome);
-            amoled_ui::SetAnswer(Tr("会话已选择，短按 BOOT开始通话。", "Session selected. Press BOOT to call."));
+            amoled_ui::SetAnswer(Tr("会话已选择，短按按键开始通话。", "Session selected. Press key to call."));
             break;
         case Action::kFriendPeer:
             if (item.value >= 0 && item.value < friend_view_.peer_count) Error(agent_link_friends_select(friend_view_.peers[item.value].mac));
@@ -373,12 +385,20 @@ private:
     }
     void PhysicalButton() {
 #ifdef AGENT_SYSTEM_ENABLED
-        if (system_menu_.Active()) { system_menu_.Close(); ++view_; ++navigation_; return; }
+        if (system_menu_.Active()) {
+            system_menu_.Close(); ++view_; ++navigation_;
+            if (!app_controls_only_) return;
+        }
 #endif
         ESP_LOGD(TAG, "BOOT dispatch: page=%d call=%d state=%d audio=%d session=%d",
             static_cast<int>(page_), call_, static_cast<int>(agent_link_state()), audio_.Ready(), session_[0] != 0);
         amoled_ui::Wake();
         if (friends_open_) { CloseFriends(Page::kHome); return; }
+        if (app_controls_only_) {
+            if (call_) { EndCall(); Clear(Page::kHome); }
+            else { Clear(Page::kHome); Select(); }
+            return;
+        }
         if (call_) {
             EndCall(); Clear(Page::kHome);
             ESP_LOGI(TAG, "BOOT: call ended");
@@ -400,7 +420,7 @@ private:
     }
     void SaveVolume(int value) {
         nvs_handle_t handle;
-        if (nvs_open("voice", NVS_READWRITE, &handle) == ESP_OK) {
+        if (OpenStorage("voice", NVS_READWRITE, &handle) == ESP_OK) {
             esp_err_t error = nvs_set_i8(handle, "vol", static_cast<int8_t>(value));
             if (error == ESP_OK) error = nvs_commit(handle);
             nvs_close(handle);
@@ -422,11 +442,11 @@ private:
         if (requested_at_) {
             if (agent_link_realtime_running()) {
                 if (!active_ && now - requested_at_ > 30000000) {
-                    EndCall(); amoled_ui::Toast(Tr("通话连接超时，短按 BOOT重试", "Call timed out - press a key to retry"), 5000);
+                    EndCall(); amoled_ui::Toast(Tr("通话连接超时，短按按键重试", "Call timed out - press a key to retry"), 5000);
                 }
                 return;
             }
-            EndCall(); amoled_ui::Toast(Tr("通话已结束，短按 BOOT重试", "Call ended - press a key to retry"), 5000); return;
+            EndCall(); amoled_ui::Toast(Tr("通话已结束，短按按键重试", "Call ended - press a key to retry"), 5000); return;
         }
         if (now - last_attempt_ < 1000000) return;
         last_attempt_ = now;
@@ -505,7 +525,7 @@ private:
             agent_link_state() != AGENT_STATE_READY ? amoled_ui::Activity::kConnecting :
             audio_.Speaking() ? amoled_ui::Activity::kSpeaking :
             thinking_.load() ? amoled_ui::Activity::kThinking : amoled_ui::Activity::kListening;
-        const char* title = page_ == Page::kLauncher ? Tr("应用菜单", "Apps") :
+        const char* title = page_ == Page::kLauncher ? (app_controls_only_ ? Tr("通话菜单", "Call menu") : Tr("应用菜单", "Apps")) :
                             page_ == Page::kConversations ? Tr("会话", "Sessions") :
                             page_ == Page::kSettings ? Tr("设置", "Settings") :
                             page_ == Page::kSessions ? Tr("选择会话", "Select session") :
@@ -550,7 +570,7 @@ private:
             } else if (friend_view_.state == AGENT_FRIEND_CONNECTED) {
                 snprintf(screen.title, sizeof screen.title, "%s", Tr("已连接好友", "Friend connected"));
                 snprintf(screen.detail, sizeof screen.detail, "%s", friend_view_.remote_name);
-                snprintf(screen.info, sizeof screen.info, Tr("收到招呼：%u\n对方确认收到：%u\n短按 BOOT或右滑退出交友", "Greetings received: %u\nGreetings delivered: %u\nPress BOOT or swipe right to exit"), static_cast<unsigned>(friend_view_.received), static_cast<unsigned>(friend_view_.sent));
+                snprintf(screen.info, sizeof screen.info, Tr("收到招呼：%u\n对方确认收到：%u\n短按按键或右滑退出交友", "Greetings received: %u\nGreetings delivered: %u\nPress key or swipe right to exit"), static_cast<unsigned>(friend_view_.received), static_cast<unsigned>(friend_view_.sent));
             } else if (friend_view_.state == AGENT_FRIEND_ERROR) {
                 snprintf(screen.info, sizeof screen.info, Tr("交友启动失败：%s\n返回后可重试", "Nearby mode failed: %s\nGo back and retry"), esp_err_to_name(friend_view_.error));
             }
@@ -571,7 +591,7 @@ private:
         } else snprintf(screen.detail, sizeof screen.detail, "%s", session_name_[0] ? session_name_ : session_[0] ? session_ : Tr("尚未选择会话", "No session selected"));
         if (error_message_[0]) snprintf(screen.detail, sizeof screen.detail, "%s", error_message_);
         if (page_ == Page::kHome) {
-            snprintf(screen.footer, sizeof screen.footer, "%s", call_ ? Tr("BOOT 挂断 · 左滑应用", "BOOT end · swipe left") : Tr("BOOT 通话 · 左滑应用", "BOOT call · swipe left"));
+            snprintf(screen.footer, sizeof screen.footer, "%s", call_ ? Tr("按键挂断 · 左滑应用", "Key end · swipe left") : Tr("按键通话 · 左滑应用", "Key call · swipe left"));
         } else {
             screen.row_count = static_cast<int>(count_);
             for (size_t i = 0; i < count_; ++i)
@@ -615,6 +635,7 @@ private:
                 error_message_[0] = '\0';
                 ++view_;
                 switch (event.action) {
+                case amoled_ui::TouchAction::kTouchPoint: // Factory touch-test input has no voice-app action.
                 case amoled_ui::TouchAction::kPreviousCard:
                 case amoled_ui::TouchAction::kNextCard: break;
                 case amoled_ui::TouchAction::kSystem:
@@ -674,11 +695,11 @@ private:
     void KeyLoop() {
         amoled_ui::ButtonDebounce key;
         bool previous = hardware_.ButtonDown();
-        ESP_LOGD(TAG, "BOOT polling started: GPIO0 level=%d, debounce=40ms", previous ? 0 : 1);
+        ESP_LOGD(TAG, "Call key GPIO%d polling: level=%d debounce=40ms", int(CALL_BUTTON_PIN), previous ? 0 : 1);
         while (true) {
             const bool down = hardware_.ButtonDown();
             if (down != previous) {
-                ESP_LOGD(TAG, "BOOT GPIO0 level=%d", down ? 0 : 1);
+                ESP_LOGD(TAG, "Call key GPIO%d level=%d", int(CALL_BUTTON_PIN), down ? 0 : 1);
                 previous = down;
             }
             if (key.Update(down, esp_timer_get_time())) {
@@ -704,11 +725,13 @@ private:
 #ifdef AGENT_SYSTEM_ENABLED
     void OpenSystem() {
         if (friends_open_) CloseFriends(Page::kHome);
-        EndCall(); system_menu_.Open(); ++view_; ++navigation_;
+        if (!app_controls_only_) EndCall();
+        system_menu_.Open(); ++view_; ++navigation_;
     }
     AmoledSystemMenu system_menu_;
 #endif
 
+    bool app_controls_only_ = false;
     AmoledHardware hardware_;
     AmoledVoiceAudio audio_;
     QueueHandle_t events_ = nullptr;

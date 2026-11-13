@@ -43,6 +43,7 @@ struct Audio {
     void ClearFault() { fault = false; }
 };
 struct Controller {
+    bool app_controls_only_ = false;
     Audio audio_;
     bool call_ = true, active_ = false, ended_ = false;
     int publications = 0;
@@ -87,6 +88,7 @@ int agent_link_platform_create_conversation(int, char* id, size_t size) {
     snprintf(id, size, "created-session"); return create_error;
 }
 struct SessionController {
+    bool app_controls_only_ = false;
     Audio audio_;
     Page page_ = Page::kHome;
     bool call_ = false, active_ = false, ended_ = false, friends_open_ = false;
@@ -300,6 +302,11 @@ int main() {
     button.friends_open_ = true; button.page_ = Page::kSettings;
     button.PhysicalButton(); assert(!button.friends_open_ && button.page_ == Page::kHome && button.starts == 1);
 
+    button.app_controls_only_ = true;
+    button.page_ = Page::kSettings; button.call_ = false;
+    button.PhysicalButton();
+    assert(button.page_ == Page::kHome && button.call_ && button.starts == 2);
+    button.PhysicalButton(); assert(!button.call_ && button.starts == 2);
     language.store(Language::kEnglish); assert(!strcmp(ActivityName(Activity::kListening), "Listening"));
     language.store(Language::kChinese); assert(!strcmp(ActivityName(Activity::kListening), "正在聆听"));
 

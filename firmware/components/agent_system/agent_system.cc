@@ -1,7 +1,14 @@
 #include "agent_system.h"
 #include "cover_cache.h"
 #include "image_identity.h"
+#include "slot_identity.h"
 #include "install_trace.h"
+#if defined(AGENT_LAUNCHER_IMAGE)
+#include "dynamic_layout_config.h"
+#include "agent_launcher_boot.h"
+#include "launcher_version.h"
+#include "launcher_update.h"
+#endif
 #if defined(AGENT_SYSTEM_COMMUNITY)
 #include "community_store.h"
 #endif
@@ -53,11 +60,24 @@ constexpr Descriptor kImageDescriptor{
 struct ExtendedDescriptor {
     Descriptor base;
     SlotCapability capability;
+#if defined(AGENT_LAUNCHER_IMAGE)
+    alboot_capability launcher;
+#endif
 };
 static_assert(offsetof(ExtendedDescriptor, capability) == 176);
 const ExtendedDescriptor extended_descriptor
     __attribute__((used, section(".rodata_custom_desc"), aligned(4))) = {
-        kImageDescriptor, {{'A', 'G', 'L', 'C', 'A', 'P', '0', '1'}, 1, kAppSlotCount, 1}};
+        kImageDescriptor,
+        {{'A', 'G', 'L', 'C', 'A', 'P', '0', '1'}, ALPT_NATIVE_CAPABILITY_VERSION, kAppSlotCount, 1}
+#if defined(AGENT_LAUNCHER_IMAGE)
+        ,
+        {{'A', 'L', 'A', 'B', '0', '0', '0', '1'},
+         ALPT_POLICY_ID,
+         AGENT_LAUNCHER_VERSION_CODE,
+         AGENT_LAUNCHER_PRODUCT_ID,
+         0}
+#endif
+};
 const Descriptor& descriptor = extended_descriptor.base;
 #else
 const Descriptor descriptor __attribute__((used, section(".rodata_custom_desc"), aligned(4))) =
@@ -103,13 +123,8 @@ const esp_partition_t* ValidLauncher() {
                                                                                      : nullptr;
 }
 const esp_partition_t* Slot(const char* label) {
-    unsigned index;
-    char extra;
-    if (!label || sscanf(label, "ota_%u%c", &index, &extra) != 1 || index >= kAppSlotCount)
-        return nullptr;
-    char canonical[8];
-    snprintf(canonical, sizeof canonical, "ota_%u", index);
-    if (strcmp(label, canonical))
+    const int index = SlotIndex(label);
+    if (index < 0)
         return nullptr;
     return esp_partition_find_first(
         ESP_PARTITION_TYPE_APP,
@@ -118,7 +133,7 @@ const esp_partition_t* Slot(const char* label) {
 esp_err_t Marker(const char* label, uint8_t* state, bool write = false) {
     nvs_handle_t h;
     esp_err_t err =
-        nvs_open_from_partition("app_nvs", "al_apps", write ? NVS_READWRITE : NVS_READONLY, &h);
+        nvs_open_from_partition(kMetadataPartition, "al_apps", write ? NVS_READWRITE : NVS_READONLY, &h);
     if (!write && err == ESP_ERR_NVS_NOT_FOUND) {
         *state = 0;
         return ESP_OK;
@@ -318,6 +333,10 @@ esp_err_t SettingsPost(httpd_req_t* request) {
 }
 }  // namespace
 
+std::mutex& OperationMutex() {
+    return operation_mutex;
+}
+
 const Descriptor& Current() {
     return descriptor;
 }
@@ -364,6 +383,11 @@ bool CanReturnToLauncher() {
     return !IsLauncher() && launcher_available.load();
 }
 esp_err_t Init() {
+#if defined(AGENT_LAUNCHER_IMAGE)
+    const auto trial_error = launcher::ArmTrial();
+    if (trial_error != ESP_OK)
+        return trial_error;
+#endif
 #if defined(AGENT_SYSTEM_SDGOODS_COMPAT)
     esp_err_t err = nvs_flash_init_partition("agent_nvs");
     if (err != ESP_OK)
@@ -380,7 +404,7 @@ esp_err_t Init() {
 #endif
     if (err != ESP_OK)
         return err;
-    err = nvs_flash_init_partition("app_nvs");
+    err = nvs_flash_init_partition(kMetadataPartition);
     if (err == ESP_OK)
         cover_cache::Init();
 #if defined(AGENT_SYSTEM_DYNAMIC_SLOTS)
@@ -451,8 +475,8 @@ esp_err_t List(App* apps, size_t capacity, size_t* count) {
         return ESP_ERR_INVALID_ARG;
     *count = 0;
     for (int i = 0; i < kAppSlotCount; ++i) {
-        char label[8];
-        snprintf(label, sizeof label, "ota_%d", i);
+        char label[16];
+        SlotLabel(label, i);
         const auto* p = Slot(label);
         App app;
         if (!p)
@@ -952,8 +976,8 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
         return ESP_ERR_INVALID_SIZE;
     uint32_t free_mask = 0;
     for (int i = 0; i < kAppSlotCount; ++i) {
-        char label[8];
-        snprintf(label, sizeof label, "ota_%d", i);
+        char label[16];
+        SlotLabel(label, i);
         App existing;
         const auto* part = Slot(label);
         const esp_err_t result = part ? ReadApp(part, &existing) : ESP_ERR_NOT_FOUND;
@@ -1016,8 +1040,8 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
         snprintf(app.app_id, sizeof app.app_id, "%s", identity.app_id);
         snprintf(app.version, sizeof app.version, "%s", idf.version);
         for (int i = 0; i < kAppSlotCount; ++i) {
-            char label[8];
-            snprintf(label, sizeof label, "ota_%d", i);
+            char label[16];
+            SlotLabel(label, i);
             App existing;
             const auto* part = Slot(label);
             if (part && ReadApp(part, &existing) == ESP_OK &&
@@ -1031,9 +1055,16 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
     if (format == ImageFormat::kAgentLink) {
         SlotCapability capability{};
         memcpy(&capability, buffer + 0x120 + sizeof(Descriptor), sizeof capability);
-        if (memcmp(capability.magic, "AGLCAP01", 8) || capability.version != 1 ||
-            capability.slots != 16 || capability.flags != 1)
+        const bool compatible = !memcmp(capability.magic, "AGLCAP01", 8) &&
+                                capability.version == ALPT_NATIVE_CAPABILITY_VERSION &&
+                                capability.slots >= kAppSlotCount && capability.slots <= 16 &&
+                                capability.flags == 1;
+        if (!compatible) {
+            // Old native SDKs hard-code app_nvs and ota_N labels. Original
+            // SDGOODS applications use the separate vendor path and are unaffected.
+            if (ALPT_NATIVE_CAPABILITY_VERSION >= 2) return ESP_ERR_INVALID_VERSION;
             limit = 2;
+        }
     }
     std::unique_ptr<dynamic_slots::Plan> plan(new (std::nothrow) dynamic_slots::Plan);
     if (!plan)
@@ -1128,8 +1159,8 @@ static esp_err_t InstallImpl(const CatalogApp& requested, Progress progress, voi
 #else
     const esp_partition_t* target = nullptr;
     for (int i = 0; i < kAppSlotCount; ++i) {
-        char label[8];
-        snprintf(label, sizeof label, "ota_%d", i);
+        char label[16];
+        SlotLabel(label, i);
         const auto* p = Slot(label);
         App existing;
         if (!p)

@@ -138,6 +138,23 @@ int main(int argc, char** argv) {
     Tap(touch,240,290); assert(last_input.action==TouchAction::kRow && last_input.row==1);
     state.kind=View::kDownloadCode; state.view++; state.navigation++;
     SetScreen(state); Frame("sdgoods-download-code.ppm");
+    // Help keeps its 36px appearance but accepts nearby taps like the Back arrow.
+    const int help_points[][2]{{272,58},{246,58},{297,58},{272,32},{272,83}};
+    for(const auto& point : help_points) {
+        fresh_input(); const unsigned before=clicks;
+        Tap(touch,point[0],point[1]);
+        assert(clicks==before+1 && last_input.action==TouchAction::kRow && last_input.row==12);
+    }
+    fresh_input(); const unsigned help_before_jitter=clicks;
+    Feed(touch,true,250,57); Feed(touch,true,266,59); Feed(touch,false);
+    assert(clicks==help_before_jitter+1 && last_input.action==TouchAction::kRow && last_input.row==12);
+    const int outside_help[][2]{{241,58},{302,58},{272,27},{272,89}};
+    for(const auto& point : outside_help) {
+        fresh_input(); const unsigned before=clicks;
+        Tap(touch,point[0],point[1]); assert(clicks==before);
+    }
+    fresh_input(); SwipeDown(touch,294,58); // A drag from Help still opens the system menu once.
+    fresh_input();
     const unsigned disabled_clicks=clicks;
     Tap(touch,258,309); assert(clicks==disabled_clicks);
     for (int i=0;i<12;++i) {
@@ -328,6 +345,57 @@ int main(int argc, char** argv) {
     snprintf(state.detail,sizeof state.detail,"Passed - level stays live");
     SetScreen(state); Frame("sdgoods-level-en.ppm");
     language.store(Language::kChinese);
+    // Render the production update page in its idle, available, progress and error states.
+    UpdatePreview updater;
+    auto& update = agent_system::launcher::preview_update;
+    update.current_code = 20000;
+    snprintf(update.current, sizeof update.current, "2.0.0");
+    snprintf(update.message, sizeof update.message, "检查 Agent_link Launcher 新版本");
+    const auto update_frame = [&](const char* file) {
+        const auto next = state.view + 1;
+        state = {};
+        state.view = next;
+        state.navigation = next;
+        state.launcher_shell = false; // Settings renders through AmoledSystemMenu.
+        updater.RenderUpdate(state);
+        SetScreen(state);
+        Frame(file);
+    };
+    update_frame("sdgoods-update.ppm");
+    assert(state.row_count == 1);
+    update.state = agent_system::launcher::State::kAvailable;
+    snprintf(update.version, sizeof update.version, "2.0.1");
+    update.size = 2300000;
+    snprintf(update.changelog, sizeof update.changelog, "优化主页体验，改善下载速度和错误提示。");
+    update_frame("sdgoods-update-available.ppm");
+    assert(state.row_count == 2);
+    agent_system::launcher::preview_busy = true;
+    update.state = agent_system::launcher::State::kDownloading;
+    update.received = 1150000;
+    update.elapsed_ms = 10000;
+    snprintf(update.message, sizeof update.message, "正在下载到启动器 B，旧版本保持可用");
+    update_frame("sdgoods-update-progress.ppm");
+    assert(state.row_count == 1);
+    agent_system::launcher::preview_busy = false;
+    update.state = agent_system::launcher::State::kError;
+    snprintf(update.message, sizeof update.message,
+             "升级服务返回 HTTP 401：Missing required header");
+    update_frame("sdgoods-update-error.ppm");
+    assert(state.row_count == 1);
+    update.state = agent_system::launcher::State::kReady;
+    snprintf(update.message, sizeof update.message,
+             "下载和校验完成，请重启试运行新版；失败会返回旧版");
+    update_frame("sdgoods-update-ready.ppm");
+    assert(state.row_count == 1);
+    assert(!lv_obj_has_flag(back_, LV_OBJ_FLAG_HIDDEN));
+    Tap(touch, lv_obj_get_x(back_) + lv_obj_get_width(back_) / 2,
+        lv_obj_get_y(back_) + lv_obj_get_height(back_) / 2);
+    assert(last_input.action == TouchAction::kBack);
+    state.view++;
+    SetScreen(state);
+    clock_us += 40000;
+    Render(nullptr);
+    SwipeDown(touch, 180, 2);
     SetBacklight(42);
     Frame("sdgoods-backlight.ppm");
     assert(applied_backlight_ == (42*255+50)/100);

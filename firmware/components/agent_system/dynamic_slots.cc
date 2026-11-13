@@ -81,7 +81,7 @@ esp_err_t Init(bool launcher) {
     if (Read(nullptr, alpt_config.table, current, sizeof current))
         return ESP_FAIL;
     const auto* guard =
-        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "pt_guard");
+        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, ALPT_GUARD_PARTITION);
     if (!guard || esp_flash_encryption_enabled() || !MatchingBootloader() ||
         !alpt_validate(&alpt_config, &io, current, 1)) {
         ESP_LOGW("agent_system.slots",
@@ -127,12 +127,12 @@ esp_err_t Init(bool launcher) {
             }
         }
         // Separate-file full USB writes preserve NVS. A valid seed replaces any
-        // previous ota_0 transaction, including a stale unavailable marker.
+        // previous first-slot transaction, including a stale unavailable marker.
         nvs_handle_t handle;
-        esp_err_t err = nvs_open_from_partition("app_nvs", "al_apps", NVS_READWRITE, &handle);
+        esp_err_t err = nvs_open_from_partition(kMetadataPartition, "al_apps", NVS_READWRITE, &handle);
         if (err != ESP_OK)
             return err;
-        err = nvs_set_u8(handle, "ota_0", 1);
+        err = nvs_set_u8(handle, slots[0].label, 1);
         if (err == ESP_OK)
             err = nvs_commit(handle);
         nvs_close(handle);
@@ -173,6 +173,8 @@ esp_err_t Release(const char* label) {
         return ESP_ERR_INVALID_STATE;
     for (unsigned i = 0; i < 16; ++i)
         if (!strcmp(slots[i].label, label)) {
+            if (alpt_config.reserved_mask & (1u << i))
+                return ESP_ERR_INVALID_ARG;
             alpt_empty(&alpt_config, i, &slots[i]);
             if (alpt_build(&alpt_config, &io, slots, next_table))
                 return ESP_ERR_INVALID_STATE;
