@@ -88,6 +88,7 @@ int main() {
     hold_cover.store(false);
     Until([&] { return !job.Read().running; });
     assert(install_calls.load() == 0 && job.Read().result.state == Job::State::kCancelled);
+    assert(!job.TakeRestartRequest());
     Job restored;
     assert(restored.Restore(nullptr, 0) && restored.Read().result.state == Job::State::kCancelled);
     job.Acknowledge();
@@ -103,6 +104,7 @@ int main() {
     Until([&] { return !job.Read().running; });
     assert(job.Read().result.state == Job::State::kCancelled &&
            job.Read().result.status.received == 512);
+    assert(!job.TakeRestartRequest());
     hold_install.store(false);
     job.Acknowledge();
 
@@ -112,6 +114,7 @@ int main() {
     Until([&] { return !job.Read().running; });
     Job failed;
     assert(failed.Restore(nullptr, 0));
+    assert(!job.TakeRestartRequest() && !failed.TakeRestartRequest());
     assert(failed.Read().result.state == Job::State::kFailed &&
            failed.Read().result.status.stage == InstallStage::kConnect &&
            failed.Read().result.store.http_status == 403 &&
@@ -124,6 +127,7 @@ int main() {
     failed_stage = InstallStage::kPublish;
     assert(job.StartInstall(app) == ESP_OK);
     Until([] { return entered_publish.load(); });
+    assert(!job.TakeRestartRequest());  // Never restart at the pre-commit checkpoint.
     Job interrupted;
     assert(interrupted.Restore(nullptr, 0));
     assert(interrupted.Read().result.state == Job::State::kFailed);
@@ -132,12 +136,14 @@ int main() {
     hold_install.store(false);
     Until([&] { return !job.Read().running; });
     assert(job.Read().result.state == Job::State::kRestart);
+    assert(job.TakeRestartRequest() && !job.TakeRestartRequest());
     App installed{};
     installed.community_play = 7;
     installed.community_version = 9;
     Job confirmed;
     assert(confirmed.Restore(&installed, 1));
     assert(confirmed.Read().result.state == Job::State::kSuccess);
+    assert(!confirmed.TakeRestartRequest());  // A restored receipt must not create a reboot loop.
     job.Acknowledge();
 
     // Firmware-code releases can differ from the binary's IDF version. Reconcile
@@ -150,12 +156,22 @@ int main() {
     assert(job.StartInstall(firmware_app) == ESP_OK);
     Until([&] { return !job.Read().running; });
     installed = {};
+    assert(job.TakeRestartRequest() && !job.TakeRestartRequest());
     installed.firmware_id = 19;
     installed.firmware_version_code = 1;
     snprintf(installed.version, sizeof installed.version, "2.0.0");
     Job firmware_confirmed;
     assert(firmware_confirmed.Restore(&installed, 1));
     assert(firmware_confirmed.Read().result.state == Job::State::kSuccess);
+    assert(!firmware_confirmed.TakeRestartRequest());
+    job.Acknowledge();
+
+    // Successful fixed-layout installs also request one automatic Launcher restart.
+    installed_result = ESP_OK;
+    assert(job.StartInstall(app) == ESP_OK);
+    Until([&] { return !job.Read().running; });
+    assert(job.Read().result.state == Job::State::kSuccess);
+    assert(job.TakeRestartRequest() && !job.TakeRestartRequest());
     job.Acknowledge();
 
     assert(job.StartCatalog(2) == ESP_OK);
@@ -165,6 +181,7 @@ int main() {
     CatalogPage page;
     job.CopyCatalog(apps, &count, &page);
     assert(count == 1 && page.page == 2 && !strcmp(apps[0].name, "Catalog app"));
+    assert(!job.TakeRestartRequest());
     job.Acknowledge();
     assert(job.StartLookupCode("12345") == ESP_ERR_INVALID_ARG);
     assert(job.StartLookupCode("12/456") == ESP_ERR_INVALID_ARG);
@@ -176,8 +193,10 @@ int main() {
     job.CopyCatalog(apps, &count, &page);
     assert(count == 1 && !strcmp(apps[0].download_code, "000001") &&
            job.Read().result.kind == Job::Kind::kLookupCode);
+    assert(!job.TakeRestartRequest());
     StopFactoryTasks();
     puts(
         "Factory worker: nonblocking navigation, busy rejection, safe cancellation, durable "
-        "errors, interrupted publication and post-reboot verification passed.");
+        "errors, interrupted publication, once-only automatic restart and post-reboot verification "
+        "passed.");
 }

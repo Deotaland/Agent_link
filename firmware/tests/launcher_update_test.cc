@@ -15,13 +15,12 @@ esp_err_t FetchCover(const CatalogApp&, uint8_t*) {
 }  // namespace agent_system::community
 namespace {
 const std::string origin = "https://bot.deotaland.cn";
-const std::string check = origin +
-                          "/api/firmware/check-update?product_id=13&current_version_code=" +
-                          std::to_string(AGENT_LAUNCHER_VERSION_CODE) + "&chip_type=esp32-s3";
-const uint32_t candidate_code = AGENT_LAUNCHER_VERSION_CODE + 1;
-const std::string candidate_version = "test." + std::to_string(candidate_code);
-const std::string refresh = origin + "/api/firmware/42/download-url";
-const std::string direct = origin + "/api/firmware/42/download";
+const std::string check =
+    origin + "/api/firmware/check-update?product_id=25&current_version_code=" +
+    std::to_string(AGENT_LAUNCHER_VERSION_CODE) + "&chip_type=esp32-s3&firmware_type=ota";
+uint32_t candidate_code;
+std::string candidate_version;
+const std::string redirect = "https://cdn.example.com/redirect";
 const std::string cdn = "https://cdn.example.com/launcher.bin";
 std::string candidate, md5;
 void Wait() {
@@ -37,23 +36,31 @@ alboot_record State() {
     assert(alboot_load(&io, ALBOOT_STATE_OFFSET, ALPT_POLICY_ID, &state, &bank) >= 0);
     return state;
 }
-std::string Release(const char* digest = nullptr, unsigned product = 13, bool official = true) {
+std::string Release(const char* digest = nullptr, unsigned product = 25, bool official = true,
+                    uint32_t bytes = 0,
+                    const std::string& url = "https://expired.example.com/file") {
     return "{\"code\":0,\"message\":\"\",\"success\":true,\"data\":{\"has_update\":true,\"firmware_"
            "id\":42,\"version\":\"" +
            candidate_version + "\",\"version_code\":" + std::to_string(candidate_code) +
            ",\"product_id\":" + std::to_string(product) +
            ",\"is_official\":" + (official ? "true" : "false") +
-           ",\"chip_type\":\"esp32-s3\",\"flash_address\":\"0x0\",\"file_"
+           ",\"firmware_type\":\"ota\",\"chip_type\":\"esp32-s3\",\"flash_address\":\"0x90000\","
+           "\"file_"
            "size\":" +
-           std::to_string(candidate.size()) + ",\"file_md5\":\"" + (digest ? digest : md5) +
-           "\",\"download_url\":\"https://expired.example.com/file\",\"changelog\":\"UI "
+           std::to_string(bytes ? bytes : candidate.size()) + ",\"file_md5\":\"" +
+           (digest ? digest : md5) + "\",\"download_url\":\"" + url +
+           "\",\"changelog\":\"UI "
            "improvements\",\"is_forced\":false,\"min_support_version\":null,\"extra_info\":{}}}";
 }
-void Refresh(const std::string& url) {
-    fixture::responses[refresh] =
-        "{\"code\":0,\"message\":\"\",\"success\":true,\"data\":{\"id\":42,\"file_size\":" +
-        std::to_string(candidate.size()) + ",\"file_md5\":\"" + md5 +
-        "\",\"flash_address\":\"0x0\",\"download_url\":\"" + url + "\"}}";
+void Refresh(const std::string& url = cdn, const char* digest = nullptr) {
+    fixture::responses[check] = Release(digest, 25, true, 0, url);
+}
+std::string Changed(const std::string& field, const std::string& replacement) {
+    auto response = Release(nullptr, 25, true, 0, cdn);
+    const auto at = response.find(field);
+    assert(at != std::string::npos);
+    response.replace(at, field.size(), replacement);
+    return response;
 }
 void Available(const char* digest = nullptr) {
     fixture::responses[check] = Release(digest);
@@ -66,6 +73,13 @@ int main(int argc, char** argv) {
     assert(argc == 2);
     std::ifstream input(argv[1], std::ios::binary);
     candidate.assign(std::istreambuf_iterator<char>(input), {});
+    assert(candidate.size() >= 512);
+    alboot_capability capability;
+    memcpy(&capability, candidate.data() + 0x1E4, sizeof capability);
+    candidate_code = capability.version_code;
+    assert(capability.product_id == 25 && candidate_code > AGENT_LAUNCHER_VERSION_CODE);
+    assert(memchr(candidate.data() + 0x30, 0, 32));
+    candidate_version = candidate.data() + 0x30;
     uint8_t digest[16];
     assert(dynamic_fixture::Md5(candidate.data(), candidate.size(), digest) == 0);
     char text[33];
@@ -112,18 +126,19 @@ int main(int argc, char** argv) {
               "{\"code\":403,\"message\":\"not published\",\"data\":{\"has_update\":false}}"),
           std::string("{\"code\":0,\"success\":false,\"message\":\"rejected\",\"data\":{\"has_"
                       "update\":false}}"),
-          Release(nullptr, 1), Release(nullptr, 13, false)}) {
+          Release(nullptr, 13), Release(nullptr, 25, false),
+          Release(nullptr, 25, true, 0x1D00000)}) {  // Server returned a 29 MiB USB image.
         fixture::responses[check] = response;
         assert(launcher::Check() == 0);
         Wait();
         assert(launcher::Read().state == launcher::State::kError);
     }
     assert(dynamic_fixture::mutations == writes);
-    Refresh("");
-    fixture::http_status[direct] = 302;
-    fixture::http_headers[direct]["Location"] = cdn;
+    fixture::http_status[redirect] = 302;
+    fixture::http_headers[redirect]["Location"] = cdn;
     fixture::responses[cdn] = candidate;
     Available();
+    Refresh();
     const auto before_tls = dynamic_fixture::mutations;
     fixture::open_errors[cdn] = ESP_ERR_HTTP_CONNECT;
     fixture::tls_errors[cdn] = {MBEDTLS_ERR_X509_FATAL_ERROR, 0};
@@ -133,21 +148,40 @@ int main(int argc, char** argv) {
            dynamic_fixture::mutations == before_tls);
     fixture::open_errors.clear();
     Available("00000000000000000000000000000000");
+    Refresh(cdn, "00000000000000000000000000000000");
     assert(launcher::Install() == 0);
     Wait();
     assert(launcher::Read().state == launcher::State::kError && State().pending == 255 &&
            State().active == 0);
     // Refreshed metadata must still refer to the release shown to the user.
+    for (const auto& changed :
+         {std::string("{\"code\":0,\"success\":true,\"data\":{\"has_update\":false}}"),
+          Changed("\"firmware_id\":42", "\"firmware_id\":43"),
+          Changed("\"version_code\":" + std::to_string(candidate_code),
+                  "\"version_code\":" + std::to_string(candidate_code + 1)),
+          Changed("\"version\":\"" + candidate_version + "\"", "\"version\":\"changed\""),
+          Release("00000000000000000000000000000000", 25, true, 0, cdn),
+          Release(nullptr, 25, true, candidate.size() + 1, cdn),
+          Changed("\"firmware_type\":\"ota\"", "\"firmware_type\":\"full\""),
+          Release(nullptr, 25, true, 0, ""),
+          Release(nullptr, 25, true, 0, std::string(1024, 'x'))}) {
+        Available();
+        fixture::responses[check] = changed;
+        const auto before_refresh = dynamic_fixture::mutations;
+        const auto requests = fixture::requests.size();
+        assert(launcher::Install() == 0);
+        Wait();
+        assert(launcher::Read().state == launcher::State::kError && State().pending == 255 &&
+               dynamic_fixture::mutations == before_refresh &&
+               fixture::requests.size() == requests + 1 && launcher::Read().received == 0);
+    }
     Available();
-    Refresh("");
-    auto& changed = fixture::responses[refresh];
-    changed.replace(changed.find("\"id\":42"), 7, "\"id\":43");
-    const auto before_refresh = dynamic_fixture::mutations;
+    fixture::http_status[check] = 401;
+    const auto before_denied = dynamic_fixture::mutations;
     assert(launcher::Install() == 0);
     Wait();
-    assert(launcher::Read().state == launcher::State::kError && State().pending == 255 &&
-           dynamic_fixture::mutations == before_refresh);
-    Refresh("");
+    assert(launcher::Read().http_status == 401 && dynamic_fixture::mutations == before_denied);
+    fixture::http_status[check] = 200;
     // Cancellation before any download publication cannot switch the boot slot.
     Available();
     fixture::pause_open = true;
@@ -163,12 +197,14 @@ int main(int argc, char** argv) {
     assert(launcher::Read().error == kCancelled && State().pending == 255);
     // A truncated body and a torn flash write must never publish a trial.
     Available();
-    fixture::fail_after = 400;
+    Refresh();
+    fixture::read_results[cdn] = {0, 0, -1};
     assert(launcher::Install() == 0);
     Wait();
-    fixture::fail_after = SIZE_MAX;
-    assert(launcher::Read().state == launcher::State::kError && State().pending == 255);
+    assert(launcher::Read().state == launcher::State::kError && State().pending == 255 &&
+           launcher::Read().received == 422);
     Available();
+    Refresh();
     dynamic_fixture::cut = dynamic_fixture::mutations + 5;
     dynamic_fixture::torn = 17;
     assert(launcher::Install() == 0);
@@ -183,9 +219,9 @@ int main(int argc, char** argv) {
     Wait();
     assert(launcher::Read().state == launcher::State::kError && State().pending == 255);
     fixture::responses[cdn] = candidate;
-    Refresh("");
     // Valid download follows the real 302 handler and refreshes the expired URL.
     Available();
+    Refresh(redirect);
     assert(launcher::Install() == 0);
     Wait();
     assert(launcher::Read().state == launcher::State::kReady);
@@ -194,6 +230,7 @@ int main(int argc, char** argv) {
     for (const auto& request : fixture::requests) {
         assert(!request.headers.count("Authorization") && !request.headers.count("X-User-Info") &&
                !request.headers.count("X-Token"));
+        assert(request.url == check || request.url == cdn || request.url == redirect);
     }
     auto state = State();
     assert(alboot_attempt(&state, 1) == 0);
@@ -204,7 +241,8 @@ int main(int argc, char** argv) {
     assert(State().pending == 1 && State().active == 0);
     StopFactoryTasks();
     puts(
-        "Production Launcher updater: anonymous endpoints, HTTP errors, URL refresh/302, "
+        "Production Launcher updater: anonymous check refresh, pinned release metadata, HTTP "
+        "errors, URL refresh/302, "
         "cancellation, MD5, ESP image verification, inactive-slot-only writes and version-bound "
         "confirmation passed.");
 }

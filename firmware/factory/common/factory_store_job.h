@@ -52,6 +52,15 @@ class FactoryStoreJob {
         std::lock_guard<std::mutex> guard(mutex_);
         return running_;
     }
+    // Publication sets a durable checkpoint while flash work is still active.
+    // Only the completed worker may request a restart, once, on the control task.
+    bool TakeRestartRequest() {
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (running_ || !restart_pending_)
+            return false;
+        restart_pending_ = false;
+        return true;
+    }
     void Cancel() {
         cancel_.store(true);
     }
@@ -129,6 +138,7 @@ class FactoryStoreJob {
         if (running_)
             return;
         result_ = {};
+        restart_pending_ = false;
         ++revision_;
         const auto error = Save();
         if (error != ESP_OK)
@@ -180,6 +190,7 @@ class FactoryStoreJob {
    private:
     void Begin() {
         running_ = true;
+        restart_pending_ = false;
         cancel_.store(false);
         persistence_error_ = ESP_OK;
         ++revision_;
@@ -268,6 +279,8 @@ class FactoryStoreJob {
                     result_.status.error = saved;
                 }
             }
+            restart_pending_ = kind == Kind::kInstall && (result_.state == State::kRestart ||
+                                                          result_.state == State::kSuccess);
             running_ = false;
             ++revision_;
             ESP_LOGI("factory.store", "job=%u result=0x%x total_ms=%lld", unsigned(kind),
@@ -278,6 +291,7 @@ class FactoryStoreJob {
     std::mutex mutex_;
     Result result_{};
     bool running_ = false;
+    bool restart_pending_ = false;
     uint32_t revision_ = 0;
     TaskHandle_t task_ = nullptr;
     Wait wait_ = nullptr;

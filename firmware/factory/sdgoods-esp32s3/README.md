@@ -67,6 +67,10 @@ rate and transition still require hardware acceptance.
   result. Opening another app asks whether to interrupt the download and start
   over next time. After confirmation the worker stops at a safe boundary before
   the selected app boots. Atomic layout publication finishes before switching.
+- A completed installation automatically restarts into the Launcher after the
+  worker finishes and saves its result. No confirmation or app launch is shown.
+  On reboot, the installed image is verified and a successful receipt is cleared,
+  leaving the home page ready to use. Failed/cancelled outcomes remain visible.
 - Errors retain their stage, code, received bytes and available HTTP/server
   details until acknowledged. Installation outcomes are stored in `app_meta` and
   survive restart; pending outcomes are checked against the actual installed
@@ -132,8 +136,8 @@ rate and transition still require hardware acceptance.
   the launcher; the backend must publish a reviewed pure `.bin`. This does not
   add an official SDGOODS browser or local firmware import endpoint on the device.
 - A 10 MiB dynamic pool supports up to 14 applications, subject to image sizes,
-  alignment, cover reserve and contiguous free space. After installation choose
-  **Finish and restart** to refresh the partition list and confirm the result.
+  alignment, cover reserve and contiguous free space. Installation automatically
+  restarts the Launcher to refresh the partition list and confirm the result.
   Removal still restarts the Launcher. The matching named-partition V5 full USB package
   is required initially; application ABI remains 3, with native slot capability version 2 required for the renamed labels.
   Vendor `appdata` has 13 MiB; the last 3 MiB hold Launcher B. Hold GPIO6 at power-on
@@ -144,30 +148,38 @@ rate and transition still require hardware acceptance.
 
 Settings includes **Firmware update**. The current version and numeric version code
 come from `launcher_version.h`; increment the code for every published release.
-Product ID is **13** (`SDGOODS`, product key `sdgoods`). The update
-origin is `https://bot.deotaland.cn`; the three endpoints must permit anonymous
-device access and must not require an account/user header:
+Launcher product ID is **25** (`Sugarat_Launcher`, product key `sugarat_launcher`).
+Agent Voice and Agent platform provisioning retain product **13** (`sdgoods`). The update
+origin is `https://bot.deotaland.cn`; the check endpoint permits anonymous device
+access without an account/user header:
 
-- `GET /api/firmware/check-update?product_id=13&current_version_code=20000&chip_type=esp32-s3`
-- `GET /api/firmware/{id}/download-url`
-- `GET /api/firmware/{id}/download` (bounded, validated redirects)
+- `GET /api/firmware/check-update?product_id=25&current_version_code=1&chip_type=esp32-s3&firmware_type=ota`
 
 Responses use `code=0`, `success=true` and `data`; HTTP and business failures remain
 visible on the update page. The check returns `data.has_update`. An update additionally
-requires `firmware_id`, `product_id=13`, `is_official=true`, `version`, monotonically
-increasing `version_code`, `chip_type=esp32-s3`, `file_size`, `file_md5`, optional
+requires `firmware_id`, `product_id=25`, `is_official=true`, `version`, monotonically
+increasing `version_code`, `firmware_type=ota`, `chip_type=esp32-s3`, `file_size`, `file_md5`,
 `download_url`, `changelog` and `is_forced`. Publish the **pure** `agent_link.bin`,
 not a merged USB image. Its embedded version/code/product/layout capability must
-match the release metadata. There is no `firmware_type` field in the check response.
-The refreshed link is `data.download_url`; its `id`, `file_size` and `file_md5` must
-still match the selected release. An empty link uses the direct-download endpoint.
+match the release metadata.
+The request always filters `firmware_type=ota`; the backend must classify uploaded
+USB merged images separately. Device-side size and image checks remain mandatory
+even when the server returns a full package incorrectly.
+Before downloading, the device calls the same filtered check endpoint again and uses
+its fresh `data.download_url` directly (bounded, validated redirects). The returned
+`firmware_id`, version/code, size and MD5 must still match the release the user
+confirmed. Missing links, withdrawn releases or changed metadata stop the update
+before writing the inactive Launcher. The Launcher updater does not call the authenticated
+`/api/firmware/{id}/download-url` or `/download` endpoints.
 USB metadata `flash_address` (including `0x0`) is not used
 as an arbitrary device write destination: the device selects its inactive slot.
 The initial USB destination of the complete Launcher image is **0x90000**.
-The initial release is `2.0.0` / `20000`; for an update test, build the next release
-as e.g. `2.0.1` / `20001` and publish those same values. An existing backend release
-`1` / `1` is older than this Launcher and will not trigger an update. Keep the
-immutable recovery image and merged USB image out of the OTA release catalog.
+The product-25 baseline is `1.0.0` / `1`; the next release is `1.0.1` / `2`.
+Rebuild the image after editing both version macros, then publish the exact same
+version/code/product as the embedded image. Changing only backend metadata cannot
+create a new release. Devices built with Launcher product 13 need a USB baseline
+update to product 25 before checking this independent Launcher release stream.
+Keep the immutable recovery image and merged USB image out of the OTA release catalog.
 
 V5 contains a fixed 512 KiB `recovery` entry, two 3 MiB Launchers (`launcher_a`/`launcher_b`, subtypes `ota_14`/`ota_15`),
 a separate 10 MiB `app_pool` (expanded to `app_00`..`app_13`, subtypes `ota_0`..`ota_13`), and 13 MiB appdata. The

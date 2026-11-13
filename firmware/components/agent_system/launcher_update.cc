@@ -198,12 +198,12 @@ esp_err_t Request(const std::string& path, Status& value, Json& root) {
         return Fail(value, ESP_ERR_INVALID_RESPONSE, "升级接口响应缺少有效的 data 字段");
     return ESP_OK;
 }
-esp_err_t CheckNow(Status& value) {
+esp_err_t CheckNow(Status& value, bool refresh = false) {
     Json root(nullptr, cJSON_Delete);
     const auto path = std::string("/api/firmware/check-update?product_id=") +
                       std::to_string(AGENT_LAUNCHER_PRODUCT_ID) +
                       "&current_version_code=" + std::to_string(AGENT_LAUNCHER_VERSION_CODE) +
-                      "&chip_type=esp32-s3";
+                      "&chip_type=esp32-s3&firmware_type=ota";
     auto err = Request(path, value, root);
     if (err != ESP_OK)
         return err;
@@ -212,20 +212,23 @@ esp_err_t CheckNow(Status& value) {
     if (!cJSON_IsBool(update))
         return Fail(value, ESP_ERR_INVALID_RESPONSE, "升级接口缺少 has_update");
     if (!cJSON_IsTrue(update)) {
+        if (refresh)
+            return Fail(value, ESP_ERR_INVALID_RESPONSE, "所选更新已不可用，请重新检查更新");
         value.state = State::kCurrent;
         snprintf(value.message, sizeof value.message, "已是最新版本");
         Publish(value);
         Persist(value);
         return ESP_OK;
     }
-    uint64_t code, bytes, product;
+    uint64_t id, code, bytes, product;
     const char* md5 = String(data, "file_md5");
-    if (!Number(data, "firmware_id", &value.firmware_id) || !Number(data, "version_code", &code) ||
+    if (!Number(data, "firmware_id", &id) || !Number(data, "version_code", &code) ||
         code <= AGENT_LAUNCHER_VERSION_CODE || code > UINT32_MAX ||
         !Number(data, "product_id", &product) || product != AGENT_LAUNCHER_PRODUCT_ID ||
         !cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(data, "is_official")) ||
         !Number(data, "file_size", &bytes) || bytes < 512 || bytes > ALBOOT_IMAGE_BYTES ||
-        strcmp(String(data, "chip_type"), "esp32-s3") || strlen(md5) != 32 ||
+        strcmp(String(data, "chip_type"), "esp32-s3") ||
+        strcmp(String(data, "firmware_type"), "ota") || strlen(md5) != 32 ||
         !String(data, "version")[0] || strlen(String(data, "version")) >= sizeof value.version)
         return Fail(value, ESP_ERR_INVALID_RESPONSE,
                     "更新信息不兼容：需要本产品的官方 ESP32-S3 启动器纯应用镜像，且不超过 3MiB");
@@ -233,15 +236,25 @@ esp_err_t CheckNow(Status& value) {
         if (!((md5[i] >= '0' && md5[i] <= '9') || (md5[i] >= 'a' && md5[i] <= 'f') ||
               (md5[i] >= 'A' && md5[i] <= 'F')))
             return Fail(value, ESP_ERR_INVALID_RESPONSE, "更新信息中的 MD5 格式无效");
+    if (refresh && (id != value.firmware_id || code != value.version_code || bytes != value.size ||
+                    strcmp(String(data, "version"), value.version) || strcasecmp(md5, value.md5)))
+        return Fail(value, ESP_ERR_INVALID_RESPONSE,
+                    "所选固件或校验信息已变化，请重新检查更新后确认");
+    const char* url = String(data, "download_url");
+    if (!url[0])
+        return Fail(value, ESP_ERR_INVALID_RESPONSE, "更新接口未返回下载链接，请重新检查更新");
+    if (strlen(url) >= sizeof value.url)
+        return Fail(value, ESP_ERR_INVALID_SIZE, "更新下载链接过长");
+    value.firmware_id = id;
     value.version_code = code;
     value.size = bytes;
     snprintf(value.version, sizeof value.version, "%s", String(data, "version"));
     snprintf(value.md5, sizeof value.md5, "%s", md5);
     snprintf(value.changelog, sizeof value.changelog, "%s", String(data, "changelog"));
     value.forced = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(data, "is_forced"));
-    if (strlen(String(data, "download_url")) >= sizeof value.url)
-        return Fail(value, ESP_ERR_INVALID_SIZE, "更新下载链接过长");
-    snprintf(value.url, sizeof value.url, "%s", String(data, "download_url"));
+    snprintf(value.url, sizeof value.url, "%s", url);
+    if (refresh)
+        return ESP_OK;
     value.state = State::kAvailable;
     snprintf(value.message, sizeof value.message, "%s",
              value.forced ? "发现重要更新，请及时升级" : "发现新版本");
@@ -287,26 +300,12 @@ esp_err_t InstallNow(Status& value) {
     if (!part)
         return Fail(value, ESP_ERR_NOT_FOUND, "缺少专用 A/B 分区，请先通过 USB 烧录完整初始固件");
     const auto start = esp_timer_get_time();
-    // Refresh expiring URLs before touching flash. Direct download is the fallback.
-    Json root(nullptr, cJSON_Delete);
-    auto err = Request("/api/firmware/" + std::to_string(value.firmware_id) + "/download-url",
-                       value, root);
+    // Recheck the selected release anonymously before touching flash; signed URLs expire.
+    auto err = CheckNow(value, true);
     if (err != ESP_OK)
         return err;
-    auto* data = cJSON_GetObjectItemCaseSensitive(root.get(), "data");
-    uint64_t id, bytes;
-    if (!Number(data, "id", &id) || id != value.firmware_id || !Number(data, "file_size", &bytes) ||
-        bytes != value.size || strcasecmp(String(data, "file_md5"), value.md5))
-        return Fail(value, ESP_ERR_INVALID_RESPONSE,
-                    "下载链接对应的固件或校验信息已变化，请重新检查更新");
-    const char* url = String(data, "download_url");
-    if (strlen(url) >= sizeof value.url)
-        return Fail(value, ESP_ERR_INVALID_SIZE, "更新下载链接过长");
-    std::string download = url[0] ? url
-                                  : std::string(AGENT_LAUNCHER_UPDATE_ORIGIN) + "/api/firmware/" +
-                                        std::to_string(value.firmware_id) + "/download";
     community::File file;
-    err = file.OpenDownload(download.c_str(), Cancelled, nullptr);
+    err = file.OpenDownload(value.url, Cancelled, nullptr);
     value.http_status = file.handle ? esp_http_client_get_status_code(file.handle) : 0;
     if (err != ESP_OK)
         return Fail(value, err,

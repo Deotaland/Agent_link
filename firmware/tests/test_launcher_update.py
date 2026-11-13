@@ -1,5 +1,6 @@
 """Exercise the production updater with actual ESP image hashes and HTTP/flash faults."""
 import hashlib
+import argparse
 import os
 import re
 from pathlib import Path
@@ -9,6 +10,12 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--baseline-config', type=Path, help='version header of a previously built Launcher')
+parser.add_argument('--candidate', type=Path, help='real next-release OTA image instead of a synthetic image')
+args = parser.parse_args()
+if bool(args.baseline_config) != bool(args.candidate):
+    parser.error('--baseline-config and --candidate must be used together')
 sys.path.insert(0, str(root / 'tools'))
 from dynamic_layout import header, definition
 from firmware_manifest import resolve_profiles
@@ -30,7 +37,8 @@ for name in ('esp_err.h', 'esp_app_desc.h', 'esp_crt_bundle.h', 'esp_http_client
 profile = resolve_profiles()['sdgoods-wifi']
 (stubs / 'dynamic_layout_config.h').write_text(header(profile), encoding='utf-8')
 # Minimal valid ESP image, including real segment checksum and appended SHA-256.
-version_config = (root / 'factory/sdgoods-esp32s3/launcher_version.h').read_text(encoding='utf-8')
+version_config = (args.baseline_config or root / 'factory/sdgoods-esp32s3/launcher_version.h').read_text(encoding='utf-8')
+(stubs / 'launcher_version.h').write_text(version_config, encoding='utf-8')
 candidate_code = int(re.search(r'^#define AGENT_LAUNCHER_VERSION_CODE (\d+)u', version_config, re.M)[1]) + 1
 candidate_version = f'test.{candidate_code}'.encode('ascii')
 data = bytearray(24 + 8 + 512)
@@ -44,13 +52,13 @@ data[0x50:0x70] = b'SDGOODS_LAUNCHER'.ljust(32, b'\0')
 struct.pack_into('<8sII32s64s48s16s', data, 0x120, b'AGSYS001', 1, 3,
                  b'agent.launcher', b'Agent_link Launcher', b'SDGOODS-ESP32S3', b'0.1.0')
 struct.pack_into('<8sIII', data, 0x1D0, b'AGLCAP01', 2, 14, 1)
-struct.pack_into('<8sIIII', data, 0x1E4, b'ALAB0001', definition(profile)[2], candidate_code, 13, 0)
+struct.pack_into('<8sIIII', data, 0x1E4, b'ALAB0001', definition(profile)[2], candidate_code, 25, 0)
 checksum = 0xEF
 for byte in data[32:]: checksum ^= byte
 data.extend(b'\0' * (15 - len(data) % 16))
 data.append(checksum)
 data.extend(hashlib.sha256(data).digest())
-(build / 'candidate.bin').write_bytes(data)
+(build / 'candidate.bin').write_bytes(args.candidate.read_bytes() if args.candidate else data)
 
 env = os.environ.copy()
 if os.name == 'nt':

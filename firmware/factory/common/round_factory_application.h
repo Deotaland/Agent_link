@@ -75,8 +75,14 @@ class AmoledFactoryApplication : public Application {
         Home();
         if (tile_home_) {
             store_job_ = std::make_unique<FactoryStoreJob>();
-            if (store_job_->Restore(apps_, app_count_) && !startup)
-                page_ = Page::kJobResult;
+            if (store_job_->Restore(apps_, app_count_)) {
+                const auto restored = store_job_->Read().result;
+                if (restored.kind == FactoryStoreJob::Kind::kInstall &&
+                    restored.state == FactoryStoreJob::State::kSuccess)
+                    store_job_->Acknowledge();
+                else if (!startup)
+                    page_ = Page::kJobResult;
+            }
         }
         Publish();
         ESP_ERROR_CHECK(xTaskCreate(CoverEntry, "cover_sync", 16384, this, 3, &cover_task_) ==
@@ -381,17 +387,10 @@ class AmoledFactoryApplication : public Application {
                 break;
             case Page::kJobResult: {
                 const auto result = store_job_->Read().result;
-                if (result.state == FactoryStoreJob::State::kRestart) {
-                    if (row == 0)
-                        esp_restart();
-                    else
-                        Home();
-                } else {
+                if (result.state != FactoryStoreJob::State::kRestart &&
+                    result.state != FactoryStoreJob::State::kSuccess) {
                     store_job_->Acknowledge();
-                    if (row == 0 && result.state == FactoryStoreJob::State::kSuccess &&
-                        result.kind == FactoryStoreJob::Kind::kInstall)
-                        Apps();
-                    else if (row == 0)
+                    if (row == 0)
                         Catalog(result.page);
                     else
                         Home();
@@ -761,18 +760,13 @@ class AmoledFactoryApplication : public Application {
               : result.kind == J::Kind::kLookupCode  ? Tr("下载码查询失败", "Code lookup failed")
               : result.kind == J::Kind::kCatalog     ? Tr("应用列表加载失败", "Unable to load apps")
                                                  : Tr("下载安装失败", "Download/install failed"));
-        if (result.state == J::State::kRestart) {
+        if (result.state == J::State::kRestart || result.state == J::State::kSuccess) {
+            screen_.kind = amoled_ui::View::kInfo;
+            screen_.busy = true;
             snprintf(screen_.info, sizeof screen_.info,
-                     Tr("%s\n请重启以刷新应用布局。重启后将确认安装结果。",
-                        "%s\nRestart to refresh app layout. The installation result is verified "
-                        "after restart."),
+                     Tr("%s\n安装完成，正在自动重启回启动器。",
+                        "%s\nInstalled. Restarting into the Launcher."),
                      result.name);
-            row(Tr("完成并重启", "Finish and restart"));
-            row(Tr("返回主页，稍后完成", "Home, finish later"));
-        } else if (result.state == J::State::kSuccess) {
-            snprintf(screen_.info, sizeof screen_.info, "%s\n%s", result.name, result.release);
-            row(Tr("查看我的应用", "View my apps"));
-            row(Tr("知道了，返回主页", "Done, go home"));
         } else {
             char header[320];
             snprintf(header, sizeof header, "%s\n%s\n%s: %s\n%s (0x%x)\n%lu / %lu KB\n",
@@ -804,6 +798,14 @@ class AmoledFactoryApplication : public Application {
     void PollStoreJob() {
         if (!store_job_)
             return;
+        if (store_job_->TakeRestartRequest()) {
+            pending_launch_[0] = 0;
+            ESP_LOGI("factory.store", "Installation complete; restarting into Launcher");
+            Busy(Tr("安装完成，正在返回启动器", "Installed. Restarting Launcher"));
+            vTaskDelay(pdMS_TO_TICKS(150));
+            esp_restart();
+            return;
+        }
         const auto job = store_job_->Read();
         if (pending_launch_[0] && !job.running) {
             char slot[sizeof pending_launch_];
