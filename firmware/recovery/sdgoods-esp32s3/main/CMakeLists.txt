@@ -8,8 +8,10 @@ execute_process(COMMAND "${PYTHON}" "${_firmware}/tools/dynamic_layout.py"
 if(NOT _result EQUAL 0)
     message(FATAL_ERROR "Cannot generate recovery layout")
 endif()
-idf_component_register(SRCS "recovery.c" INCLUDE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
+idf_component_register(SRCS "recovery.c"
+    "${_firmware}/boards/sdgoods-esp32s3/sdgoods_power.c"
+    INCLUDE_DIRS "${CMAKE_CURRENT_BINARY_DIR}" "${_firmware}/boards/sdgoods-esp32s3"
     "${_firmware}/components/agent_system/include"
-    REQUIRES app_update esp_driver_gpio spi_flash esp_rom bootloader_support)
+    REQUIRES app_update esp_driver_gpio spi_flash esp_rom bootloader_support esp_timer)
 # Keep the routing image identity even though app_main does not read it.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u agent_recovery_identity")

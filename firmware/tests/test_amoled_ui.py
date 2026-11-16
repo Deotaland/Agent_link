@@ -607,6 +607,21 @@ using amoled_ui::Tr;
     start = controller.index('    void RenderUpdate(')
     end = controller.index('    bool launcher_confirmed_', start)
     factory_source += 'struct UpdatePreview {\n' + controller[start:end] + '};\n'
+    # Compile the actual physical-key navigation without the task/radio workers.
+    page_start = controller.index('    enum class Page {')
+    page_end = controller.index('    };', page_start) + len('    };')
+    key_start = controller.index('    void Home() {')
+    key_end = controller.index('    void RequestLaunch(', key_start)
+    factory_source += 'struct PowerNavigationPreview {\n' + controller[page_start:page_end] + r'''
+    Page page_ = Page::kHome;
+    bool tile_home_ = true;
+    unsigned catalog_count_ = 0, view_ = 0, navigation_ = 0, publishes = 0;
+    char pending_launch_[17]{};
+    AmoledSystemMenu menu_;
+    struct Power { unsigned sleeps = 0; void RequestSleep() { ++sleeps; } } power;
+    Power* hardware_services_ = &power;
+    void Publish() { ++publishes; }
+''' + controller[key_start:key_end] + '};\n'
     post = (root/'tests/sdgoods_ui_fixture.cc').read_text(encoding='utf-8')
 
 generated.write_text(prefix+header+fonts+factory_source+source+post,encoding='utf-8')

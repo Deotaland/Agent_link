@@ -29,6 +29,9 @@ their existing default language.
 
 Factory plays the prepared movie once, with its original soundtrack resampled
 for the mono 16 kHz speaker, before starting LVGL and entering the home page.
+Explicit sleep resumes the same Launcher and consumes a one-shot RTC marker to
+skip the movie on GPIO6/EXT0 wake. Cold boot, restart and Power off (including
+its USB-powered deep-sleep fallback) retain normal startup playback.
 Video targets 360x360 at 24 fps; late frames are skipped to keep sound and video
 on the same timeline. Existing volume settings apply. Missing/corrupt media,
 mount/allocation/decoder failures skip playback and continue to home. FAT is
@@ -159,15 +162,24 @@ rate and transition still require hardware acceptance.
   Launcher opens the existing update page and checks once WiFi is connected.
   Installation remains explicit. Original SDGOODS binaries retain their own UI;
   a Launcher update cannot replace another app's compiled menu.
-- Open **Device tools** for battery voltage/estimated level, a live spirit
-  level, speaker tone, three-second record/playback, persistent brightness and
-  sleep/power/restart controls. The existing volume page controls self-test audio.
+- **Device tools** appears immediately above **About** in Settings. Its first
+  entry, **Factory Test**, automatically records three seconds and then plays
+  the captured audio once while showing full-screen black. The only test input
+  is tapping to cycle white, red, green, blue and light purple, then black.
+  Recording/playback needs no extra button, and colors remain available after
+  playback finishes. The clip stays temporarily in PSRAM and is freed afterward.
+  Back, Home and opening
+  Quick Panel stop the audio worker and release both I2S channels. Errors return
+  to Device tools with a visible reason. Microphone capture stops before playback.
+  Other tools provide battery voltage/estimated level, a live spirit level,
+  speaker tone, persistent brightness and sleep/power/restart controls.
+  The existing volume page controls self-test audio.
 - **Brightness** opens the same large vertical capsule with a sun icon and a
   5–100% range. Changes apply live and save to the existing `button_hw/bright`
   setting on release, outside the LVGL task. Both the shortcut and hardware page
   use this view; native Agent_link uses the same UI and isolated setting.
 - **Device tools > Screen test** starts with full-screen black. Each tap advances
-  through white, red, green and blue, then wraps to black. No text, buttons or
+  through white, red, green, blue and light purple, then wraps to black. No text, buttons or
   toast overlays cover the test colors. Swipe from the left edge to return to Device tools;
   bottom-edge Home and the top-down system menu remain available. Test colors
   stay awake and do not change the saved brightness.
@@ -182,12 +194,23 @@ rate and transition still require hardware acceptance.
   is hidden until valid readings return. This is a functional check, not a calibrated
   measuring instrument or independent verification of every gyroscope axis.
   Test screens stay awake, and neither test writes calibration data.
-- Hold the key for 1.2 seconds to open power controls. Sleep/off asks for confirmation,
-  waits for idle background work and drains the display before changing power.
-  GPIO6 wakes deep sleep; USB-powered off uses deep sleep as a fallback.
+- The physical key follows the vendor's release gestures: short press on home
+  enters deep sleep, short press in a menu closes it, and short press on a subpage
+  goes back one level. Hold for at least 1.2 seconds and release to power off;
+  holding alone never cuts power. A boot/wake-held key is ignored until released.
+  The existing menu Sleep/off actions still require confirmation. All paths retain
+  the background-work guards and drain the display before changing power.
+  GPIO6 wakes deep sleep without replaying the startup movie; USB-powered off
+  uses deep sleep as a fallback. Initial battery/USB power stays off; hold the key
+  for about three seconds and release to start. Off-state wake requires the same hold and
+  then plays the normal startup movie. Recovery shares this admission gate,
+  counts the existing bootloader hold once and does not treat an ordinary
+  power-on hold as a request to select the backup Launcher. Install the full
+  matching USB package to update Recovery; Launcher-only OTA cannot change an
+  older Recovery's unconditional power latch.
 - The home page shows real estimated battery level and WiFi state. Charging is
   explicitly **unknown** because no charger-status signal is documented.
-- Swipe up from the bottom, or press the GPIO6 key, to return home.
+- Swipe up from the bottom to return home.
 - Join `Sugarat-Button-XXXX` and open `http://192.168.4.1` for initial WiFi setup.
 - Factory anonymously queries `https://bot.deotaland.cn/api/firmware/code/{code}/download-url`.
   One GET supplies the temporary `download_url`, `firmware` and `product` details.

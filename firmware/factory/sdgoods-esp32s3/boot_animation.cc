@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_rom_crc.h"
+#include "sdgoods_power.h"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
 #include "jpeg_decoder.h"
@@ -101,6 +102,10 @@ esp_err_t Decode(const sugarat_boot::Movie& movie, unsigned index, uint8_t* pixe
 }
 }  // namespace
 void PlaySugaratBootAnimation(AmoledHardware& hardware) {
+    if (sdgoods_power_take_sleep_resume()) {
+        ESP_LOGI(kTag, "deep sleep resume; skipping startup movie");
+        return;
+    }
     if (!hardware.panel_.Ready()) return;
     size_t size = 0;
     auto data = Load(&size);

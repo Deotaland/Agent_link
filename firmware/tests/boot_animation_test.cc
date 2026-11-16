@@ -28,8 +28,19 @@ int main(int argc,char** argv){
     {AmoledHardware hardware;PlaySugaratBootAnimation(hardware);assert(!boot_fixture::frames);}
     boot_fixture::decode_fails=false;boot_fixture::task_fails=true;boot_fixture::decode_us=80000;
     {AmoledHardware hardware;PlaySugaratBootAnimation(hardware);assert(boot_fixture::frames>0 && boot_fixture::frames<int(movie.frames));}
+    boot_fixture::frames=0;
+    auto before_wake=boot_fixture::mounts;
+    boot_fixture::sleep_resume=true;
+    {AmoledHardware hardware;PlaySugaratBootAnimation(hardware);
+     assert(!boot_fixture::frames && boot_fixture::mounts==before_wake && !hardware.audio_.samples);}
+    // The marker is consumed: a second invocation cannot skip another startup.
+    {AmoledHardware hardware;PlaySugaratBootAnimation(hardware);assert(boot_fixture::frames>0);}
+    boot_fixture::frames=0;
+    // A new power start and USB off-state wake both play the normal movie.
+    boot_fixture::sleep_resume=false;
+    {AmoledHardware hardware;PlaySugaratBootAnimation(hardware);assert(boot_fixture::frames>0);}
     const auto mounts=boot_fixture::mounts;boot_fixture::partition_address=0;
     {AmoledHardware hardware;PlaySugaratBootAnimation(hardware);assert(boot_fixture::mounts==mounts);}
     assert(!boot_fixture::allocations && boot_fixture::workers.empty());
-    puts("Boot animation: valid video/audio, timing/frame dropping, CRC/truncation, missing files, mount/decode/task failures, geometry and cleanup passed.");
+    puts("Boot animation: video/audio, frame timing, CRC/errors, one-shot sleep resume, cold/off playback, geometry and cleanup passed.");
 }

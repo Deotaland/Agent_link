@@ -172,6 +172,31 @@ class AmoledFactoryApplication : public Application {
         page_ = Page::kHome;
         ++navigation_;
     }
+    void Back() {
+        if (page_ == Page::kRemove || page_ == Page::kInterrupt)
+            page_ = Page::kLocalDetail;
+        else if (page_ == Page::kCatalogDetail)
+            page_ = tile_home_ ? Page::kDownloadCode : Page::kCatalog;
+        else if (page_ == Page::kDownloadHelp)
+            page_ = Page::kDownloadCode;
+        else if (!tile_home_ && page_ == Page::kJobResult && catalog_count_)
+            page_ = Page::kCatalog;
+        else
+            Home();
+    }
+    void ShortPowerPress() {
+        if (pending_launch_[0])
+            return;
+        if (menu_.Active())
+            menu_.Close();
+        else if (page_ == Page::kHome || page_ == Page::kDashboard)
+            hardware_services_->RequestSleep();
+        else
+            Back();
+        ++view_;
+        ++navigation_;
+        Publish();
+    }
     void RequestLaunch(const char* slot) {
         if (!tile_home_) {
             Check(agent_system::Launch(slot));
@@ -1051,20 +1076,7 @@ class AmoledFactoryApplication : public Application {
                 else if (input.action == amoled_ui::TouchAction::kHome)
                     Home();
                 else if (input.action == amoled_ui::TouchAction::kBack) {
-                    if (page_ == Page::kRemove)
-                        page_ = Page::kLocalDetail;
-                    else if (page_ == Page::kInterrupt)
-                        page_ = Page::kLocalDetail;
-                    else if (page_ == Page::kLocalDetail)
-                        Home();
-                    else if (page_ == Page::kCatalogDetail)
-                        page_ = tile_home_ ? Page::kDownloadCode : Page::kCatalog;
-                    else if (page_ == Page::kDownloadHelp)
-                        page_ = Page::kDownloadCode;
-                    else if (!tile_home_ && page_ == Page::kJobResult && catalog_count_)
-                        page_ = Page::kCatalog;
-                    else
-                        Home();
+                    Back();
                 } else if (page_ == Page::kDashboard && input.action == amoled_ui::TouchAction::kNextCard) {
                     Apps();
                 } else if (page_ == Page::kHome &&
@@ -1090,7 +1102,7 @@ class AmoledFactoryApplication : public Application {
                 menu_.Handle(volume);
                 Publish();
             }
-            if (button.Update(hardware_.ButtonDown(), esp_timer_get_time())) {
+            if (!hardware_services_ && button.Update(hardware_.ButtonDown(), esp_timer_get_time())) {
                 menu_.Close();
                 Home();
                 ++view_;
@@ -1099,13 +1111,17 @@ class AmoledFactoryApplication : public Application {
             }
             if (hardware_services_) {
                 if (hardware_services_->Button(hardware_.ButtonDown(), esp_timer_get_time())) {
-                    menu_.OpenExtraPage();
-                    ++view_;
-                    ++navigation_;
-                    Publish();
+                    ShortPowerPress();
                 }
-                if (hardware_services_->Tick(
-                        !sync_busy_.load() && !StoreRunning()
+                const bool hardware_available =
+#ifdef AGENT_LAUNCHER_AB
+                    !hardware_services_->HighLoad() || !agent_system::launcher::Background() ||
+                    agent_system::launcher::YieldToForeground();
+#else
+                    true;
+#endif
+                if (hardware_available && hardware_services_->Tick(
+                        !pending_launch_[0] && !sync_busy_.load() && !StoreRunning()
 #ifdef AGENT_LAUNCHER_AB
                         && (!agent_system::launcher::Busy() || agent_system::launcher::Background())
 #endif

@@ -269,6 +269,8 @@ void Audio::Run() {
             pcm = static_cast<int16_t*>(heap_caps_malloc(kRecordingFrames * sizeof(int16_t),
                                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
             error = pcm ? Capture(pcm, kRecordingFrames) : ESP_ERR_NO_MEM;
+            if (error == ESP_OK)
+                error = StopMic();  // Playback starts only after capture has stopped.
         }
         if (error == ESP_OK && !stop_.load())
             error = Play(pcm, pcm ? kRecordingFrames : kRate);

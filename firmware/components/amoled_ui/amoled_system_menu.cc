@@ -70,7 +70,14 @@ bool AmoledSystemMenu::HandleSugarat(const amoled_ui::Input& input) {
                 page_ = Page::kExitConfirm;
         }
     } else if (page_ == Page::kSettings) {
-        switch (row) {
+        if (extra_.render && row == 2) {
+            page_ = Page::kExtra;
+            return true;
+        }
+        // Optional device tools sit directly above About; other actions retain
+        // their semantic positions when no board-specific tools are installed.
+        const int action = extra_.render && row > 2 ? row - 1 : row;
+        switch (action) {
             case 0:
                 if (extra_.open_brightness) {
                     extra_.open_brightness(extra_.context);
@@ -106,12 +113,6 @@ bool AmoledSystemMenu::HandleSugarat(const amoled_ui::Input& input) {
             case 6:
                 if (!agent_system::IsLauncher())
                     page_ = Page::kExitConfirm;
-                else if (extra_.render)
-                    page_ = Page::kExtra;
-                break;
-            case 7:
-                if (!agent_system::IsLauncher() && extra_.render)
-                    page_ = Page::kExtra;
                 break;
         }
     } else if (page_ == Page::kGuide) {
@@ -345,14 +346,14 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
         snprintf(s.title, sizeof s.title, "%s", Tr("设置", "Settings"));
         row(Tr("亮度", "Brightness"));
         row(Tr("启动器更新", "Launcher update"));
+        if (extra_.render)
+            row(Tr("设备工具", "Device tools"));
         row(Tr("关于应用", "About"));
         row(Tr("设备状态", "Device status"));
         row(Tr("语言", "Language"));
         row(Tr("使用说明", "User guide"));
         if (!agent_system::IsLauncher())
             row(Tr("返回启动器", "Return to launcher"));
-        if (extra_.render)
-            row(Tr("设备工具", "Device tools"));
     } else if (page_ == Page::kGuide) {
         snprintf(s.title, sizeof s.title, "%s", Tr("使用说明", "User guide"));
         for (int i = 0; i < amoled_ui::kUserGuideTopicCount; ++i)

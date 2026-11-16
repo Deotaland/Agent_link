@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdgoods_power.h"
 
 /* Keep the vendor-compatible identity and ABI in this immutable routing image. */
 const struct {
@@ -54,13 +55,7 @@ static const esp_partition_t* launcher(unsigned index) {
     return esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &position, &metadata) == ESP_OK ? part : NULL;
 }
 void app_main(void) {
-    gpio_hold_dis(GPIO_NUM_7);
-    gpio_deep_sleep_hold_dis();
-    gpio_set_direction(GPIO_NUM_7, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_7, 1);
-    gpio_config_t key = {
-        .pin_bit_mask = 1ULL << 6, .mode = GPIO_MODE_INPUT, .pull_up_en = GPIO_PULLUP_ENABLE};
-    gpio_config(&key);
+    const bool power_key_start = sdgoods_power_startup(false);
     if (read_flash(NULL, alpt_config.table, table, sizeof table) ||
         !alpt_validate(&alpt_config, &io, table, 1))
         goto failed;
@@ -89,8 +84,9 @@ void app_main(void) {
     if (alboot_load(&io, ALBOOT_STATE_OFFSET, ALPT_POLICY_ID, &state, &bank) < 0)
         goto failed;
     unsigned target = state.pending < 2 ? state.pending : state.active;
-    /* Holding the recovery key can select the previously confirmed Launcher. */
-    if (!gpio_get_level(GPIO_NUM_6) && state.pending == ALBOOT_NO_SLOT &&
+    /* A new power-on press must not also choose a different Launcher.
+       Recovery requests during an already-powered restart still can. */
+    if (!power_key_start && !gpio_get_level(GPIO_NUM_6) && state.pending == ALBOOT_NO_SLOT &&
         (state.valid & (1u << (1u - state.active))) && launcher(1u - state.active)) {
         target = 1u - state.active;
         state.active = target;

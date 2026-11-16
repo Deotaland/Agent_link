@@ -28,6 +28,7 @@ inline int mounts=0, unmounts=0, allocations=0, frames=0;
 inline bool mount_fails=false, file_missing=false, task_fails=false, decode_fails=false;
 inline uint32_t partition_address=0x1000000;
 inline int decode_us=5000;
+inline bool sleep_resume=false;
 inline FILE* Open(const char* path,const char* mode) {
     assert(!strcmp(path,"/appdata/START.BVA") && !strcmp(mode,"rb"));
     if(file_missing) return nullptr;
@@ -37,6 +38,9 @@ inline FILE* Open(const char* path,const char* mode) {
 inline void Join() {for(auto& t:workers)t.join();workers.clear();}
 }
 inline int64_t esp_timer_get_time(){return boot_fixture::clock.load();}
+inline bool sdgoods_power_take_sleep_resume(){
+    const bool resume=boot_fixture::sleep_resume;boot_fixture::sleep_resume=false;return resume;
+}
 inline unsigned pdMS_TO_TICKS(unsigned value){return value;}
 inline void vTaskDelay(unsigned value){boot_fixture::clock.fetch_add(value*1000);std::this_thread::yield();}
 inline void vTaskDelete(void*){}

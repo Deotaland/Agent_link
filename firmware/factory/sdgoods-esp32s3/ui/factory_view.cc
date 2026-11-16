@@ -291,9 +291,11 @@ void Update(const amoled_ui::Screen& screen) {
     Show(carousel, is_carousel);
     char text[96];
     if (is_colors) {
-        constexpr uint32_t colors[]{0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF};
+        constexpr uint32_t colors[]{0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0xD8B4FE};
+        static_assert(sizeof colors / sizeof colors[0] == amoled_ui::HardwareTest::kColorCount);
         lv_obj_set_style_bg_color(
-            color_screen, lv_color_hex(colors[std::clamp(screen.hardware_test.color_index, 0, 4)]),
+            color_screen, lv_color_hex(colors[std::clamp(screen.hardware_test.color_index, 0,
+                                                       amoled_ui::HardwareTest::kColorCount - 1)]),
             0);
     } else if (is_carousel) {
         const bool actions = screen.kind != amoled_ui::View::kCarousel;

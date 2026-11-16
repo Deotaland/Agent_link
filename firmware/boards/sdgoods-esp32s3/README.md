@@ -33,21 +33,43 @@ the reading; failures display unavailable. Percentage uses the vendor UI's
 3.00–4.28 V linear estimate, not a fuel gauge. No charger-status input is documented;
 **charging remains unknown**, as agreed, rather than inferred from voltage or USB.
 
-Factory's **Hardware and power** page provides battery/voltage, six-axis readings,
-a speaker tone, explicit three-second microphone recording/playback, brightness,
-deep sleep, power off/restart and display/touch status. Recorded PCM uses 96,000
-bytes of PSRAM and is freed after each test; I2S/DMA channels are released too.
+Factory's **Device tools** page starts with **Factory Test**: microphone recording
+starts automatically for three seconds, then plays back once. Taps independently
+cycle six full-screen colors, including light purple. The recording uses temporary
+PSRAM, is not uploaded or saved to a file, and is freed after playback.
+Leaving the test stops capture/playback and releases both I2S/DMA channels.
+Other tools provide battery/voltage, six-axis readings, a speaker tone, brightness,
+deep sleep, power off/restart and display/touch status.
 The amplifier stays off outside playback, on mute and after cancellation/errors.
 The microphone self-test keeps WiFi connected and does not upload or save audio.
 The common volume slider controls these tests. Factory self-tests do not create
 Agent sessions; launch the separately installed Agent Voice app for realtime calls.
 
-Brightness is stored in private `agent_nvs/button_hw/bright`. In Factory, a short key press
-returns home; holding it for 1.2 seconds opens power controls. Sleep/off requires
-confirmation, an idle cover worker and released key. Audio stops and UI/DMA drain
+Brightness is stored in private `agent_nvs/button_hw/bright`. In Launcher, short
+key release sleeps on home, closes an open menu or returns one subpage. Holding
+for 1.2 seconds and then releasing powers off. Menu Sleep/off still requires
+confirmation; every power action requires idle background work and a released key.
+The boot/wake-held key is ignored until released. Audio stops and UI/DMA drain
 before peripheral rails change; deep sleep holds the GPIO7 latch and wakes from
 GPIO6. Power off releases the latch, using deep sleep when USB keeps power on.
-Settings and installed application partitions are not erased by these actions.
+Explicit sleep boots the same Launcher and skips its animation once on EXT0 wake;
+power off/restart select Recovery and retain cold-start playback. Settings and
+installed application partitions are not erased by these actions.
+
+Initial battery connection and USB insertion stay off. The schematic's Q2 is
+normally off; the side key supplies battery power temporarily, and GPIO7 latches
+it only after a roughly three-second power-on hold. Release to enter Launcher.
+USB supplies VCC directly
+through D1, so its off state is dark deep sleep while charging remains available.
+Recovery and Launcher enforce the same gate before peripheral initialization.
+The matching bootloader's existing three-second recovery hold counts toward
+cold power-on; it does not require a second hold. Off-state EXT0 wake also requires
+three seconds, while intentional sleep accepts a short key wake. Release the
+power-on key before Recovery routes through a software restart. The normal power-on hold cannot itself
+select the backup Launcher. USB_DET exists in the supplied power schematic but
+its MCU pin is not shown; this uniform policy does not depend on it.
+Install the matching full USB package once to update Recovery as well as Launcher;
+a Launcher-only update cannot replace an older Recovery's early latch behavior.
 
 The public hardware name is **Sugarat Button**. The existing build profile
 `sdgoods-wifi` and image compatibility model `SDGOODS-ESP32S3` remain stable so

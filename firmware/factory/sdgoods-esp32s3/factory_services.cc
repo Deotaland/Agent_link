@@ -1,5 +1,6 @@
 #include "../common/factory_hardware_services.h"
 #include "factory_diagnostics.h"
+#include "power_button.h"
 #include "amoled_hardware.h"
 #include "amoled_ui_language.h"
 #include "agent_system.h"
@@ -63,28 +64,28 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
     bool StartsHighLoad(const amoled_ui::Input& input) const override {
         if (input.action != amoled_ui::TouchAction::kRow)
             return false;
-        return (page_ == Page::kRoot && (input.row == 2 || input.row == 3)) ||
+        return (page_ == Page::kRoot && (input.row == 0 || input.row == 3)) ||
                (page_ == Page::kConfirm && input.row == 0);
     }
     bool Button(bool down, int64_t now) override {
-        if (!down) {
-            button_armed_ = true;
-            button_at_ = 0;
-            long_handled_ = false;
+        const auto event = power_button_.Update(down, now);
+        if (pending_ != Action::kNone)
             return false;
-        }
-        if (!button_armed_)
-            return false;
-        if (!button_at_)
-            button_at_ = now;
-        if (!long_handled_ && now - button_at_ >= 1200000) {
-            long_handled_ = true;
-            page_ = Page::kPower;
-            return true;
-        }
-        return false;
+        if (event == sugarat_power::PowerButton::Event::kLong)
+            pending_ = Action::kOff;
+        return event == sugarat_power::PowerButton::Event::kShort;
+    }
+    void RequestSleep() override {
+        if (pending_ == Action::kNone)
+            pending_ = Action::kSleep;
     }
     bool Tick(bool can_power_down) override {
+        if (av_test_ && hardware_.audio_.State() == sdgoods::Audio::Stage::kFailed) {
+            const auto error = hardware_.audio_.Error();
+            Close();
+            Error(error);
+            return true;
+        }
         if (pending_ != Action::kNone) {
             const Action action = pending_;
             pending_ = Action::kNone;
@@ -93,9 +94,13 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                                     "Wait for work to finish and release the key"));
                 return true;
             }
-            const auto* factory = esp_partition_find_first(
-                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, nullptr);
-            if (!factory || esp_ota_set_boot_partition(factory) != ESP_OK ||
+            // Sleep resumes the same image, retaining its RTC marker. Routing a
+            // wake through V5 Recovery would add a software reset and lose it.
+            const auto* destination = action == Action::kSleep
+                ? esp_ota_get_running_partition()
+                : esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                           ESP_PARTITION_SUBTYPE_APP_FACTORY, nullptr);
+            if (!destination || esp_ota_set_boot_partition(destination) != ESP_OK ||
                 !amoled_ui::PrepareForSleep()) {
                 amoled_ui::CancelSleep();
                 amoled_ui::Toast(
@@ -207,7 +212,8 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         next_sample_ = 0;
     }
     void Close() {
-        hardware_.audio_.Stop();
+        (void)hardware_.audio_.StopAndWait();
+        av_test_ = false;
         hardware_.sensors_.Suspend();
         page_ = Page::kRoot;
         next_sample_ = 0;
@@ -253,7 +259,7 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                 return true;
             const int dx = input.x - 180, dy = input.y - 180;
             if (dx * dx + dy * dy <= 180 * 180)
-                test_.color_index = (test_.color_index + 1) % 5;
+                test_.color_index = (test_.color_index + 1) % amoled_ui::HardwareTest::kColorCount;
             return true;
         }
         if (page_ == Page::kBrightness && input.action == TouchAction::kBrightness) {
@@ -278,17 +284,24 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         if (page_ == Page::kRoot) {
             switch (input.row) {
                 case 0:
-                    page_ = Page::kBattery;
+                    if (const auto error = hardware_.audio_.Start(sdgoods::Audio::Test::kRecordPlayback);
+                        error != ESP_OK) {
+                        Error(error);
+                        break;
+                    }
+                    av_test_ = true;
+                    page_ = Page::kColors;
+                    StartTest(amoled_ui::HardwareTest::Kind::kColors);
                     break;
                 case 1:
+                    page_ = Page::kBattery;
+                    break;
+                case 2:
                     page_ = Page::kMotion;
                     StartTest(amoled_ui::HardwareTest::Kind::kLevel);
                     break;
-                case 2:
                 case 3:
-                    Error(hardware_.audio_.Start(input.row == 2
-                                                     ? sdgoods::Audio::Test::kSpeaker
-                                                     : sdgoods::Audio::Test::kRecordPlayback));
+                    Error(hardware_.audio_.Start(sdgoods::Audio::Test::kSpeaker));
                     page_ = Page::kAudio;
                     break;
                 case 4:
@@ -337,12 +350,12 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         if (page_ == Page::kRoot) {
             title(Tr("设备工具", "Device tools"));
             snprintf(screen.info, sizeof screen.info, "%s",
-                     Tr("屏幕测试：轻点换色，左缘右滑退出。",
-                        "Screen test: tap to cycle; swipe from the left edge to exit."));
+                     Tr("自动录音 3 秒后播放；轻点屏幕切换颜色。",
+                        "Records 3 seconds, then plays. Tap to change colors."));
+            row(Tr("出厂测试", "Factory Test"));
             row(Tr("电量与电压", "Battery and voltage"));
             row(Tr("水平仪与六轴测试", "Level and motion test"));
             row(Tr("扬声器测试", "Test speaker"));
-            row(Tr("录音 3 秒并回放", "Record 3 seconds and play"));
             row(Tr("屏幕亮度", "Screen brightness"));
             row(Tr("休眠、关机与重启", "Sleep, power off, restart"));
             row(Tr("显示与触摸", "Display and touch"));
@@ -430,8 +443,8 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         } else if (page_ == Page::kPower) {
             title(Tr("电源", "Power"));
             snprintf(screen.info, sizeof screen.info, "%s",
-                     Tr("休眠后按电源键唤醒。\n长按电源键可打开此页。",
-                        "Press the power key to wake.\nHold it to open this page."));
+                     Tr("首页短按休眠，再按唤醒。\n长按 1.2 秒后松手关机。\n关机后长按约 3 秒松手开机。",
+                        "Home: short press to sleep.\nHold 1.2s, release to power off.\nHold 3s, release to power on."));
             row(Tr("深度休眠", "Deep sleep"));
             row(Tr("关机", "Power off"));
             row(Tr("重启启动器", "Restart launcher"));
@@ -459,9 +472,9 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
     Page page_ = Page::kRoot;
     Action selected_ = Action::kNone, pending_ = Action::kNone;
     int brightness_ = 75;
-    int64_t next_sample_ = 0, button_at_ = 0;
-    bool button_armed_ = false, long_handled_ = false;
-    bool brightness_shortcut_ = false, level_filtered_ = false;
+    int64_t next_sample_ = 0;
+    sugarat_power::PowerButton power_button_;
+    bool brightness_shortcut_ = false, level_filtered_ = false, av_test_ = false;
     int64_t level_since_ = 0;
     amoled_ui::HardwareTest test_;
 };

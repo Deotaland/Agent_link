@@ -2,6 +2,7 @@
 #include "config.h"
 #include "co5300_qspi_io.h"
 #include "sdgoods_touch_frame.h"
+#include "sdgoods_power.h"
 #include "driver/ledc.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
@@ -204,9 +205,8 @@ esp_err_t BadgeTouch::Poll(cst9217::Point* point) {
     return err;
 }
 void AmoledHardware::InitDisplayAndTouch(uint16_t rows) {
-    // Assert the self-holding rail before any peripheral initialization.
-    gpio_hold_dis(BATTERY_LATCH_PIN); gpio_deep_sleep_hold_dis();
-    ESP_ERROR_CHECK(Output(BATTERY_LATCH_PIN, 1));
+    // Cold/USB power must qualify the key before any display or audio startup.
+    (void)sdgoods_power_startup(true);
     for (auto pin :
          {DISPLAY_POWER_PIN, DISPLAY_BACKLIGHT_PIN, DISPLAY_RST_PIN, TOUCH_RST_PIN, AUDIO_PA_PIN})
         gpio_hold_dis(pin);
@@ -249,6 +249,7 @@ esp_err_t AmoledHardware::EnterSleep(bool power_off) {
     ESP_RETURN_ON_ERROR(esp_sleep_enable_ext0_wakeup(CALL_BUTTON_PIN, 0), TAG, "key wake");
     rtc_gpio_pullup_en(CALL_BUTTON_PIN);
     rtc_gpio_pulldown_dis(CALL_BUTTON_PIN);
+    sdgoods_power_set_sleep_resume(!power_off);
     ESP_RETURN_ON_ERROR(gpio_set_level(BATTERY_LATCH_PIN, power_off ? 0 : 1), TAG, "battery latch");
     for (auto pin : {BATTERY_LATCH_PIN, DISPLAY_POWER_PIN, DISPLAY_BACKLIGHT_PIN, DISPLAY_RST_PIN,
                      TOUCH_RST_PIN, AUDIO_PA_PIN})

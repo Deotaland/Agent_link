@@ -61,6 +61,7 @@ inline std::map<int, std::string> handles;
 inline int next_handle = 1, brightness = 0;
 inline int64_t now = 1000000;
 inline bool ui_ready = true, button = false;
+inline bool skip_wake_animation = false;
 inline std::string toast;
 inline std::vector<std::string> power_events;
 inline void Finish() {
@@ -333,8 +334,12 @@ inline const esp_partition_t* esp_partition_find_first(int, int, const char*) {
     static esp_partition_t p{};
     return &p;
 }
-inline int esp_ota_set_boot_partition(const esp_partition_t*) {
-    button_fixture::power_events.push_back("factory");
+inline const esp_partition_t* esp_ota_get_running_partition() {
+    static esp_partition_t running{14};
+    return &running;
+}
+inline int esp_ota_set_boot_partition(const esp_partition_t* part) {
+    button_fixture::power_events.push_back(part->subtype == 14 ? "running" : "factory");
     return ESP_OK;
 }
 [[noreturn]] inline void esp_restart() {

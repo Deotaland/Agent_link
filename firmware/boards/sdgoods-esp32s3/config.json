@@ -42,6 +42,7 @@
         ],
         "hardware_sources": [
           "amoled_hardware.cc",
+          "sdgoods_power.c",
           "sdgoods_sensors.cc",
           "sdgoods_audio.cc",
           "sdgoods_panel_init.c"

@@ -26,6 +26,7 @@ class AmoledHardware {
         return button_fixture::button;
     }
     int EnterSleep(bool off) {
+        button_fixture::skip_wake_animation = !off;
         button_fixture::power_events.push_back(off ? "off" : "sleep");
         throw SleepSignal{off};
     }

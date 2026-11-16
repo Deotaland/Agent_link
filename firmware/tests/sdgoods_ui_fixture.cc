@@ -78,6 +78,28 @@ int main(int argc, char** argv) {
     const auto fresh_input=[&] {
         state.view++; SetScreen(state); clock_us+=40000; Render(nullptr);
     };
+    {
+        PowerNavigationPreview keys;
+        using Page = PowerNavigationPreview::Page;
+        keys.ShortPowerPress();
+        assert(keys.power.sleeps==1 && keys.page_==Page::kHome);
+        keys.page_=Page::kDashboard; keys.ShortPowerPress();
+        assert(keys.power.sleeps==2);
+        keys.page_=Page::kDownloadCode; keys.menu_.Open(); keys.ShortPowerPress();
+        assert(!keys.menu_.Active() && keys.page_==Page::kDownloadCode && keys.power.sleeps==2);
+        keys.page_=Page::kDownloadHelp; keys.ShortPowerPress();
+        assert(keys.page_==Page::kDownloadCode && keys.power.sleeps==2);
+        keys.page_=Page::kRemove; keys.ShortPowerPress();
+        assert(keys.page_==Page::kLocalDetail && keys.power.sleeps==2);
+        keys.ShortPowerPress();
+        assert(keys.page_==Page::kHome && keys.power.sleeps==2);
+        keys.ShortPowerPress();
+        assert(keys.power.sleeps==3);
+        keys.pending_launch_[0]='a';
+        const auto publishes=keys.publishes;
+        keys.ShortPowerPress();
+        assert(keys.power.sleeps==3 && keys.publishes==publishes);
+    }
     for(int i=0;i<3;++i) {
         state.view++; SetScreen(state); Frame("sdgoods-home.ppm");
         const unsigned before=clicks; Tap(touch,90+i*90,220);
@@ -480,11 +502,11 @@ int main(int argc, char** argv) {
     state.view++;
     state.navigation++;
     Toast("This toast must not cover the screen test", 60000);
-    constexpr uint16_t solid_colors[]{0x0000, 0xffff, 0xf800, 0x07e0, 0x001f};
+    constexpr uint16_t solid_colors[]{0x0000, 0xffff, 0xf800, 0x07e0, 0x001f, 0xddbf};
     const char* color_frames[]{"sdgoods-screen-black.ppm", "sdgoods-screen-white.ppm",
                                "sdgoods-screen-red.ppm", "sdgoods-screen-green.ppm",
-                               "sdgoods-screen-blue.ppm"};
-    for (int color = 0; color < 5; ++color) {
+                               "sdgoods-screen-blue.ppm", "sdgoods-screen-lavender.ppm"};
+    for (int color = 0; color < HardwareTest::kColorCount; ++color) {
         state.hardware_test.color_index = color;  // Only the test snapshot changes.
         SetScreen(state);
         Frame(color_frames[color]);
@@ -851,10 +873,20 @@ int main(int argc, char** argv) {
                            snprintf(screen.title, sizeof screen.title, "Device tools");
                        }});
     menu_frame("sdgoods-settings-grid.ppm");
-    assert(state.row_count == 7 && !strcmp(state.rows[6], "Device tools"));
-    menu_row(6);
+    assert(state.row_count == 7 && !strcmp(state.rows[2], "Device tools") &&
+           !strcmp(state.rows[3], "About"));
+    Frame("sdgoods-settings-device-tools.ppm");
+    menu_row(2);
     menu_frame("sdgoods-settings-hardware.ppm");
     assert(!strcmp(state.title, "Device tools"));
+    menu_back();
+    menu_row(3);
+    menu_frame("sdgoods-current-app.ppm");
+    assert(strstr(state.info, "App: Sugarat Launcher\n"));
+    menu_back();
+    menu_row(5);
+    menu_frame("sdgoods-settings-language.ppm");
+    assert(state.row_count == 2 && !strcmp(state.rows[1], "English"));
     menu_back();
     menu.SetExtraPage({});
     menu_frame("sdgoods-settings-grid.ppm");

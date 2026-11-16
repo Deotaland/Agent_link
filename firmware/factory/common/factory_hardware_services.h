@@ -12,7 +12,10 @@ class FactoryHardwareServices {
     virtual void Decorate(amoled_ui::Screen&) = 0;
     virtual void DeviceInfo(char*, size_t) = 0;
     virtual bool SetVolume(int) = 0;
+    // Owns the physical key when present; true means one debounced short release.
+    // Long-release shutdown requests are executed through Tick's power guards.
     virtual bool Button(bool, int64_t) = 0;
+    virtual void RequestSleep() = 0;
     virtual bool HighLoad() const {
         return false;
     }

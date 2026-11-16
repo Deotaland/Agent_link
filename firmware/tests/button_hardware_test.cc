@@ -80,6 +80,7 @@ int main() {
     assert(audio.StopAndWait());
     Wait(audio);
     assert(audio.State() == sdgoods::Audio::Stage::kStopped);
+    puts("Legacy audio completed."); fflush(stdout);
     // Include a plateau beyond the driver's 320-sample fade at either end.
     int16_t clip[1024];std::fill(std::begin(clip),std::end(clip),4000);
     assert(audio.PlayClip(nullptr,256)==ESP_ERR_INVALID_ARG);
@@ -118,6 +119,7 @@ int main() {
     assert(voice.SetVolume(50) == ESP_OK && amplifier.load());
     voice.Shutdown();
     assert(channels.load() == 0 && !voice.MicOn() && !voice.Busy() && !amplifier.load());
+    puts("Voice channels completed."); fflush(stdout);
     AmoledHardware hardware;
     hardware.sensors_.Init((void*)1);
     nvs["agent_nvs/al_wifi/ssid"] = 7;
@@ -148,11 +150,14 @@ int main() {
     };
     assert(render().row_count == 8 && brightness == 75);
     assert(!strcmp(render().title, "Device tools") && !strcmp(render().rows[7], "Screen test"));
-    row(0);
+    assert(!strcmp(render().rows[0], "Factory Test"));
+    assert(service->StartsHighLoad({amoled_ui::TouchAction::kRow, 0}));
+    assert(!service->StartsHighLoad({amoled_ui::TouchAction::kRow, 2}));
+    row(1);
     auto battery = render();
     assert(strstr(battery.info, "70%") && strstr(battery.info, "Charging: unknown"));
     back();
-    row(1);
+    row(2);
     service->Tick(true);
     auto motion = render();
     assert(motion.kind == amoled_ui::View::kHardwareTest && !motion.hardware_test.valid);
@@ -218,16 +223,53 @@ int main() {
     back(); // Touch -> display page -> hardware root.
     assert(strstr(render().title, "Display and touch"));
     back();
+    peak.store(0);
+    row(0);
+    assert(render().hardware_test.kind == amoled_ui::HardwareTest::Kind::kColors &&
+           render().hardware_test.color_index == 0 && service->HighLoad());
+    // The button starts recording itself; taps only change the displayed color.
+    assert(hardware.audio_.Busy() && peak.load() == 0);
+    for (int color = 1; color <= amoled_ui::HardwareTest::kColorCount; ++color) {
+        tap(180, 180);
+        assert(render().hardware_test.color_index == color % amoled_ui::HardwareTest::kColorCount &&
+               hardware.audio_.Busy());
+    }
+    bool recorded = false, played = false;
+    for (unsigned n = 0; n < 3000 && hardware.audio_.Busy(); ++n) {
+        const auto stage = hardware.audio_.State();
+        recorded |= stage == sdgoods::Audio::Stage::kRecording;
+        if (stage == sdgoods::Audio::Stage::kPlaying) {
+            played = true;
+            assert(!hardware.audio_.MicOn());
+        }
+        vTaskDelay(1);
+    }
+    Wait(hardware.audio_);
+    assert(recorded && played && peak.load() > 0 && hardware.audio_.State() == sdgoods::Audio::Stage::kDone);
+    assert(render().hardware_test.kind == amoled_ui::HardwareTest::Kind::kColors &&
+           render().hardware_test.color_index == 0 && !service->HighLoad());
+    back();
+    assert(!service->HighLoad() && channels.load() == 0 && !amplifier.load());
+    row(0);
+    menu.close(menu.context);  // Home and top-down navigation use the same cleanup.
+    assert(!hardware.audio_.Busy() && channels.load() == 0 && !amplifier.load());
+    audio_read_error = ESP_FAIL;
+    row(0);
+    Wait(hardware.audio_);
+    service->Tick(true);
+    assert(!strcmp(render().title, "Device tools") && toast.find("injected-error") != std::string::npos);
+    audio_read_error = 0;
     row(7);
+    puts("Combined audio/color page completed."); fflush(stdout);
     assert(render().kind == amoled_ui::View::kHardwareTest && render().local_mode);
     assert(render().hardware_test.kind == amoled_ui::HardwareTest::Kind::kColors);
     assert(render().hardware_test.color_index == 0);
     tap(-1, 500);
     tap(0, 0);
     assert(render().hardware_test.color_index == 0);
-    for (int index = 1; index <= 10; ++index) {
+    for (int index = 1; index <= amoled_ui::HardwareTest::kColorCount * 2; ++index) {
         tap(180, 180);
-        assert(render().hardware_test.color_index == index % 5);
+        assert(render().hardware_test.color_index == index % amoled_ui::HardwareTest::kColorCount);
     }
     tap(180, 30);
     assert(render().hardware_test.color_index == 1);
@@ -287,16 +329,74 @@ int main() {
     }
     assert(power_events ==
            std::vector<std::string>({"factory", "display-drained", "wifi-stop", "off"}));
-    assert(!service->Button(true, now));
-    assert(!service->Button(false, now));
-    assert(!service->Button(true, now));
-    now += 1300000;
-    assert(service->Button(true, now));
+    assert(!skip_wake_animation);
+    power_events.clear();
+    const auto key = [&](bool down, int64_t delta = 0) {
+        now += delta;
+        button = down;
+        return service->Button(down, now);
+    };
+    // A key held across boot/wake must never cause immediate sleep or shutdown.
+    assert(!key(true));
+    assert(!key(true, 50000));
+    assert(!key(true, 1500000));
+    assert(!key(false));
+    assert(!key(false, 50000));
+    service->Tick(true);
+    assert(power_events.empty() && !service->HighLoad());
+    // Sub-debounce noise cannot become a short press.
+    assert(!key(true));
+    assert(!key(false, 10000));
+    assert(!key(false, 50000));
+    assert(!key(true));
+    assert(!key(true, 50000));
+    assert(!key(false, 100000));
+    assert(key(false, 40000));
+    assert(!key(false, 100000));
+    service->RequestSleep(); // The controller requests this only from its home page.
+    service->Tick(false);
+    assert(power_events.empty() && !skip_wake_animation);
+    service->RequestSleep();
+    try {
+        service->Tick(true);
+        assert(false);
+    } catch (const SleepSignal& action) {
+        assert(!action.off && skip_wake_animation);
+    }
+    assert(power_events ==
+           std::vector<std::string>({"running", "display-drained", "wifi-stop", "sleep"}));
+    power_events.clear();
+    // The release timestamp, not the 40ms debounce, decides the 1.2s boundary.
+    assert(!key(true));
+    assert(!key(true, 50000));
+    assert(!key(false, 1149999));
+    assert(key(false, 40000)); // 1,199,999us is still short.
+    assert(!service->HighLoad());
+    assert(!key(true));
+    assert(!key(true, 40000));
+    assert(!key(true, 1160000));
+    service->Tick(true);
+    assert(power_events.empty()); // Holding beyond the threshold never cuts power.
+    assert(!key(false));
+    assert(!key(false, 40000)); // 1,200,000us -> long release, no short action.
+    assert(service->HighLoad());
+    try {
+        service->Tick(true);
+        assert(false);
+    } catch (const SleepSignal& action) {
+        assert(action.off && !skip_wake_animation);
+    }
+    assert(power_events ==
+           std::vector<std::string>({"factory", "display-drained", "wifi-stop", "off"}));
+    power_events.clear();
+    assert(!key(false, 100000));
+    service->Tick(true);
+    assert(power_events.empty());
     assert(nvs.at("agent_nvs/al_wifi/ssid") == 7 && nvs.at("nvs/bmb_net/ssid") == 9);
     service.reset();
     Finish();
     puts(
         "Sugarat Factory: ADC calibration/fallback/failures, median filter, six-axis units, audio "
         "playback/capture/cancel/errors/PSRAM release, guided touch targets, level stability, persistent brightness and "
-        "guarded power actions passed. No hardware I/O.");
+        "guarded power actions, short/long release, boot-held keys and sleep boot selection passed. No hardware I/O.");
 }

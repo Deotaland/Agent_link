@@ -8,7 +8,8 @@ root = Path(__file__).resolve().parents[1]
 build = root/'build/boot-animation-tests'
 stubs = build/'stubs'
 headers = ('amoled_hardware.h','agent_system.h','config.h','esp_heap_caps.h','esp_log.h',
-           'esp_partition.h','esp_rom_crc.h','esp_timer.h','esp_vfs_fat.h','jpeg_decoder.h','nvs.h')
+           'esp_partition.h','esp_rom_crc.h','esp_timer.h','esp_vfs_fat.h','jpeg_decoder.h','nvs.h',
+           'sdgoods_power.h')
 for name in headers:
     path=stubs/name;path.parent.mkdir(parents=True,exist_ok=True)
     path.write_text('#include "boot_animation_stubs.h"\n',encoding='utf-8')

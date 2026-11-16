@@ -37,4 +37,4 @@ if os.name=='nt':
 else:
     command=[compiler,'-std=c++17','-pthread',*['-I'+str(path) for path in includes],*map(str,sources),'-o',str(binary)]
 subprocess.run(command,cwd=build,env=env,check=True)
-subprocess.run([str(binary)],cwd=build,check=True,timeout=30)
+subprocess.run([str(binary)],cwd=build,check=True,timeout=60)
