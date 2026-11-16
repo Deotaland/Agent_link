@@ -26,15 +26,31 @@ private:
 enum class Swipe { kNone, kLeft, kRight, kHome, kSystem };
 class SwipeTracker {
 public:
-    Swipe Update(bool down, int x, int y, uint32_t view, int64_t now, bool blocked = false,
-                 [[maybe_unused]] bool edge_system_swipe = false) {
-        if (!down) { tracking_ = false; return Swipe::kNone; }
-        if (!tracking_) {
-            tracking_ = true; consumed_ = blocked; x_ = x; y_ = y; view_ = view; at_ = now;
-            return Swipe::kNone;
-        }
-        const int dx = x - x_, dy = std::abs(y - y_);
-        if (view != view_ || now - at_ > 1200000) consumed_ = true;
+ Swipe Update(bool down, int x, int y, uint32_t view, int64_t now, bool blocked = false,
+              [[maybe_unused]] bool edge_system_swipe = false, bool edge_back_swipe = false) {
+     if (!down) {
+         const int dx = last_x_ - x_, dy = std::abs(last_y_ - y_);
+         const bool commit = tracking_ && edge_back_ && !consumed_ && !blocked && view == view_ &&
+                             last_x_ > kBackEdge && dx >= 70 && dx > dy * 2;
+         tracking_ = false;
+         edge_back_ = false;
+         return commit ? Swipe::kRight : Swipe::kNone;
+     }
+     last_x_ = x;
+     last_y_ = y;
+     if (!tracking_) {
+         tracking_ = true;
+         consumed_ = blocked;
+         x_ = x;
+         y_ = y;
+         view_ = view;
+         at_ = now;
+         edge_back_ = edge_back_swipe && x_ <= kBackEdge;
+         return Swipe::kNone;
+     }
+     const int dx = x - x_, dy = std::abs(y - y_);
+     if (blocked || view != view_ || (!edge_back_ && now - at_ > 1200000))
+         consumed_ = true;
 #ifdef AGENT_SYSTEM_ENABLED
         const bool system_start = y_ >= (edge_system_swipe ? 0 : 25) && y_ <= 85 &&
             (edge_system_swipe || (x_ >= 140 && x_ <= 326));
@@ -49,15 +65,29 @@ public:
         }
         // A vertical contact in the content area belongs to native scrolling.
         if (dy > 55) consumed_ = true;
+        // Edge Back is previewed while held; only release can commit it. Moving
+        // back to the edge cancels naturally because the last position wins.
+        if (edge_back_)
+            return Swipe::kNone;
         if (consumed_ || std::abs(dx) < 70 || std::abs(dx) < dy * 2) return Swipe::kNone;
         consumed_ = true;
+        if (dx > 0 && edge_back_swipe && x_ > kBackEdge)
+            return Swipe::kNone;
         return dx > 0 ? Swipe::kRight : Swipe::kLeft;
-    }
+ }
+ bool BackHint(int x, int y, uint32_t view) const {
+     const int dx = x - x_, dy = std::abs(y - y_);
+     return tracking_ && edge_back_ && !consumed_ && view == view_ && x > kBackEdge && dx >= 12 &&
+            dx > dy * 2;
+ }
+ static constexpr int kBackEdge = 36;
+
 private:
-    bool tracking_ = false, consumed_ = false;
-    int x_ = 0, y_ = 0;
-    uint32_t view_ = 0;
-    int64_t at_ = 0;
+ bool tracking_ = false, consumed_ = false, edge_back_ = false;
+ int x_ = 0, y_ = 0;
+ int last_x_ = 0, last_y_ = 0;
+ uint32_t view_ = 0;
+ int64_t at_ = 0;
 };
 
 // The last drag value wins, but a release survives later drag samples. No NVS or

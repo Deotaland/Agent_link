@@ -5,6 +5,7 @@
 #include "amoled_ui.h"
 #include "amoled_ui_controls.h"
 #include "amoled_ui_language.h"
+#include "amoled_ui_guides.h"
 #include "amoled_system_menu.h"
 #include "amoled_launcher_model.h"
 #include "factory_view.h"
@@ -36,13 +37,12 @@ class AmoledFactoryApplication : public Application {
     explicit AmoledFactoryApplication(bool tile_home = false, Startup startup = nullptr)
         : tile_home_(tile_home) {
         nvs_handle_t h;
-        int8_t language = 0;
+        int8_t language = static_cast<int8_t>(amoled_ui::kDefaultLanguage);
         if (nvs_open_from_partition(agent_system::SettingsPartition(), "amoled175", NVS_READONLY, &h) == ESP_OK) {
             (void)nvs_get_i8(h, "language", &language);
             nvs_close(h);
         }
-        amoled_ui::language.store(language == 1 ? amoled_ui::Language::kEnglish
-                                                : amoled_ui::Language::kChinese);
+        amoled_ui::language.store(amoled_ui::SavedLanguage(language));
         hardware_.InitDisplayAndTouch(32);
         if (startup) startup(hardware_);
         menu_.SetDefaultVolume(AUDIO_DEFAULT_VOLUME);
@@ -73,6 +73,12 @@ class AmoledFactoryApplication : public Application {
                                            amoled_ui::DisplayPerformance::kLauncher));
         RefreshLocal();
         Home();
+#ifdef AGENT_LAUNCHER_AB
+        if (tile_home_ && AmoledSystemMenu::TakeUpdateRequest()) {
+            // Defer the UI-requested check until the existing WiFi connection is ready.
+            pending_update_check_ = true;
+        }
+#endif
         if (tile_home_) {
             store_job_ = std::make_unique<FactoryStoreJob>();
             if (store_job_->Restore(apps_, app_count_)) {
@@ -147,7 +153,7 @@ class AmoledFactoryApplication : public Application {
         return store_job_ && store_job_->Read().result.state == FactoryStoreJob::State::kRestart;
     }
     void Home() {
-        page_ = tile_home_ ? Page::kDashboard : Page::kHome;
+        page_ = Page::kHome;
         ++navigation_;
     }
     void Apps() {
@@ -325,7 +331,9 @@ class AmoledFactoryApplication : public Application {
                 else if (row == 5 && (apps_page_ + 1) * 4 < app_count_) { ++apps_page_; Apps(); }
                 break;
             case Page::kHome:
-                if (row == 0) {
+                if (row == 3 && tile_home_)
+                    menu_.OpenNetwork();
+                else if (row == 0) {
                     if (carousel_.IsAdd())
                         Catalog();
                     else {
@@ -518,8 +526,11 @@ class AmoledFactoryApplication : public Application {
                 screen_.card_index = carousel_.Index();
                 screen_.card_count = carousel_.Pages();
                 screen_.add_card = carousel_.IsAdd();
+                const auto& app = apps_[carousel_.IsAdd() ? 0 : carousel_.Index()];
                 title(screen_.add_card ? Tr("添加应用", "Add application")
-                                       : apps_[carousel_.Index()].descriptor.name);
+                      : tile_home_ && !strcmp(app.descriptor.app_id, "agent.status")
+                          ? "Agent_link"
+                          : app.descriptor.name);
                 if (!screen_.add_card) {
                     snprintf(screen_.app_id, sizeof screen_.app_id, "%s",
                              apps_[carousel_.Index()].descriptor.app_id);
@@ -530,15 +541,9 @@ class AmoledFactoryApplication : public Application {
                 screen_.kind = amoled_ui::View::kDownloadCode;
                 snprintf(screen_.download_code, sizeof screen_.download_code, "%s", download_code_);
             } else if (page_ == Page::kDownloadHelp) {
+                screen_.kind = amoled_ui::View::kDownloadHelp;
                 title(Tr("下载码在哪里？", "Where is the code?"));
-                snprintf(
-                    screen_.info, sizeof screen_.info, "%s",
-                    Tr("在网页平台找到想安装的玩法，查看六位下载码。\n\n"
-                       "在设备上输入下载码，查询详情后确认下载安装。\n\n"
-                       "固件审核并公开发布后，可在网页详情页查看下载码。",
-                       "Find an app on the web platform and check its six-digit download code.\n\n"
-                       "Enter it here, review the app, then confirm installation.\n\n"
-                       "Find the code on the firmware page after approval and publication."));
+                snprintf(screen_.info, sizeof screen_.info, "%s", amoled_ui::DownloadCodeGuide());
                 row(Tr("返回输入下载码", "Enter download code"));
             } else if (page_ == Page::kCatalog) {
                 char heading[64];
@@ -605,7 +610,9 @@ class AmoledFactoryApplication : public Application {
                 row(Tr("返回主页", "Home"));
             } else if (page_ == Page::kLocalDetail) {
                 const auto& app = apps_[selected_];
-                title(app.descriptor.name);
+                title(tile_home_ && !strcmp(app.descriptor.app_id, "agent.status")
+                          ? "Agent_link"
+                          : app.descriptor.name);
                 screen_.kind = amoled_ui::View::kAppActions;
                 screen_.card_index = carousel_.Index();
                 screen_.card_count = carousel_.Pages();
@@ -624,6 +631,19 @@ class AmoledFactoryApplication : public Application {
                          app.descriptor.app_id, app.version, app.slot,
                          static_cast<unsigned long>(app.size / 1024));
                 if (page_ == Page::kRemove) {
+                    if (tile_home_) {
+                        screen_.kind = amoled_ui::View::kAppRemove;
+                        snprintf(screen_.detail, sizeof screen_.detail, "%s",
+                                 !strcmp(app.descriptor.app_id, "agent.status")
+                                     ? "Agent_link"
+                                     : app.descriptor.name);
+                        snprintf(screen_.app_id, sizeof screen_.app_id, "%s",
+                                 app.descriptor.app_id);
+                        agent_system::Cover cover;
+                        (void)agent_system::ReadCover(app.slot, &cover);
+                        screen_.cover_slot = cover.slot;
+                        screen_.cover_revision = cover.revision;
+                    }
                     row(Tr("取消", "Cancel"));
                     row(Tr("确认卸载（保留设备设置）", "Remove (keep device settings)"));
                 } else {
@@ -863,12 +883,33 @@ class AmoledFactoryApplication : public Application {
                 ++view_;
                 Publish();
             }
+            if (pending_update_check_) {
+                agent_link_wifi_info_t wifi{};
+                if (agent_link_wifi_info(&wifi) == ESP_OK && wifi.connected) {
+                    pending_update_check_ = false;
+                    menu_.OpenUpdate();
+                    ++view_;
+                    ++navigation_;
+                    Publish();
+                }
+            }
 #endif
             PollStoreJob();
             amoled_ui::Input input;
             const bool received = xQueueReceive(events_, &input, pdMS_TO_TICKS(30)) == pdTRUE;
             const bool fresh =
                 received && amoled_ui::CurrentInput(input, view_, esp_timer_get_time());
+            // Drain the slider before navigation so a release is saved even
+            // when Back/Home arrives in the same controller iteration.
+            int brightness, saved_brightness;
+            if (brightness_requests_.Take(brightness, saved_brightness)) {
+                amoled_ui::Input level{};
+                level.action = amoled_ui::TouchAction::kBrightness;
+                level.row = saved_brightness >= 0 ? saved_brightness : brightness;
+                level.commit = saved_brightness >= 0;
+                menu_.Handle(level);
+                Publish();
+            }
             if (received && !fresh && input.view == view_) {
                 ++view_;
                 Publish();
@@ -893,7 +934,7 @@ class AmoledFactoryApplication : public Application {
                     else if (page_ == Page::kInterrupt)
                         page_ = Page::kLocalDetail;
                     else if (page_ == Page::kLocalDetail)
-                        tile_home_ ? Apps() : Home();
+                        Home();
                     else if (page_ == Page::kCatalogDetail)
                         page_ = tile_home_ ? Page::kDownloadCode : Page::kCatalog;
                     else if (page_ == Page::kDownloadHelp)
@@ -907,11 +948,13 @@ class AmoledFactoryApplication : public Application {
                 } else if (page_ == Page::kHome &&
                            (input.action == amoled_ui::TouchAction::kPreviousCard ||
                             input.action == amoled_ui::TouchAction::kNextCard)) {
-                    if (carousel_.Move(input.action == amoled_ui::TouchAction::kNextCard ? 1 : -1))
+                    if (carousel_.Move(input.action == amoled_ui::TouchAction::kNextCard ? 1 : -1,
+                                       tile_home_))
                         RefreshCover();
                 }
-                if (menu_.TakeExit())
-                    Check(agent_system::ReturnToLauncher());
+                if (menu_.TakeExit()) {
+                    amoled_ui::Toast(Tr("当前已在启动器", "Already in Launcher"));
+                }
                 if (menu_.TakeCoverRetry())
                     retry_requested_ = true;
                 Publish();
@@ -1121,6 +1164,10 @@ class AmoledFactoryApplication : public Application {
             self->volume_.Submit(input.row, input.commit);
             return true;
         }
+        if (input.action == amoled_ui::TouchAction::kBrightness) {
+            self->brightness_requests_.Submit(input.row, input.commit);
+            return true;
+        }
         return xQueueSend(self->events_, &input, 0) == pdTRUE;
     }
     static void ControlEntry(void* context) {
@@ -1141,19 +1188,22 @@ class AmoledFactoryApplication : public Application {
         return true;
     }
     bool HandleUpdate(const amoled_ui::Input& input) {
-        if (input.action != amoled_ui::TouchAction::kRow)
+        const bool check_only = input.action == amoled_ui::TouchAction::kMenu;
+        if (input.action != amoled_ui::TouchAction::kRow && !check_only)
             return true;
         using namespace agent_system::launcher;
         const auto value = Read();
         if (agent_system::launcher::Busy()) {
-            Cancel();
+            if (!check_only)
+                Cancel();
             return true;
         }
         if (value.state == State::kReady) {
-            Check(Restart());
+            if (!check_only)
+                Check(Restart());
             return true;
         }
-        if (value.state == State::kAvailable && input.row == 0) {
+        if (!check_only && value.state == State::kAvailable && input.row == 0) {
             if (StoreRunning() || NeedsRestart() || sync_busy_.load() || !launcher_confirmed_) {
                 amoled_ui::Toast(Tr("请等待当前任务完成后再更新启动器",
                                     "Wait for the current task before updating"),
@@ -1215,6 +1265,7 @@ class AmoledFactoryApplication : public Application {
         }
     }
     bool launcher_confirmed_ = false;
+    bool pending_update_check_ = false;
     int64_t healthy_since_ = 0;
     uint32_t update_revision_ = 0;
 #endif
@@ -1230,6 +1281,7 @@ class AmoledFactoryApplication : public Application {
     AmoledLauncherModel carousel_;
     agent_system::Cover cover_;
     amoled_ui::VolumeMailbox volume_;
+    amoled_ui::VolumeMailbox brightness_requests_;
     amoled_ui::Screen screen_;
     agent_system::App apps_[agent_system::kAppSlotCount]{};
     uint32_t seen_app_revision_ = 0;

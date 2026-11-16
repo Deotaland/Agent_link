@@ -6,6 +6,8 @@
 #define ESP_LOGE(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGD(...) ((void)0)
+#define ESP_LOG_LEVEL_LOCAL(...) ((void)0)
+constexpr int ESP_LOG_INFO = 3, ESP_LOG_DEBUG = 4;
 #define esp_err_to_name(...) "fixture-error"
 #include <algorithm>
 #include <cstdint>

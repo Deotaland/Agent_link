@@ -15,9 +15,9 @@
 
 namespace amoled_factory {
 namespace {
-constexpr uint32_t kBg = 0x1D1D1B, kCard = 0x2B2925, kText = 0xF3F0E8;
-constexpr uint32_t kMuted = 0xAAA49B, kAccent = 0xC54B2C, kBrand = 0xF29A72;
-constexpr amoled_ui::CardRenderer::Palette kPalette{kBg, kCard, kText, kMuted, kBrand, 0x514B43};
+constexpr uint32_t kBg = 0x080D16, kCard = 0x202735, kText = 0xF3F0E8;
+constexpr uint32_t kMuted = 0x8B9DB1, kAccent = 0x247D78, kBrand = 0x68D9D1;
+constexpr amoled_ui::CardRenderer::Palette kPalette{kBg, kCard, kText, kMuted, kBrand, 0x303B49};
 lv_obj_t *root, *home, *apps, *details, *busy, *download;
 lv_obj_t *installed_label, *count_label, *free_label, *usage_ring, *usage_label, *status;
 lv_obj_t *hero, *wifi_title, *wifi_step, *wifi_ap, *wifi_url, *wifi_arrow;
@@ -31,6 +31,10 @@ lv_obj_t *query_key, *query_text, *detail_hint;
 lv_obj_t *diagnostics, *test_title, *test_hint, *test_info, *retry_text;
 lv_obj_t *touch_plot, *touch_targets[5], *touch_numbers[5], *touch_dot, *touch_pass;
 lv_obj_t *level_plot, *level_ball;
+lv_obj_t* color_screen;
+lv_obj_t *carousel, *carousel_name, *carousel_hint, *carousel_dots[15], *carousel_plus[2];
+lv_obj_t *action_shade, *action_popup, *action_name, *action_version;
+lv_obj_t *action_launch, *action_remove, *action_launch_text, *action_remove_text;
 
 void Show(lv_obj_t* obj, bool on) {
     if (on) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -101,7 +105,7 @@ struct CoverView {
         constexpr uint32_t colors[]{0x443027, 0x2E3A6E, 0x493C58, 0x314934};
         lv_obj_set_style_bg_color(box, lv_color_hex(colors[hash % 4]), 0);
     }
-} grid_covers[4], detail_cover;
+} grid_covers[4], detail_cover, carousel_cover;
 
 void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) {
     root = Box(parent, 0, 0, 360, 360, 0, kBg);
@@ -149,7 +153,7 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     empty_button_text = Label(empty_button, fonts.Body(), 0, 0, 152, 44, kText);
 
     details = Box(root, 0, 0, 360, 360, 0, kBg); detail_back = Back(details, bind);
-    Text(Label(details, fonts.Small(), 109, 45, 177, 24, kMuted), "Agent_link Launcher");
+    Text(Label(details, fonts.Small(), 109, 45, 177, 24, kMuted), "Sugarat Launcher");
     detail_cover.Create(details, 128, 84, 104);
     detail_name = Label(details, fonts.Title(), 60, 196, 240, 44, kText);
     lv_label_set_long_mode(detail_name, LV_LABEL_LONG_WRAP);
@@ -219,12 +223,43 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     test_info = Label(diagnostics, fonts.Small(), 60, 293, 240, 22, kText);
     auto* retry = Box(diagnostics, 122, 320, 116, 30, 15, kCard); bind(retry, 0);
     retry_text = Label(retry, fonts.Small(), 0, 0, 116, 30, kText);
+    carousel = Box(root, 0, 0, 360, 360, 0, 0x080D16);
+    Box(carousel, 163, 19, 34, 3, 2, 0x526173);
+    carousel_cover.Create(carousel, 64, 52, 232);
+    lv_obj_set_style_radius(carousel_cover.box, LV_RADIUS_CIRCLE, 0);
+    bind(carousel_cover.box, 0);
+    carousel_plus[0] = Box(carousel_cover.box, 59, 110, 114, 12, 6, 0xD8F7A4);
+    carousel_plus[1] = Box(carousel_cover.box, 110, 59, 12, 114, 6, 0xD8F7A4);
+    lv_obj_set_style_text_font(carousel_cover.glyph, &lv_font_montserrat_48, 0);
+    lv_label_set_long_mode(carousel_cover.glyph, LV_LABEL_LONG_WRAP);
+    carousel_name = Label(carousel, fonts.Title(), 75, 290, 210, 28, kText);
+    carousel_hint = Label(carousel, fonts.Small(), 91, 318, 178, 20, kMuted);
+    bind(carousel_hint, 3);
+    for (auto& dot : carousel_dots)
+        dot = Box(carousel, 0, 337, 4, 4, 2, 0x526173);
+    action_shade = Box(carousel, 0, 0, 360, 360, 0, 0);
+    lv_obj_set_style_bg_opa(action_shade, LV_OPA_60, 0);
+    bind(action_shade, -1);
+    action_popup = Box(action_shade, 46, 91, 268, 184, 26, 0x202735);
+    action_name = Label(action_popup, fonts.Title(), 24, 20, 220, 36, kText);
+    action_version = Label(action_popup, fonts.Small(), 24, 61, 220, 32, kMuted);
+    action_launch = Box(action_popup, 18, 116, 110, 46, 23, 0xD8F7A4);
+    action_remove = Box(action_popup, 140, 116, 110, 46, 23, 0x472932);
+    bind(action_launch, 0);
+    bind(action_remove, 1);
+    action_launch_text = Label(action_launch, fonts.Body(), 0, 0, 110, 46, 0x162218);
+    action_remove_text = Label(action_remove, fonts.Body(), 0, 0, 110, 46, 0xFFC0C8);
+    color_screen = Box(root, 0, 0, 360, 360, 0, 0x000000);
     Show(root, false);
 }
 bool Accepts(const amoled_ui::Screen& screen) {
-    return screen.kind == amoled_ui::View::kHardwareTest ||
-           screen.kind == amoled_ui::View::kFactoryHome || screen.kind == amoled_ui::View::kAppGrid ||
-           screen.kind == amoled_ui::View::kDownloadCode || screen.kind == amoled_ui::View::kDownloadDetail ||
+    return screen.kind == amoled_ui::View::kCarousel ||
+           screen.kind == amoled_ui::View::kAppRemove ||
+           screen.kind == amoled_ui::View::kHardwareTest ||
+           screen.kind == amoled_ui::View::kFactoryHome ||
+           screen.kind == amoled_ui::View::kAppGrid ||
+           screen.kind == amoled_ui::View::kDownloadCode ||
+           screen.kind == amoled_ui::View::kDownloadDetail ||
            screen.kind == amoled_ui::View::kAppActions ||
            (screen.kind == amoled_ui::View::kInfo && screen.busy);
 }
@@ -235,12 +270,64 @@ void Update(const amoled_ui::Screen& screen) {
     const bool is_busy = screen.kind == amoled_ui::View::kInfo && screen.busy;
     const bool is_download = screen.kind == amoled_ui::View::kDownloadCode;
     const bool is_test = screen.kind == amoled_ui::View::kHardwareTest;
+    const bool is_colors =
+        is_test && screen.hardware_test.kind == amoled_ui::HardwareTest::Kind::kColors;
+    const bool is_carousel = screen.kind == amoled_ui::View::kCarousel ||
+                             screen.kind == amoled_ui::View::kAppActions ||
+                             screen.kind == amoled_ui::View::kAppRemove;
     Show(root, true); Show(home, is_home); Show(apps, is_grid);
     Show(busy, is_busy); Show(download, is_download);
-    Show(details, !is_home && !is_grid && !is_busy && !is_download && !is_test);
-    Show(diagnostics, is_test);
+    Show(details, !is_home && !is_grid && !is_busy && !is_download && !is_test && !is_carousel);
+    Show(diagnostics, is_test && !is_colors);
+    Show(color_screen, is_colors);
+    Show(carousel, is_carousel);
     char text[96];
-    if (is_test) {
+    if (is_colors) {
+        constexpr uint32_t colors[]{0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF};
+        lv_obj_set_style_bg_color(
+            color_screen, lv_color_hex(colors[std::clamp(screen.hardware_test.color_index, 0, 4)]),
+            0);
+    } else if (is_carousel) {
+        const bool actions = screen.kind != amoled_ui::View::kCarousel;
+        const bool removing = screen.kind == amoled_ui::View::kAppRemove;
+        carousel_cover.Update(screen.add_card ? -1 : screen.cover_slot, screen.cover_revision, 232,
+                              screen.title);
+        if (screen.add_card) {
+            Show(carousel_cover.picture, false);
+            Show(carousel_cover.glyph, false);
+        } else if (!strcmp(screen.app_id, "agent.status") ||
+                   !strcmp(screen.app_id, "agent.voice")) {
+            lv_obj_set_style_text_font(carousel_cover.glyph, &lv_font_montserrat_36, 0);
+            Text(carousel_cover.glyph, "AGENT\nLINK");
+            lv_obj_set_style_bg_color(carousel_cover.box, lv_color_hex(0x163842), 0);
+        } else {
+            lv_obj_set_style_text_font(carousel_cover.glyph, &lv_font_montserrat_48, 0);
+            Text(carousel_cover.glyph, LV_SYMBOL_FILE);
+        }
+        for (auto* plus : carousel_plus)
+            Show(plus, screen.add_card);
+        amoled_ui::CenterLabelVertically(carousel_cover.glyph);
+        Text(carousel_name, removing ? screen.detail : screen.title);
+        Text(carousel_hint, screen.job_status[0] ? screen.job_status
+                            : !screen.wifi_connected
+                                ? Tr("未联网 · 点此配网", "Offline - set up WiFi")
+                                : Tr("左右滑动 · 轻点管理", "Swipe to browse - tap to manage"));
+        const int count = std::min<size_t>(screen.card_count, 15);
+        for (int i = 0; i < 15; ++i) {
+            Show(carousel_dots[i], i < count);
+            const bool selected = i == int(screen.card_index);
+            lv_obj_set_pos(carousel_dots[i], 180 - (count * 9 - 5) / 2 + i * 9, 337);
+            lv_obj_set_style_bg_color(carousel_dots[i],
+                                      lv_color_hex(selected ? 0xD8F7A4 : 0x526173), 0);
+        }
+        Show(action_shade, actions);
+        if (actions) {
+            Text(action_name, removing ? Tr("删除这个应用？", "Delete this app?") : screen.title);
+            Text(action_version, screen.detail);
+            Text(action_launch_text, removing ? Tr("取消", "Cancel") : Tr("启动", "Launch"));
+            Text(action_remove_text, removing ? Tr("确认删除", "Delete") : Tr("删除", "Delete"));
+        }
+    } else if (is_test) {
         const auto& test = screen.hardware_test;
         const bool touch = test.kind == amoled_ui::HardwareTest::Kind::kTouch;
         Text(test_title, screen.title); Text(test_hint, screen.detail);
@@ -354,7 +441,7 @@ bool CaptureTestTap(int x, int y) {
 }  // namespace
 const amoled_ui::CardRenderer& Renderer() {
     static const amoled_ui::CardRenderer renderer{
-        Create, Update, Hide, Accepts, &kPalette, CaptureTestTap, {true, 18, 10, true}};
+        Create, Update, Hide, Accepts, &kPalette, CaptureTestTap, {true, 18, 10, true, true}};
     return renderer;
 }
 }  // namespace amoled_factory

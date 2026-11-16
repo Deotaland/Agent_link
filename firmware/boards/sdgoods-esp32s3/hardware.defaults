@@ -1,5 +1,7 @@
 # Physical SDGOODS ESP32-S3 hardware, verified with the vendor BSP.
 CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+# 15 dBm ceiling from PHY startup; the WiFi driver uses quarter-dBm value 60.
+CONFIG_ESP_PHY_MAX_WIFI_TX_POWER=15
 # The versioned layout owns the Launcher B flash mapping policy.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=n

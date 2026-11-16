@@ -2,6 +2,9 @@
 #include "agent_system.h"
 #include "esp_http_client.h"
 #include <string>
+#if defined(AGENT_SYSTEM_DOWNLOAD_WIFI)
+#include "wifi_download.h"
+#endif
 
 namespace agent_system::community {
 const char* DefaultCatalog();
@@ -35,6 +38,9 @@ class File {
    private:
     esp_err_t OpenWithTimeout(const char* url, int header_timeout_ms);
     static esp_err_t Event(esp_http_client_event_t* event);
+#if defined(AGENT_SYSTEM_DOWNLOAD_WIFI)
+    agentlink::wifi::DownloadPower download_power_;
+#endif
     std::string location_;
     unsigned retry_after_ = 0;
 };

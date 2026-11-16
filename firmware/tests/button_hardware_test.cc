@@ -146,7 +146,8 @@ int main() {
         menu.render(s, menu.context);
         return s;
     };
-    assert(render().row_count == 7 && brightness == 75);
+    assert(render().row_count == 8 && brightness == 75);
+    assert(!strcmp(render().title, "Device tools") && !strcmp(render().rows[7], "Screen test"));
     row(0);
     auto battery = render();
     assert(strstr(battery.info, "70%") && strstr(battery.info, "Charging: unknown"));
@@ -217,16 +218,43 @@ int main() {
     back(); // Touch -> display page -> hardware root.
     assert(strstr(render().title, "Display and touch"));
     back();
+    row(7);
+    assert(render().kind == amoled_ui::View::kHardwareTest && render().local_mode);
+    assert(render().hardware_test.kind == amoled_ui::HardwareTest::Kind::kColors);
+    assert(render().hardware_test.color_index == 0);
+    tap(-1, 500);
+    tap(0, 0);
+    assert(render().hardware_test.color_index == 0);
+    for (int index = 1; index <= 10; ++index) {
+        tap(180, 180);
+        assert(render().hardware_test.color_index == index % 5);
+    }
+    tap(180, 30);
+    assert(render().hardware_test.color_index == 1);
+    assert(back() && !strcmp(render().title, "Device tools"));
+    row(7);
+    assert(render().hardware_test.color_index == 0);
+    assert(menu.handle({amoled_ui::TouchAction::kHome, 0}, menu.context));
+    assert(!strcmp(render().title, "Device tools"));
     assert(menu.open_brightness);
     menu.open_brightness(menu.context);
-    assert(strstr(render().title, "Screen brightness"));
+    assert(render().kind == amoled_ui::View::kBrightnessControl);
+    assert(!strcmp(render().title, "Brightness") && render().brightness_percent == 75);
     assert(!back()); // Settings shortcut returns directly to the settings root.
     row(4);
-    row(0);
+    const auto level = [&](int value, bool commit) {
+        amoled_ui::Input input{amoled_ui::TouchAction::kBrightness, value};
+        input.commit = commit;
+        return menu.handle(input, menu.context);
+    };
+    const auto before_drag = nvs;
+    level(65, false);
+    assert(brightness == 65 && render().brightness_percent == 65 && nvs == before_drag);
+    level(65, true);
     assert(brightness == 65 && nvs.at("agent_nvs/button_hw/bright") == 65);
-    for (int n = 0; n < 12; ++n) row(0);
+    level(0, true);
     assert(brightness == 5);
-    for (int n = 0; n < 12; ++n) row(1);
+    level(110, true);
     assert(brightness == 100);
     auto restored = CreateFactoryHardwareServices(hardware);
     assert(brightness == 100);

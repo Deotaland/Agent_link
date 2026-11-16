@@ -2,12 +2,22 @@
 
 This Factory also supports the same Sugarat Button hardware sold by SDGOODS.
 
+Agent Link WiFi uses a 15 dBm transmit-power ceiling: PHY initialization is capped
+at 15 dBm and STA/AP startup applies driver value 60 (0.25 dBm units), logging
+the readback. Actual transmit power may be lower for a particular rate or region.
+
 This board-bound Factory reuses the round launcher controller and system menu.
-Its native 360px renderer follows the warm charcoal and terracotta home layout
-of [Sugarat's launcher](https://github.com/suoyousheng-bot/sugarat-sdgoods/tree/c07957fe9794808d6ee866553af169f5654d69e5).
-The home summary shows installed app count, free app-pool space and an allocation
-ring. Three tiles open **My apps**, **Download apps** and **Settings**. The grid,
-app actions and download progress use the same palette, in Chinese and English.
+Its native 360px home shows one large circular application cover. Horizontal
+swipes cycle through installed apps and the final **+** card, then wrap around.
+Tapping an app opens a launch/delete dialog over its cover. The shared controller,
+installation service, provisioning and A/B update APIs are unchanged.
+
+Factory and the native Agent_link app default to English, including first boot,
+WiFi setup, menus, download/update progress and errors. Missing or invalid saved
+language settings fall back to English; an explicitly saved Chinese/English
+choice is preserved. The phone's WiFi form and connection-result page also open
+in English without JavaScript and offer a Chinese toggle. Other boards retain
+their existing default language.
 
 ## Startup movie
 
@@ -34,6 +44,23 @@ python firmware/tools/prepare_boot_animation.py dist/start.mp4 --package-factory
 python firmware/tests/test_boot_animation.py
 ```
 
+For the default initial package, first build the Agent_link application, then
+Factory, and include the application along with the font and startup movie:
+
+```powershell
+python firmware/tools/build_firmware.py sdgoods-wifi --image-role standard --jobs 2
+python firmware/tools/build_firmware.py sdgoods-wifi --image-role factory --jobs 2
+python firmware/tools/prepare_boot_animation.py dist/start.mp4 --package-factory --install-agent-link
+```
+
+The package verifies both archived images, SDK/layout agreement and application
+identity before merging. Recovery discovers the single preinstalled `agent.status`
+image through the existing V5 seed path. It appears as **Agent_link** in the UI,
+with the supplied 256px logo converted to the standard circular 132px cover and
+preloaded into its normalized slot tail, so the initial cover works offline.
+Factory-only
+OTA updates preserve the installed list and do not reinstall a deleted app.
+
 The source video is a local input in ignored `dist/`; it is not required to build
 the player. Output is in `firmware/build/boot-animation/`:
 
@@ -49,21 +76,29 @@ rate and transition still require hardware acceptance.
 
 ## Launcher behavior
 
-- Open **My apps** (or swipe left on home) for a four-app grid with page controls.
-  Up to 14 apps occupy four pages; the empty state opens download-code entry.
-- **Download apps** opens six digit boxes and a numeric keypad, following the
+- After startup playback, home opens directly on the first installed app's large
+  circular cover. Swiping left/right cycles through up to 14 apps and the **+**
+  card. Left from **+** returns to the first app; right from the first returns to
+  **+**. A device with no apps still offers the **+** card.
+- **+** opens six digit boxes and a numeric keypad, following the
   reference launcher's layout. Enter the code shown on the web platform (including
   leading zeroes), tap **Find**, review the app name/version/size and confirm
   **Download and install**. Back returns to the entered code; **?** explains where
   to find it. Codes are shown on the platform's public approved firmware page.
-- Tap an app to open its actions; removal requires confirmation.
+- The **?** page shows `https://sugarat.vercel.app/` as the firmware catalog and
+  source of six-digit download codes. After WiFi setup, the native Agent_link
+  activation screen shows `https://bot.deotaland.cn/#/devices` beside its binding
+  instructions and six-digit code. These are UI links; backend endpoints and
+  activation/install behavior are unchanged.
+- Tap an app to open a popup with **Launch** and **Delete**; deletion has a second
+  confirmation popup. Neither action opens a separate application detail page.
 - The upper-left arrow returns one level. Swiping up from the physical bottom
   edge returns directly home, including from settings and download progress.
   Return arrows and download-code Help have a 10px invisible touch margin. Native launcher buttons use
   the full round touch surface, including the bottom Delete and Find keys, with
   up to 18px finger jitter; scrolling list rows retain their stricter drag guard.
 - Download-code queries and installation run on a dedicated worker. Going home leaves
-  a download running; **Download apps** reopens its progress or unacknowledged
+  a download running; **+** reopens its progress or unacknowledged
   result. Opening another app asks whether to interrupt the download and start
   over next time. After confirmation the worker stops at a safe boundary before
   the selected app boots. Atomic layout publication finishes before switching.
@@ -75,24 +110,61 @@ rate and transition still require hardware acceptance.
   details until acknowledged. Installation outcomes are stored in `app_meta` and
   survive restart; pending outcomes are checked against the actual installed
   image after reboot. Partial images remain unavailable.
-- Pull down from the physical top edge for WiFi, app service, device, language
-  and cover settings. The top cap accepts the gesture from its center or sides,
+- Pull down from the physical top edge for a dark **Quick Panel**. Its header
+  shows the battery percentage and a dot before the panel name. Four rounded
+  tiles form two rows: **Wi-Fi | Sound**, then **Exit | Settings**. Wi-Fi opens
+  the existing network page; Sound opens the existing vertical volume control.
+  Back from these shortcuts returns to Quick Panel. In Launcher, Exit only shows **Already in
+  Launcher** and leaves the current page/work running. In installed native apps,
+  Exit requires confirmation, then restarts into the Launcher home. Bottom-up
+  home navigation continues to leave downloads running.
+  The top cap accepts the gesture from its center or sides,
   including on the download/progress and hardware-test pages. A normal tap or
   list scroll does not open the menu.
-- **Settings > WiFi** uses the common Agent Link provisioning flow and existing
+- Pull right from the physical left edge for a **Back** badge. Release after a
+  sufficient pull to return one level; move back to the edge before release to
+  cancel. One contact cannot return through multiple pages. Visible Back buttons
+  and bottom-edge Home remain available. The app-cover carousel keeps both
+  left/right app switching gestures, including a swipe started at the edge;
+  it never turns that contact into Back or shows the Back badge.
+- **Quick Panel > Wi-Fi** uses the common Agent Link provisioning flow and existing
   isolated settings. App downloads use the production firmware download-code API;
   provisioning continues to use the common Agent Link flow.
-- Without WiFi the home summary becomes a tappable setup guide. While the
-  setup hotspot is active it shows the actual hotspot name and `192.168.4.1`;
-  a disconnected station instead links to network settings. Code lookup
-  and installation direct users there first. Installed apps stay accessible and
-  launch normally offline; connecting WiFi restores the storage summary.
-- Open **Hardware and power** for battery voltage/estimated level, a live spirit
+- Settings is an ordinary scrolling list: **Brightness**, **Launcher update**,
+  **About**, device status, language, **User guide** and **Device tools**. Wi-Fi
+  and volume are shortcuts in Quick Panel rather than repeated settings entries.
+  App service and cover-sync entries are hidden; automatic cover sync continues.
+  Back returns one level. **Settings > About** shows the running app name,
+  actual image version, WiFi status, SSID/IP and battery.
+- **User guide** has five scrollable topics: Launcher purpose, WiFi setup,
+  download-code installation, apps/gestures, and updates/help. It defaults to
+  English and follows the selected UI language. Guide Back returns to its topic
+  list, then Settings; bottom-edge Home still goes directly home.
+- **Quick Panel > Sound** opens a large vertical capsule: drag up/down for 0–100%, with live
+  percentage/fill feedback. The existing volume callback applies changes and
+  the existing release/commit path saves them. Dragging inside the capsule
+  cannot navigate Back/Home; the physical bottom-edge Home gesture remains.
+- Without WiFi, the carousel has a tappable setup hint. Network settings show
+  the actual hotspot and `192.168.4.1` while provisioning. Installed apps stay
+  accessible offline. Code lookup and installation direct users to setup first.
+- The same pull-down/menu presentation ships in the native Agent_link app.
+  Its Launcher update row confirms a restart and passes only a UI navigation request;
+  Launcher opens the existing update page and checks once WiFi is connected.
+  Installation remains explicit. Original SDGOODS binaries retain their own UI;
+  a Launcher update cannot replace another app's compiled menu.
+- Open **Device tools** for battery voltage/estimated level, a live spirit
   level, speaker tone, three-second record/playback, persistent brightness and
   sleep/power/restart controls. The existing volume page controls self-test audio.
-- **Settings > Screen brightness** also opens the saved 5–100% brightness control
-  directly. Changes take effect immediately and survive a restart.
-- **Hardware and power > Display and touch > Start touch test** guides five taps
+- **Brightness** opens the same large vertical capsule with a sun icon and a
+  5–100% range. Changes apply live and save to the existing `button_hw/bright`
+  setting on release, outside the LVGL task. Both the shortcut and hardware page
+  use this view; native Agent_link uses the same UI and isolated setting.
+- **Device tools > Screen test** starts with full-screen black. Each tap advances
+  through white, red, green and blue, then wraps to black. No text, buttons or
+  toast overlays cover the test colors. Swipe from the left edge to return to Device tools;
+  bottom-edge Home and the top-down system menu remain available. Test colors
+  stay awake and do not change the saved brightness.
+- **Device tools > Display and touch > Start touch test** guides five taps
   (center and four quadrants). Each short tap displays its screen X/Y position;
   only the highlighted target counts within a 24px radius. All five must pass.
   Dragging does not count. **Restart test** clears progress; Back returns to display status.

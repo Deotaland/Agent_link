@@ -9,7 +9,11 @@ class AmoledLauncherModel {
         if (index_ > installed_)
             index_ = installed_;
     }
-    bool Move(int direction) {
+    bool Move(int direction, bool wrap = false) {
+        if (wrap && installed_ && direction) {
+            index_ = direction > 0 ? (index_ + 1) % Pages() : (index_ + Pages() - 1) % Pages();
+            return true;
+        }
         if (direction < 0 && index_) {
             --index_;
             return true;

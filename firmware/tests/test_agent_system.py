@@ -32,6 +32,7 @@ for name in (*headers, "mbedtls/x509.h"):
     path = build / "stubs" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('#include "'+('agent_system_dynamic_stubs.h' if args.dynamic or community_mode or args.dynamic_cancel else 'agent_system_stubs.h')+'"\n', encoding="utf-8")
+(build / "stubs/esp_wifi.h").write_text('#include "wifi_download_stubs.h"\n', encoding="utf-8")
 (build / "stubs/esp_idf_version.h").write_text('#define ESP_IDF_VERSION_MAJOR 5\n', encoding="utf-8")
 json_dir = root / "managed_components/espressif__cjson/cJSON"
 environment = os.environ.copy()
@@ -47,6 +48,7 @@ if os.name == "nt":
 else:
     compiler = "c++"
 includes = [build / "stubs", root / "tests", root / "components/agent_system/include",
+            root / "components/agent_link/src/transports/wifi",
             root / "components/agent_link/src/ota", root / "components/amoled_ui/include", root / "factory/waveshare-amoled-175/ui", json_dir]
 sources = [root / "tests/agent_system_test.cc", root / "components/agent_system/agent_system.cc",
            root / "components/agent_system/cover_cache.cc",json_dir / "cJSON.c"]
@@ -84,7 +86,7 @@ for role in roles:
             selected_sources.append(root/'components/agent_system/dynamic_slots.cc')
             if role == 'dynamic_cancel': selected_sources[0] = root/'tests/agent_system_dynamic_cancel_test.cc'
         if role == 'community':
-            definitions += ['AGENT_SYSTEM_COMMUNITY=1', 'AGENT_COMMUNITY_ORIGIN="https://sugapi.deotaland.cn"', 'AGENT_COMMUNITY_PRODUCT=1', 'AGENT_COMMUNITY_REVISION=1']
+            definitions += ['AGENT_SYSTEM_DOWNLOAD_WIFI=1', 'AGENT_SYSTEM_COMMUNITY=1', 'AGENT_COMMUNITY_ORIGIN="https://sugapi.deotaland.cn"', 'AGENT_COMMUNITY_PRODUCT=1', 'AGENT_COMMUNITY_REVISION=1']
             selected_sources[0] = root/('tests/firmware_download_code_test.cc' if args.download_codes else 'tests/agent_system_community_test.cc')
             selected_sources.append(root/'components/agent_system/community_store.cc')
             if args.download_code_snapshot:

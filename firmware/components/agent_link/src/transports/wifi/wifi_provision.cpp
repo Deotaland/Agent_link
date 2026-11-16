@@ -18,6 +18,7 @@
 #if SOC_WIFI_SUPPORTED
 
 #include "wifi_provision.h"
+#include "portal_language.h"
 
 #include <cstring>
 #include <cstdio>
@@ -219,6 +220,7 @@ esp_err_t RootGet(httpd_req_t* req) {
     std::string opts;
     { std::lock_guard<std::mutex> lk(s_scan_mtx); opts = s_scan_options; }
     std::string page(portal_html_start);   // EMBED_TXTFILES blob is NUL-terminated
+    ApplyPortalLanguage(page);
     ReplaceAll(page, "{{SSIDS}}", opts.c_str());
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, page.c_str(), page.size());
@@ -273,6 +275,7 @@ esp_err_t ProvisionPost(httpd_req_t* req) {
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     std::string page(connecting_html_start);
+    ApplyPortalLanguage(page);
     std::string console_url;
     HtmlAttrAppend(console_url, s_platform_url.c_str());
     ReplaceAll(page, "{{PLATFORM_URL}}", console_url.c_str());

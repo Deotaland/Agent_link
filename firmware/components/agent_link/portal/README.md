@@ -25,5 +25,14 @@ CSS switch `.zh`/`.en` visibility without navigation. This works in captive-port
 browsers that restrict JavaScript. Join progress uses JavaScript; the device
 continues connecting if the page cannot poll.
 
+`{{LANG_CHECKED}}` and `{{LANGUAGE}}` are filled by `portal_language.h` in both
+responses. Sugarat Factory and Agent_link images use an English default; other
+profiles keep their existing Chinese default. This changes presentation only;
+form fields, URLs and status codes remain unchanged. Check with:
+
+```powershell
+python firmware/tests/test_ui_language.py
+```
+
 Keep all assets inline. A phone connected to the setup hotspot may have no
 internet access, so external fonts, scripts and images are unavailable.

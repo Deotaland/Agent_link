@@ -126,28 +126,87 @@ int main() {
     fixture::open_errors.clear();
     const std::string file_url = "https://cdn.example.com/retry.bin";
     fixture::responses[file_url] = "file bytes";
+    // Catalog/cover requests must not alter WiFi power saving.
+    {
+        community::File file;
+        assert(file.Open(file_url.c_str()) == ESP_OK);
+    }
+    assert(wifi_fixture::power_save == WIFI_PS_MIN_MODEM && wifi_fixture::changes.empty());
     fixture::open_errors[file_url] = ESP_ERR_HTTP_CONNECT;
     fixture::tls_errors[file_url] = {MBEDTLS_ERR_X509_FATAL_ERROR, 0};
     auto requests = fixture::requests.size();
     {
         community::File file;
         assert(file.OpenDownload(file_url.c_str()) == kCertificateError);
+        assert(wifi_fixture::power_save == WIFI_PS_NONE);
     }
     assert(fixture::requests.size() == requests + 1);
+    assert(wifi_fixture::power_save == WIFI_PS_MIN_MODEM);
+    assert((wifi_fixture::changes == std::vector<wifi_ps_type_t>{WIFI_PS_NONE, WIFI_PS_MIN_MODEM}));
     // An ordinary transport failure still gets bounded retries.
     requests = fixture::requests.size();
+    wifi_fixture::changes.clear();
     {
         community::File file;
         assert(file.OpenDownload(file_url.c_str()) == ESP_ERR_HTTP_CONNECT);
     }
     assert(fixture::requests.size() == requests + 3);
+    assert(wifi_fixture::power_save == WIFI_PS_MIN_MODEM && wifi_fixture::changes.size() == 2);
     fixture::open_errors.clear();
+    // Keep the guard active through body reads; restore even when a read fails.
+    for (const int bytes : {4, -1}) {
+        fixture::read_results[file_url] = {bytes};
+        {
+            community::File file;
+            assert(file.OpenDownload(file_url.c_str()) == ESP_OK);
+            char buffer[4];
+            assert(esp_http_client_read(file.handle, buffer, sizeof buffer) == bytes);
+            assert(wifi_fixture::power_save == WIFI_PS_NONE);
+        }
+        assert(wifi_fixture::power_save == WIFI_PS_MIN_MODEM);
+    }
+    fixture::read_results.clear();
+    // Cancellation after opening still restores the exact prior (MAX) mode.
+    wifi_fixture::power_save = WIFI_PS_MAX_MODEM;
+    int opens_before = fixture::opens;
+    {
+        community::File file;
+        assert(file.OpenDownload(
+                   file_url.c_str(),
+                   [](void* before) { return fixture::opens > *static_cast<int*>(before); },
+                   &opens_before) == kCancelled);
+    }
+    assert(wifi_fixture::power_save == WIFI_PS_MAX_MODEM);
+    // Already-awake WiFi and pre-cancelled work must not cause mode changes.
+    wifi_fixture::power_save = WIFI_PS_NONE;
+    wifi_fixture::changes.clear();
     {
         community::File file;
         assert(file.OpenDownload(file_url.c_str()) == ESP_OK);
     }
+    assert(wifi_fixture::power_save == WIFI_PS_NONE && wifi_fixture::changes.empty());
+    wifi_fixture::power_save = WIFI_PS_MIN_MODEM;
+    {
+        community::File file;
+        assert(file.OpenDownload(file_url.c_str(), [](void*) { return true; }) == kCancelled);
+    }
+    assert(wifi_fixture::power_save == WIFI_PS_MIN_MODEM && wifi_fixture::changes.empty());
+    // Missing WiFi state or a failed power change does not block the HTTP result.
+    for (bool query_failed : {true, false}) {
+        wifi_fixture::query_error = query_failed ? ESP_FAIL : ESP_OK;
+        wifi_fixture::set_error = ESP_FAIL;
+        wifi_fixture::changes.clear();
+        {
+            community::File file;
+            assert(file.OpenDownload(file_url.c_str()) == ESP_OK);
+        }
+        assert(wifi_fixture::power_save == WIFI_PS_MIN_MODEM);
+        assert(wifi_fixture::changes.size() == (query_failed ? 0u : 1u));
+    }
+    wifi_fixture::query_error = wifi_fixture::set_error = ESP_OK;
     assert(fixture::active_http_clients == 0);
     std::cout
         << "Firmware codes: anonymous GET, leading zeroes, nested metadata, hardware/products, "
-           "MD5, refreshed URLs, changed releases, errors, retries and cancellation passed.\n";
+           "MD5, refreshed URLs, changed releases, errors, retries, cancellation and WiFi power "
+           "restoration passed.\n";
 }

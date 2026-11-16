@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="{{LANGUAGE}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -30,9 +30,9 @@ a{color:var(--acc)}
 </style>
 </head>
 <body>
-<input type="checkbox" id="lang" onchange="render()">
+<input type="checkbox" id="lang" onchange="render()" {{LANG_CHECKED}}>
 <div class="card">
-<div class="langbar"><label for="lang" class="langbtn"><span class="zh">English</span><span class="en">中文</span></label></div>
+<div class="langbar"><label for="lang" class="langbtn"><span class="zh">English</span><span class="en">Chinese</span></label></div>
 <h1 id="t"><span class="zh">正在连接…</span><span class="en">Connecting…</span></h1>
 <p class="sub" id="m"><span class="zh">设备正在接入 WiFi，请保持本页打开。</span><span class="en">The device is joining WiFi. Keep this page open.</span></p>
 <div class="spin" id="sp"></div>

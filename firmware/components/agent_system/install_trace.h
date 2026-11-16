@@ -27,6 +27,13 @@ class InstallTrace {
         LogStage();
         state.stage = stage;
         stage_at_ = esp_timer_get_time();
+        if (stage == InstallStage::kDownload) {
+            logged_at_ = stage_at_;
+            logged_bytes_ = state.received;
+            logged_read_us_ = read_us_;
+            logged_write_us_ = write_us_;
+            max_read_us_ = 0;
+        }
         Notify();
         return !Cancelled();
     }
@@ -41,16 +48,35 @@ class InstallTrace {
         state.received = bytes;
         read_us_ += read_us;
         write_us_ += write_us;
+        max_read_us_ = std::max(max_read_us_, read_us);
         state.read_ms = read_us_ / 1000;
         state.write_ms = write_us_ / 1000;
         Notify();
         const int64_t now = esp_timer_get_time();
-        if (now - logged_at_ >= 5000000) {
-            ESP_LOGD("agent_system.install", "bytes=%lu/%lu read_ms=%lu write_ms=%lu",
-                     static_cast<unsigned long>(bytes), static_cast<unsigned long>(state.total),
-                     static_cast<unsigned long>(state.read_ms),
-                     static_cast<unsigned long>(state.write_ms));
+        if (now - logged_at_ >= 10000000) {
+            const auto rate =
+                uint64_t(bytes - logged_bytes_) * 10000000 / (now - logged_at_) / 1024;
+#if defined(AGENT_SYSTEM_DOWNLOAD_WIFI)
+            // Bounded installation progress stays visible at the normal Info level.
+            constexpr auto level = ESP_LOG_INFO;
+#else
+            constexpr auto level = ESP_LOG_DEBUG;
+#endif
+            ESP_LOG_LEVEL_LOCAL(level, "agent_system.install",
+                                "progress bytes=%lu/%lu KiB/s=%llu.%llu read_ms=%lld write_ms=%lld "
+                                "max_read_ms=%lld",
+                                static_cast<unsigned long>(bytes),
+                                static_cast<unsigned long>(state.total),
+                                static_cast<unsigned long long>(rate / 10),
+                                static_cast<unsigned long long>(rate % 10),
+                                static_cast<long long>((read_us_ - logged_read_us_) / 1000),
+                                static_cast<long long>((write_us_ - logged_write_us_) / 1000),
+                                static_cast<long long>(max_read_us_ / 1000));
             logged_at_ = now;
+            logged_bytes_ = bytes;
+            logged_read_us_ = read_us_;
+            logged_write_us_ = write_us_;
+            max_read_us_ = 0;
         }
     }
     esp_err_t Finish(esp_err_t error) {
@@ -102,5 +128,7 @@ class InstallTrace {
     void* context_;
     int64_t started_ = esp_timer_get_time(), stage_at_ = started_, logged_at_ = started_;
     int64_t read_us_ = 0, write_us_ = 0;
+    uint32_t logged_bytes_ = 0;
+    int64_t logged_read_us_ = 0, logged_write_us_ = 0, max_read_us_ = 0;
 };
 }  // namespace agent_system

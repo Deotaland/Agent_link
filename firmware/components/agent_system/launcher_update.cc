@@ -1,3 +1,4 @@
+#include "ui_text.h"
 #include "launcher_update.h"
 #include "agent_system.h"
 #include "agent_launcher_boot.h"
@@ -173,29 +174,44 @@ esp_err_t Request(const std::string& path, Status& value, Json& root) {
              (unsigned long)value.elapsed_ms);
     if (err != ESP_OK)
         return Fail(value, err,
-                    cancelled ? "已取消更新操作"
+                    cancelled ? DefaultUiText("已取消更新操作", "Update cancelled")
                     : err == kCertificateError
-                        ? "更新服务证书校验失败，请检查设备时间或更新启动器证书支持"
-                        : "更新服务连接失败或响应不完整，请检查网络后重试");
+                        ? DefaultUiText("更新服务证书校验失败，请检查设备时间或更新启动器证书支持",
+                                        "Update service certificate verification failed. Check the "
+                                        "device time or update Launcher certificate support.")
+                        : DefaultUiText("更新服务连接失败或响应不完整，请检查网络后重试",
+                                        "Update service connection failed or response incomplete. "
+                                        "Check the network and retry."));
     root.reset(cJSON_ParseWithLength(body.c_str(), body.size() + 1));
     if (value.http_status != 200) {
         char text[384];
-        snprintf(text, sizeof text, "升级服务返回 HTTP %d：%.250s", value.http_status,
-                 root ? String(root.get(), "message") : "服务器未返回错误详情");
+        snprintf(text, sizeof text,
+                 DefaultUiText("升级服务返回 HTTP %d：%.250s",
+                               "Update service returned HTTP %d: %.250s"),
+                 value.http_status,
+                 root ? String(root.get(), "message")
+                      : DefaultUiText("服务器未返回错误详情",
+                                      "No error details returned by the server"));
         return Fail(value, kStoreError, text);
     }
     uint64_t code;
     if (!root || !Number(root.get(), "code", &code, 0))
-        return Fail(value, ESP_ERR_INVALID_RESPONSE, "升级接口缺少有效的业务状态码");
+        return Fail(value, ESP_ERR_INVALID_RESPONSE,
+                    DefaultUiText("升级接口缺少有效的业务状态码",
+                                  "Update response has no valid result code"));
     auto* success = cJSON_GetObjectItemCaseSensitive(root.get(), "success");
     if (code || (success && !cJSON_IsTrue(success))) {
         char text[384];
-        snprintf(text, sizeof text, "升级服务拒绝请求（code=%llu）：%.250s",
+        snprintf(text, sizeof text,
+                 DefaultUiText("升级服务拒绝请求（code=%llu）：%.250s",
+                               "Update service rejected the request (code=%llu): %.250s"),
                  (unsigned long long)code, String(root.get(), "message"));
         return Fail(value, kStoreError, text);
     }
     if (!root || !cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(root.get(), "data")))
-        return Fail(value, ESP_ERR_INVALID_RESPONSE, "升级接口响应缺少有效的 data 字段");
+        return Fail(value, ESP_ERR_INVALID_RESPONSE,
+                    DefaultUiText("升级接口响应缺少有效的 data 字段",
+                                  "Update response has no valid data object"));
     return ESP_OK;
 }
 esp_err_t CheckNow(Status& value, bool refresh = false) {
@@ -210,12 +226,18 @@ esp_err_t CheckNow(Status& value, bool refresh = false) {
     auto* data = cJSON_GetObjectItemCaseSensitive(root.get(), "data");
     auto* update = cJSON_GetObjectItemCaseSensitive(data, "has_update");
     if (!cJSON_IsBool(update))
-        return Fail(value, ESP_ERR_INVALID_RESPONSE, "升级接口缺少 has_update");
+        return Fail(
+            value, ESP_ERR_INVALID_RESPONSE,
+            DefaultUiText("升级接口缺少 has_update", "Update response is missing has_update"));
     if (!cJSON_IsTrue(update)) {
         if (refresh)
-            return Fail(value, ESP_ERR_INVALID_RESPONSE, "所选更新已不可用，请重新检查更新");
+            return Fail(
+                value, ESP_ERR_INVALID_RESPONSE,
+                DefaultUiText("所选更新已不可用，请重新检查更新",
+                              "This update is no longer available. Check for updates again."));
         value.state = State::kCurrent;
-        snprintf(value.message, sizeof value.message, "已是最新版本");
+        snprintf(value.message, sizeof value.message,
+                 DefaultUiText("已是最新版本", "Launcher is up to date"));
         Publish(value);
         Persist(value);
         return ESP_OK;
@@ -231,20 +253,30 @@ esp_err_t CheckNow(Status& value, bool refresh = false) {
         strcmp(String(data, "firmware_type"), "ota") || strlen(md5) != 32 ||
         !String(data, "version")[0] || strlen(String(data, "version")) >= sizeof value.version)
         return Fail(value, ESP_ERR_INVALID_RESPONSE,
-                    "更新信息不兼容：需要本产品的官方 ESP32-S3 启动器纯应用镜像，且不超过 3MiB");
+                    DefaultUiText(
+                        "更新信息不兼容：需要本产品的官方 ESP32-S3 启动器纯应用镜像，且不超过 3MiB",
+                        "Incompatible update: an official ESP32-S3 Launcher app image for this "
+                        "product, up to 3 MiB, is required."));
     for (size_t i = 0; i < 32; ++i)
         if (!((md5[i] >= '0' && md5[i] <= '9') || (md5[i] >= 'a' && md5[i] <= 'f') ||
               (md5[i] >= 'A' && md5[i] <= 'F')))
-            return Fail(value, ESP_ERR_INVALID_RESPONSE, "更新信息中的 MD5 格式无效");
+            return Fail(value, ESP_ERR_INVALID_RESPONSE,
+                        DefaultUiText("更新信息中的 MD5 格式无效",
+                                      "Update metadata contains an invalid MD5"));
     if (refresh && (id != value.firmware_id || code != value.version_code || bytes != value.size ||
                     strcmp(String(data, "version"), value.version) || strcasecmp(md5, value.md5)))
         return Fail(value, ESP_ERR_INVALID_RESPONSE,
-                    "所选固件或校验信息已变化，请重新检查更新后确认");
+                    DefaultUiText("所选固件或校验信息已变化，请重新检查更新后确认",
+                                  "The selected firmware or checksum has changed. Check for "
+                                  "updates and confirm again."));
     const char* url = String(data, "download_url");
     if (!url[0])
-        return Fail(value, ESP_ERR_INVALID_RESPONSE, "更新接口未返回下载链接，请重新检查更新");
+        return Fail(value, ESP_ERR_INVALID_RESPONSE,
+                    DefaultUiText("更新接口未返回下载链接，请重新检查更新",
+                                  "No download URL returned. Check for updates again."));
     if (strlen(url) >= sizeof value.url)
-        return Fail(value, ESP_ERR_INVALID_SIZE, "更新下载链接过长");
+        return Fail(value, ESP_ERR_INVALID_SIZE,
+                    DefaultUiText("更新下载链接过长", "Update download URL is too long"));
     value.firmware_id = id;
     value.version_code = code;
     value.size = bytes;
@@ -257,7 +289,9 @@ esp_err_t CheckNow(Status& value, bool refresh = false) {
         return ESP_OK;
     value.state = State::kAvailable;
     snprintf(value.message, sizeof value.message, "%s",
-             value.forced ? "发现重要更新，请及时升级" : "发现新版本");
+             value.forced
+                 ? DefaultUiText("发现重要更新，请及时升级", "An important update is available")
+                 : DefaultUiText("发现新版本", "A new version is available"));
     Publish(value);
     return ESP_OK;
 }
@@ -289,16 +323,24 @@ esp_err_t Validate(const esp_partition_t* part, const Status& value) {
 esp_err_t InstallNow(Status& value) {
     std::unique_lock<std::mutex> operation(OperationMutex(), std::try_to_lock);
     if (!operation.owns_lock())
-        return Fail(value, ESP_ERR_INVALID_STATE, "应用安装或封面同步正在进行，请完成后重试");
+        return Fail(
+            value, ESP_ERR_INVALID_STATE,
+            DefaultUiText("应用安装或封面同步正在进行，请完成后重试",
+                          "An app installation or cover sync is running. Wait for it to finish."));
     alboot_record state;
     const int running = Running();
     if (running < 0 || Load(state) || state.pending != ALBOOT_NO_SLOT || state.active != running)
         return Fail(value, ESP_ERR_INVALID_STATE,
-                    "当前启动器尚未确认正常运行，或分区布局不支持本次更新");
+                    DefaultUiText("当前启动器尚未确认正常运行，或分区布局不支持本次更新",
+                                  "Launcher health is not confirmed, or this partition layout does "
+                                  "not support the update."));
     const unsigned target = 1u - running;
     auto* part = Partition(target);
     if (!part)
-        return Fail(value, ESP_ERR_NOT_FOUND, "缺少专用 A/B 分区，请先通过 USB 烧录完整初始固件");
+        return Fail(value, ESP_ERR_NOT_FOUND,
+                    DefaultUiText("缺少专用 A/B 分区，请先通过 USB 烧录完整初始固件",
+                                  "Dedicated A/B partitions are missing. Install the full initial "
+                                  "USB package first."));
     const auto start = esp_timer_get_time();
     // Recheck the selected release anonymously before touching flash; signed URLs expire.
     auto err = CheckNow(value, true);
@@ -308,32 +350,49 @@ esp_err_t InstallNow(Status& value) {
     err = file.OpenDownload(value.url, Cancelled, nullptr);
     value.http_status = file.handle ? esp_http_client_get_status_code(file.handle) : 0;
     if (err != ESP_OK)
-        return Fail(value, err,
-                    err == kCertificateError
-                        ? "下载服务器证书校验失败，请检查设备时间或更新启动器证书支持"
-                        : "固件下载连接失败或链接已失效，请重新检查更新");
+        return Fail(
+            value, err,
+            err == kCertificateError
+                ? DefaultUiText("下载服务器证书校验失败，请检查设备时间或更新启动器证书支持",
+                                "Download certificate verification failed. Check the device time "
+                                "or update Launcher certificate support.")
+                : DefaultUiText(
+                      "固件下载连接失败或链接已失效，请重新检查更新",
+                      "Download connection failed or the URL expired. Check for updates again."));
     const auto length = esp_http_client_get_content_length(file.handle);
     if (length >= 0 && length != value.size)
-        return Fail(value, ESP_ERR_INVALID_SIZE, "下载文件大小与更新信息不一致");
+        return Fail(value, ESP_ERR_INVALID_SIZE,
+                    DefaultUiText("下载文件大小与更新信息不一致",
+                                  "Download size does not match the update metadata"));
     state.valid &= (uint8_t)~(1u << target);
     if (Save(state))
-        return Fail(value, ESP_FAIL, "无法保存升级准备状态，旧启动器已保留");
+        return Fail(value, ESP_FAIL,
+                    DefaultUiText(
+                        "无法保存升级准备状态，旧启动器已保留",
+                        "Could not save update preparation state. The old Launcher is preserved."));
     std::unique_ptr<uint8_t, decltype(&free)> buffer(
         static_cast<uint8_t*>(heap_caps_malloc(16384, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)), free);
     if (!buffer)
-        return Fail(value, ESP_ERR_NO_MEM, "PSRAM 下载缓冲区分配失败");
+        return Fail(value, ESP_ERR_NO_MEM,
+                    DefaultUiText("PSRAM 下载缓冲区分配失败",
+                                  "Could not allocate the PSRAM download buffer"));
     md5_context_t md5;
     esp_rom_md5_init(&md5);
     uint32_t erased = 0;
     value.state = State::kDownloading;
     value.received = 0;
-    snprintf(value.message, sizeof value.message, "正在下载到启动器 %c，旧版本保持可用",
+    snprintf(value.message, sizeof value.message,
+             DefaultUiText("正在下载到启动器 %c，旧版本保持可用",
+                           "Downloading to Launcher %c. The old version remains available."),
              'A' + target);
     Publish(value);
     int64_t published = 0, read_us = 0, write_us = 0;
     while (value.received < value.size) {
         if (cancelled)
-            return Fail(value, kCancelled, "更新已取消，旧启动器保持可用；下次更新会重新下载");
+            return Fail(value, kCancelled,
+                        DefaultUiText("更新已取消，旧启动器保持可用；下次更新会重新下载",
+                                      "Update cancelled. The old Launcher remains available; the "
+                                      "next attempt restarts the download."));
         const auto at = esp_timer_get_time();
         const int bytes =
             esp_http_client_read(file.handle, reinterpret_cast<char*>(buffer.get()),
@@ -341,12 +400,19 @@ esp_err_t InstallNow(Status& value) {
         read_us += esp_timer_get_time() - at;
         value.network_errno = esp_http_client_get_errno(file.handle);
         if (bytes <= 0)
-            return Fail(value, ESP_ERR_HTTP_CONNECT, "固件下载中断或提前结束，请检查网络后重试");
+            return Fail(
+                value, ESP_ERR_HTTP_CONNECT,
+                DefaultUiText(
+                    "固件下载中断或提前结束，请检查网络后重试",
+                    "Firmware download interrupted or ended early. Check the network and retry."));
         while (erased < value.received + bytes) {
             const uint32_t chunk = std::min<uint32_t>(65536, part->size - erased);
             err = esp_partition_erase_range(part, erased, chunk);
             if (err != ESP_OK)
-                return Fail(value, err, "备用启动器分区擦除失败，旧版本未受影响");
+                return Fail(value, err,
+                            DefaultUiText("备用启动器分区擦除失败，旧版本未受影响",
+                                          "Could not erase the inactive Launcher partition. The "
+                                          "old version is unchanged."));
             erased += chunk;
             vTaskDelay(pdMS_TO_TICKS(5) + 1);
         }
@@ -354,7 +420,11 @@ esp_err_t InstallNow(Status& value) {
         err = esp_partition_write(part, value.received, buffer.get(), bytes);
         write_us += esp_timer_get_time() - write_at;
         if (err != ESP_OK)
-            return Fail(value, err, "备用启动器写入失败，旧版本未受影响");
+            return Fail(
+                value, err,
+                DefaultUiText(
+                    "备用启动器写入失败，旧版本未受影响",
+                    "Could not write the inactive Launcher. The old version is unchanged."));
         esp_rom_md5_update(&md5, buffer.get(), bytes);
         value.received += bytes;
         value.elapsed_ms = (esp_timer_get_time() - start) / 1000;
@@ -367,16 +437,22 @@ esp_err_t InstallNow(Status& value) {
     char extra;
     if (esp_http_client_read(file.handle, &extra, 1) != 0 ||
         !esp_http_client_is_complete_data_received(file.handle))
-        return Fail(value, ESP_ERR_INVALID_SIZE, "下载文件长度不符或传输未完整结束");
+        return Fail(value, ESP_ERR_INVALID_SIZE,
+                    DefaultUiText("下载文件长度不符或传输未完整结束",
+                                  "Download length mismatch or incomplete transfer"));
     uint8_t digest[16];
     char hex[33];
     esp_rom_md5_final(digest, &md5);
     for (unsigned i = 0; i < 16; ++i)
         snprintf(hex + i * 2, 3, "%02x", digest[i]);
     if (strcasecmp(hex, value.md5))
-        return Fail(value, ESP_ERR_INVALID_CRC, "固件 MD5 校验失败，请重新下载");
+        return Fail(value, ESP_ERR_INVALID_CRC,
+                    DefaultUiText("固件 MD5 校验失败，请重新下载",
+                                  "Firmware MD5 verification failed. Download again."));
     value.state = State::kVerifying;
-    snprintf(value.message, sizeof value.message, "正在校验已写入镜像、硬件型号和启动能力");
+    snprintf(value.message, sizeof value.message,
+             DefaultUiText("正在校验已写入镜像、硬件型号和启动能力",
+                           "Verifying the written image, hardware and boot capability"));
     Publish(value);
     // Read back flash, not only the network stream, before publishing the trial.
     esp_rom_md5_init(&md5);
@@ -384,7 +460,8 @@ esp_err_t InstallNow(Status& value) {
         const uint32_t bytes = std::min<uint32_t>(16384, value.size - at);
         err = esp_partition_read(part, at, buffer.get(), bytes);
         if (err != ESP_OK)
-            return Fail(value, err, "已写入固件读取失败");
+            return Fail(value, err,
+                        DefaultUiText("已写入固件读取失败", "Could not read the written firmware"));
         esp_rom_md5_update(&md5, buffer.get(), bytes);
         vTaskDelay(1);
     }
@@ -392,22 +469,33 @@ esp_err_t InstallNow(Status& value) {
     for (unsigned i = 0; i < 16; ++i)
         snprintf(hex + i * 2, 3, "%02x", digest[i]);
     if (strcasecmp(hex, value.md5))
-        return Fail(value, ESP_ERR_INVALID_CRC, "Flash 回读 MD5 校验失败");
+        return Fail(
+            value, ESP_ERR_INVALID_CRC,
+            DefaultUiText("Flash 回读 MD5 校验失败", "Flash readback MD5 verification failed"));
     if (Validate(part, value) != ESP_OK)
         return Fail(value, ESP_ERR_INVALID_VERSION,
-                    "镜像不是匹配本板分区布局、版本和产品的 A/B 启动器");
+                    DefaultUiText("镜像不是匹配本板分区布局、版本和产品的 A/B 启动器",
+                                  "The image is not an A/B Launcher matching this board, layout, "
+                                  "version and product."));
     if (cancelled)
-        return Fail(value, kCancelled, "更新已取消，未切换启动器");
+        return Fail(value, kCancelled,
+                    DefaultUiText("更新已取消，未切换启动器",
+                                  "Update cancelled. Launcher was not switched."));
     state.pending = target;
     state.attempted = 0;
     state.versions[target] = value.version_code;
     state.result = 0;
     if (Save(state))
-        return Fail(value, ESP_FAIL, "固件校验通过，但升级启动记录保存失败");
+        return Fail(
+            value, ESP_FAIL,
+            DefaultUiText("固件校验通过，但升级启动记录保存失败",
+                          "Firmware verified, but the update boot record could not be saved."));
     value.state = State::kReady;
     value.elapsed_ms = (esp_timer_get_time() - start) / 1000;
     snprintf(value.message, sizeof value.message,
-             "下载和校验完成，请重启试运行新版；失败会返回旧版");
+             DefaultUiText("下载和校验完成，请重启试运行新版；失败会返回旧版",
+                           "Download verified. Restart to try the new version; failure returns to "
+                           "the old version."));
     ESP_LOGI(kTag, "staged slot=%c bytes=%lu elapsed_ms=%lu read_ms=%lld write_ms=%lld",
              'A' + target, (unsigned long)value.received, (unsigned long)value.elapsed_ms,
              (long long)(read_us / 1000), (long long)(write_us / 1000));
@@ -426,7 +514,9 @@ void Worker(void*) {
         else if (action == 2)
             error = InstallNow(value);
         if (error != ESP_OK && value.state != State::kError)
-            (void)Fail(value, error, "更新操作失败，请检查网络后重试");
+            (void)Fail(value, error,
+                       DefaultUiText("更新操作失败，请检查网络后重试",
+                                     "Update failed. Check the network and retry."));
         task_busy = false;
     }
 }
@@ -444,7 +534,9 @@ esp_err_t Init() {
     Status value;
     value.current_code = AGENT_LAUNCHER_VERSION_CODE;
     snprintf(value.current, sizeof value.current, "%s", AGENT_LAUNCHER_VERSION);
-    snprintf(value.message, sizeof value.message, "检查 Agent_link Launcher 新版本");
+    snprintf(
+        value.message, sizeof value.message,
+        DefaultUiText("检查 Sugarat Launcher 新版本", "Check for Sugarat Launcher updates"));
     Receipt receipt{};
     size_t bytes = sizeof receipt;
     nvs_handle_t handle;
@@ -465,13 +557,19 @@ esp_err_t Init() {
         if (state.result == ALBOOT_ROLLBACK) {
             value.state = State::kError;
             snprintf(value.message, sizeof value.message,
-                     "新版启动器未通过启动确认，已自动恢复旧版");
+                     DefaultUiText("新版启动器未通过启动确认，已自动恢复旧版",
+                                   "The new Launcher did not pass boot confirmation. The old "
+                                   "version was restored."));
         } else if (state.result == ALBOOT_SUCCESS)
-            snprintf(value.message, sizeof value.message, "启动器升级成功，当前版本 %s",
+            snprintf(value.message, sizeof value.message,
+                     DefaultUiText("启动器升级成功，当前版本 %s",
+                                   "Launcher update successful. Current version: %s"),
                      value.current);
         if (state.pending < 2 && state.pending != Running()) {
             value.state = State::kReady;
-            snprintf(value.message, sizeof value.message, "新版已准备好，请重启试运行");
+            snprintf(value.message, sizeof value.message,
+                     DefaultUiText("新版已准备好，请重启试运行",
+                                   "The new version is ready. Restart to try it."));
         }
     }
     Publish(value);
@@ -486,7 +584,8 @@ esp_err_t Check() {
     value.current_code = AGENT_LAUNCHER_VERSION_CODE;
     snprintf(value.current, sizeof value.current, "%s", AGENT_LAUNCHER_VERSION);
     value.state = State::kChecking;
-    snprintf(value.message, sizeof value.message, "正在检查新版本");
+    snprintf(value.message, sizeof value.message,
+             DefaultUiText("正在检查新版本", "Checking for updates"));
     task_busy = true;
     cancelled = false;
     Publish(value);
@@ -556,7 +655,10 @@ esp_err_t ConfirmHealthy() {
              (unsigned long)AGENT_LAUNCHER_VERSION_CODE);
     auto value = Read();
     if (state.result == ALBOOT_SUCCESS) {
-        snprintf(value.message, sizeof value.message, "启动器升级成功，当前版本 %s", value.current);
+        snprintf(value.message, sizeof value.message,
+                 DefaultUiText("启动器升级成功，当前版本 %s",
+                               "Launcher update successful. Current version: %s"),
+                 value.current);
         value.state = State::kIdle;
         value.error = ESP_OK;
         Publish(value);

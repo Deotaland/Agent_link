@@ -74,7 +74,9 @@ def convert(source, output):
                 pcm_rate=16000, pcm_bytes=len(pcm), animation_bytes=cursor)
 
 
-def package(output, info, include_factory=False):
+def package(output, info, include_factory=False, include_app=False):
+    if include_app and not include_factory:
+        raise ValueError('A preinstalled app requires a full Factory package')
     profile = resolve_profiles()['sdgoods-wifi']
     geometry = profile['layout_info']['partitions']['appdata']
     idf = Path(os.environ['IDF_PATH'])
@@ -127,6 +129,50 @@ def package(output, info, include_factory=False):
         metadata = json.loads((factory/'flasher_args.json').read_text(encoding='utf-8'))
         files = {offset: str((factory/file).resolve())
                  for offset, file in metadata['flash_files'].items()}
+        if include_app:
+            from build_firmware import default_image_role, system_images
+            from firmware_image import image_info
+            role = default_image_role(profile, system_images(profile))
+            app = ROOT/'build/images'/profile['name']/role
+            app_record = checked_artifacts(app, profile, role)
+            factory_record = checked_artifacts(factory, profile, 'factory')
+            if app_record['idf'] != factory_record['idf'] or (
+                    app/'partition_table/partition-table.bin').read_bytes() != (
+                        factory/'partition_table/partition-table.bin').read_bytes():
+                raise ValueError('Preinstalled app and Factory must use the same SDK and layout')
+            app_plan = app_record['plan']
+            seed = image_info(app/'agent_link.bin', profile['model'], app_plan['app_abi'],
+                              app_plan['app_max_bytes'], chip=app_plan['chip'])
+            if seed['app_id'] != app_plan['app_id'] or seed['app_id'] != 'agent.status':
+                raise ValueError('The default Sugarat app must be the selected Agent_link image')
+            files[hex(app_plan['app_offset'])] = str((app/'agent_link.bin').resolve())
+            info['preinstalled_app'] = dict(seed, role=role, offset=hex(app_plan['app_offset']))
+            cover = ROOT/'apps/sdgoods-wifi/assets/agent_link_cover.raw'
+            pixels = cover.read_bytes()
+            header = struct.Struct('<8sBBHHHII40s')
+            if len(pixels) != 64 + 132*132*3:
+                raise ValueError('Default app cover has an invalid length')
+            magic, version, fmt, width, height, reserved, length, crc, identity = header.unpack_from(pixels)
+            if ((magic, version, fmt, width, height, reserved, length) !=
+                    (b'ALCOVER1', 1, 1, 132, 132, 0, 132*132*3) or
+                    identity.rstrip(b'\0') != seed['app_id'].encode('ascii') or
+                    zlib.crc32(pixels[64:]) & 0xffffffff != crc):
+                raise ValueError('Default app cover identity, format or CRC does not match')
+            reserve = app_plan['cover_reserve']
+            # Match the existing recovery seed normalization; the initial pool
+            # shrinks to this slot before Launcher reads its tail cover.
+            slot_size = (seed['size'] + reserve + 0xffff) & ~0xffff
+            cover_at = app_plan['app_offset'] + slot_size - reserve
+            pool = app_plan['partitions'][app_plan['partition']]
+            if (len(pixels) > reserve or cover_at < app_plan['app_offset'] + seed['size'] or
+                    cover_at + reserve > pool['offset'] + pool['size']):
+                raise ValueError('Default cover does not fit the preinstalled app slot')
+            files[hex(cover_at)] = str(cover.resolve())
+            info['preinstalled_app']['cover'] = dict(offset=hex(cover_at), size=len(pixels),
+                sha256=hashlib.sha256(pixels).hexdigest(), slot_size=slot_size)
+        else:
+            info.pop('preinstalled_app', None)
+        info['app_pool_preinstalled'] = include_app
         files[hex(geometry['offset'])] = str(image.resolve())
         merged = output/'factory-with-animation-merged.bin'
         command = [sys.executable, '-m', 'esptool', '--chip', 'esp32s3', 'merge-bin', '-o', str(merged)]
@@ -156,11 +202,13 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT/'build/boot-animation')
     parser.add_argument('--package-factory', action='store_true',
                         help='merge appdata with the current, already built Factory image')
+    parser.add_argument('--install-agent-link', action='store_true',
+                        help='include the verified, already built Agent_link app in the full package')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     info = convert(args.source.resolve(), output)
-    package(output, info, args.package_factory)
+    package(output, info, args.package_factory, args.install_agent_link)
     print(json.dumps(info, indent=2))
 
 

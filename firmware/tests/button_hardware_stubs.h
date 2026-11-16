@@ -361,16 +361,18 @@ inline const char* SettingsPartition() {
 }
 }  // namespace agent_system
 namespace amoled_ui {
-enum class TouchAction { kBack, kHome, kRow, kTouchPoint };
-enum class View { kList, kHardwareTest };
+enum class TouchAction { kBack, kHome, kRow, kTouchPoint, kBrightness };
+enum class View { kList, kHardwareTest, kBrightnessControl };
 struct Input {
     TouchAction action;
     int row;
     int x = -1, y = -1;
+    bool commit = false;
 };
 struct Screen {
     char rows[12][112]{}, title[96]{}, info[384]{}, hardware_status[64]{};
     int row_count = 0;
+    int brightness_percent = 75;
     View kind = View::kList;
     bool local_mode = false;
     HardwareTest hardware_test;

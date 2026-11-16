@@ -63,9 +63,11 @@ prefix = r'''
 #include "amoled_fonts.h"
 #include "amoled_ui_layout.h"
 #include "amoled_ui_controls.h"
+#include "amoled_ui_guides.h"
 #include "amoled_hardware_test.h"
 #include "amoled_label_layout.h"
 #include "amoled_orientation.h"
+#include "amoled_launcher_model.h"
 
 constexpr int DISPLAY_ROTATION_CW=0;
 using esp_err_t = int;
@@ -395,7 +397,9 @@ constexpr int NVS_READONLY=0,NVS_READWRITE=1;
 esp_err_t nvs_open(const char*,int,nvs_handle_t*) {return ESP_ERR_INVALID_STATE;}
 esp_err_t nvs_open_from_partition(const char*,const char*,int,nvs_handle_t*) {return ESP_ERR_INVALID_STATE;}
 esp_err_t nvs_get_i8(nvs_handle_t,const char*,int8_t*) {return ESP_ERR_INVALID_STATE;}
+esp_err_t nvs_get_u8(nvs_handle_t,const char*,uint8_t*) {return ESP_ERR_INVALID_STATE;}
 esp_err_t nvs_set_i8(nvs_handle_t,const char*,int8_t) {return ESP_OK;}
+esp_err_t nvs_set_u8(nvs_handle_t,const char*,uint8_t) {return ESP_OK;}
 esp_err_t nvs_commit(nvs_handle_t) {return ESP_OK;}
 void nvs_close(nvs_handle_t) {}
 '''
@@ -407,7 +411,7 @@ void CheckSystemMenu() {
     amoled_ui::Input input{};input.action=amoled_ui::TouchAction::kRow;input.row=6;
     menu.Handle(input);assert(!menu.TakeExit());
     agent_system::menu_return=true;menu.Render(s,1,1,70,false);
-    assert(s.row_count==7 && !strcmp(s.rows[6],amoled_ui::Tr("返回应用选择器","Return to launcher")));
+    assert(s.row_count==7 && !strcmp(s.rows[6],amoled_ui::Tr("退出到启动器","Exit to launcher")));
     menu.Handle(input);assert(menu.TakeExit());
     agent_system::menu_return=false;menu.Handle(input);assert(!menu.TakeExit());
     agent_system::menu_launcher=true;menu.Render(s,1,1,70,false);
@@ -560,12 +564,12 @@ void CheckCarousel(lv_display_t* display) {
 int main(int argc, char** argv) {''')
     post = post.replace('    puts("Native LVGL:', '    CheckCarousel(display);\n    puts("Native LVGL:')
 if args.carousel:
-    post = post.replace('int main(int argc, char** argv) {', 'int main(int argc, char** argv) {\n    card_renderer_ = &amoled_factory::Renderer();')
+    post = post.replace('int main(int argc, char** argv) {', 'int main(int argc, char** argv) {\n    ConfigureTouch(&amoled_factory::Renderer());')
 
 if args.sdgoods:
     import re
     factory_ui = root / 'factory/sdgoods-esp32s3/ui'
-    prefix = '#define AGENT_SYSTEM_ENABLED 1\n#define AMOLED_UI_SIZE 360\n' + prefix
+    prefix = '#define AGENT_LINK_UI_DEFAULT_ENGLISH 1\n#define AGENT_SYSTEM_ENABLED 1\n#define AGENT_SYSTEM_LAYOUT 3\n#define AGENT_SYSTEM_BOARD_MODEL "SDGOODS-ESP32S3"\n#define AMOLED_UI_SIZE 360\n' + prefix
     prefix = re.sub(r'\b466\b', '360', prefix)
     prefix += r"""
 #include "sdgoods_touch_frame.h"
@@ -578,7 +582,13 @@ std::shared_ptr<const CoverPixels> AcquireCover(const Cover& cover) {
 }
 }
 """
-    factory_source = '\n#include "../factory_diagnostics.h"\n' + '\n'.join(line for line in (factory_ui/'factory_view.cc').read_text(encoding='utf-8').splitlines() if not line.startswith('#include'))+'\n'
+    system_header = (root/'components/agent_system/include/agent_system.h').read_text(encoding='utf-8')
+    menu_header = (ui/'include/amoled_system_menu.h').read_text(encoding='utf-8')
+    menu_source = (ui/'amoled_system_menu.cc').read_text(encoding='utf-8')
+    factory_source = '\n'.join(line for line in system_header.splitlines() if not line.startswith(('#include', '#pragma'))) + '\n'
+    factory_source += (root/'tests/sugarat_menu_stubs.h').read_text(encoding='utf-8') + '\n'
+    factory_source += '\n'.join(line for line in (menu_header+'\n'+menu_source).splitlines() if not line.startswith(('#include', '#pragma'))) + '\n'
+    factory_source += '\n#include "../factory_diagnostics.h"\n' + '\n'.join(line for line in (factory_ui/'factory_view.cc').read_text(encoding='utf-8').splitlines() if not line.startswith('#include'))+'\n'
     # Compile the actual update-page renderer into the native LVGL preview.
     update_header = (root/'components/agent_system/include/launcher_update.h').read_text(encoding='utf-8')
     factory_source += '\n'.join(line for line in update_header.splitlines() if not line.startswith(('#include', '#pragma'))) + '\n'
@@ -600,7 +610,8 @@ generated.write_text(prefix+header+fonts+factory_source+source+post,encoding='ut
 with log.open('a',encoding='utf-8') as output:
     subprocess.run([cl,*flags,'/I'+str(root/'tests/co5300_stubs'),'/I'+str(root/'tests'),'/I'+str(root/'components/agent_system/include'),'/I'+str(ui/'include'),'/I'+str(factory_ui),'/std:c++17','/EHsc',str(generated),str(build/'lvgl.lib'),'/Fo'+str(build/'preview.obj'),'/Fe'+str(build/'preview.exe')],env=env,cwd=build,stdout=output,stderr=subprocess.STDOUT,check=True)
 font = root/'boards/common/fonts/cjk_font.bin'
-subprocess.run([str(build/'preview.exe'),str(font)],cwd=build,check=True,timeout=45)
+subprocess.run([str(build/'preview.exe'),str(font),
+    *([str(root/'apps/sdgoods-wifi/assets/agent_link_cover.raw')] if args.sdgoods else [])],cwd=build,check=True,timeout=45)
 from PIL import Image
 for ppm in build.glob('*.ppm'):
     rendered = Image.open(ppm)

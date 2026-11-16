@@ -29,3 +29,8 @@ hardware facade and the restricted app-control policy. Its GPIO6 key controls
 calls, bottom gestures stay inside the app, and Launcher exit is available only
 in the pull-down menu. Managed applications store preferences through the system
 settings partition, preserving SDGOODS agent_nvs isolation from vendor NVS.
+The preinstalled Agent_link app explicitly enables physical top-edge pull-down
+from the center and sides, opening the dark 2x2 **Quick Panel**: **Wi-Fi**, **Sound**,
+**Exit** and **Settings**. **About** is inside Settings. The panel also works
+during provisioning, calls and subpages. This input policy is independent of
+Factory card rendering; other applications retain their default touch regions.

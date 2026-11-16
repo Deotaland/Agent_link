@@ -3,7 +3,7 @@
 Sugarat Button uses physical layout `sdgoods-v5` with a 10 MiB application pool.
 Application data retains its start address and has 13 MiB; configuration/font
 addresses move in this initial USB layout migration. The application ABI
-remains 3; native capability version 2 identifies support for the V5 names. The public name is Agent_link Launcher; IDF project_name remains
+remains 3; native capability version 2 identifies support for the V5 names. The public name is Sugarat Launcher; IDF project_name remains
 SDGOODS_LAUNCHER for unmodified vendor applications.
 
 The CSV is a bootstrap table with one pool-sized `app_pool`. On the first Factory

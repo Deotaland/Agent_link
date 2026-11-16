@@ -42,6 +42,17 @@ partition cache must reload; the UI must verify the installed image after reboot
 before presenting a confirmed success. Installation never silently changes the
 running app. `Launch()` rejects concurrent slot/cover writes.
 
+Sugarat firmware downloads temporarily suspend WiFi modem power saving until
+the file response is closed. Success, cancellation and failure restore the prior
+mode; catalog and cover requests keep their existing power policy. This also
+applies to Launcher A/B updates. Start/end diagnostics report RSSI, power mode
+and TCP receive buffering without network names or credentials. App installation
+progress logs every ten seconds include recent KiB/s, read/write time and the
+longest read in that interval, in addition to the final per-stage timings.
+The Sugarat profile uses a 32 KiB TCP receive window and 26 receive mailbox
+entries, with the existing preference for PSRAM allocations. Physical-device
+throughput and the temporary power increase require device acceptance.
+
 Catalog, install and cover synchronization calls perform blocking work and belong
 on controller workers. They must not run in LVGL, BLE or audio callbacks. Cover
 readers retain immutable PSRAM data while a background update publishes a new

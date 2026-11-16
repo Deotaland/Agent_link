@@ -1,6 +1,6 @@
 # Shared AMOLED UI
 
-Round 466x466 presentation shared by the AMOLED 1.75 and 1.75C profiles.
+Round presentation shared by the 466px AMOLED profiles and 360px Sugarat Button.
 Profiles opt in with `ui_component: "amoled_ui"`; this is not a universal UI
 for every board or display shape.
 
@@ -14,6 +14,26 @@ This component owns:
 - `amoled_ui_language.h`: shared language selection.
 - `amoled_system_menu.*`: network/status/volume/language and return controls,
   enabled when the selected profile provides `agent_system`.
+  Sugarat uses the same dark 2x2 Quick Panel in Factory and native apps, with
+  Wi-Fi/Sound above Exit/Settings and a battery-percentage header. About remains
+  in Settings. Settings is a scrollable list of brightness, Launcher update,
+  About and device tools, without duplicate Wi-Fi/volume entries. Apps require
+  confirmation before returning to Launcher. Other
+  boards retain their existing menu. App-to-Factory update handoff stores only a
+  UI request in isolated settings; download, verification and boot APIs stay in
+  the Launcher.
+  Sugarat defaults to English and restores an explicit saved language choice in
+  both Factory and the Agent_link application.
+  Its volume and brightness shortcuts use a shared vertical capsule with a live
+  percentage and release commit through separate bounded mailboxes. Brightness
+  retains its existing isolated 5–100% setting. The in-call horizontal control
+  and other boards' volume pages remain available.
+  Native apps can pass their touch policy to `StartUi` without a card renderer.
+  Sugarat Agent_link enables the physical top cap, including its sides and busy
+  views; Factory continues to use its renderer's existing touch policy.
+  Both enable left-edge Back with a held-drag badge, release to commit, and
+  drag-back cancellation. The carousel retains app-switch swipes, while other
+  boards keep their existing gesture policy.
 - `amoled_display_transfer.*`: optional launcher worker that owns a PSRAM
   staging buffer and returns borrowed LVGL pixels after synchronous panel IO
   finishes. The UI alone handles LVGL completion, panel errors and recovery.
@@ -47,6 +67,7 @@ Native LVGL checks render the production component with optional factory pages:
 ```powershell
 python firmware/tests/test_amoled_ui.py --rotation 90
 python firmware/tests/test_amoled_ui.py --carousel --rotation 90
+python firmware/tests/test_amoled_ui.py --sdgoods
 ```
 
 These checks do not open a serial port or use a device. Target acceptance is

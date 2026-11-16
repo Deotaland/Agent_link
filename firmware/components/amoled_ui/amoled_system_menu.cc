@@ -3,10 +3,13 @@
 #include "agent_system.h"
 #include "agent_link_network.h"
 #include "amoled_ui_language.h"
+#include "amoled_ui_guides.h"
 #include "esp_app_desc.h"
 #include "esp_system.h"
 #include "nvs.h"
 #include <cstdio>
+#include <cstring>
+#include <algorithm>
 
 using amoled_ui::Tr;
 void AmoledSystemMenu::SetDeviceInfo(const char* text) {
@@ -24,11 +27,132 @@ void Error(esp_err_t error) {
     amoled_ui::Toast(text, 5000);
 }
 }  // namespace
+bool AmoledSystemMenu::Sugarat() const {
+    return !strcmp(agent_system::Current().board, "SDGOODS-ESP32S3");
+}
+bool AmoledSystemMenu::TakeUpdateRequest() {
+    nvs_handle_t handle;
+    int8_t requested = 0;
+    if (nvs_open_from_partition(agent_system::SettingsPartition(), "sugarat_ui", NVS_READWRITE,
+                                &handle) == ESP_OK) {
+        (void)nvs_get_i8(handle, "open_update", &requested);
+        if (requested && nvs_set_i8(handle, "open_update", 0) == ESP_OK)
+            (void)nvs_commit(handle);
+        nvs_close(handle);
+    }
+    return requested != 0;
+}
+void AmoledSystemMenu::OpenUpdate() {
+    page_ = Page::kUpdate;
+    if (update_.handle) {
+        amoled_ui::Input input{};
+        input.action = amoled_ui::TouchAction::kMenu;
+        update_.handle(input, update_.context);
+    }
+}
+bool AmoledSystemMenu::HandleSugarat(const amoled_ui::Input& input) {
+    using amoled_ui::TouchAction;
+    if (input.action != TouchAction::kRow)
+        return false;
+    const int row = input.row;
+    if (page_ == Page::kRoot) {
+        quick_shortcut_ = row == 0 || row == 1;
+        if (row == 0)
+            page_ = Page::kNetwork;
+        else if (row == 1)
+            page_ = Page::kVolume;
+        else if (row == 3)
+            page_ = Page::kSettings;
+        else if (row == 2) {
+            if (agent_system::IsLauncher())
+                amoled_ui::Toast(Tr("当前已在启动器", "Already in Launcher"));
+            else
+                page_ = Page::kExitConfirm;
+        }
+    } else if (page_ == Page::kSettings) {
+        switch (row) {
+            case 0:
+                if (extra_.open_brightness) {
+                    extra_.open_brightness(extra_.context);
+                    page_ = Page::kExtra;
+                } else {
+                    nvs_handle_t handle;
+                    uint8_t value = 75;
+                    if (nvs_open_from_partition(agent_system::SettingsPartition(), "button_hw",
+                                                NVS_READONLY, &handle) == ESP_OK) {
+                        (void)nvs_get_u8(handle, "bright", &value);
+                        nvs_close(handle);
+                    }
+                    brightness_ = std::clamp<int>(value, 5, 100);
+                    amoled_ui::SetBacklight(brightness_);
+                    page_ = Page::kBrightness;
+                }
+                break;
+            case 1:
+                OpenUpdate();
+                break;
+            case 2:
+                page_ = Page::kApp;
+                break;
+            case 3:
+                page_ = Page::kDevice;
+                break;
+            case 4:
+                page_ = Page::kLanguage;
+                break;
+            case 5:
+                page_ = Page::kGuide;
+                break;
+            case 6:
+                if (!agent_system::IsLauncher())
+                    page_ = Page::kExitConfirm;
+                else if (extra_.render)
+                    page_ = Page::kExtra;
+                break;
+            case 7:
+                if (!agent_system::IsLauncher() && extra_.render)
+                    page_ = Page::kExtra;
+                break;
+        }
+    } else if (page_ == Page::kGuide) {
+        if (row >= 0 && row < amoled_ui::kUserGuideTopicCount) {
+            guide_topic_ = row;
+            page_ = Page::kGuideTopic;
+        }
+    } else if (page_ == Page::kExitConfirm || page_ == Page::kUpdateConfirm) {
+        if (row == 0)
+            page_ = page_ == Page::kExitConfirm ? Page::kRoot : Page::kUpdate;
+        else if (row == 1) {
+            if (page_ == Page::kUpdateConfirm) {
+                nvs_handle_t handle;
+                esp_err_t err = nvs_open_from_partition(agent_system::SettingsPartition(),
+                                                        "sugarat_ui", NVS_READWRITE, &handle);
+                if (err == ESP_OK) {
+                    err = nvs_set_i8(handle, "open_update", 1);
+                    if (err == ESP_OK)
+                        err = nvs_commit(handle);
+                    nvs_close(handle);
+                }
+                if (err != ESP_OK) {
+                    Error(err);
+                    return true;
+                }
+            }
+            exit_ = true;
+        }
+    } else if (page_ == Page::kUpdate && !update_.render) {
+        if (row == 0)
+            page_ = Page::kUpdateConfirm;
+    } else
+        return false;
+    return true;
+}
 void AmoledSystemMenu::Open() {
     if (extra_.close)
         extra_.close(extra_.context);
     page_ = Page::kRoot;
     exit_ = false;
+    quick_shortcut_ = false;
     nvs_handle_t h;
     int8_t value = default_volume_;
     if (nvs_open_from_partition(agent_system::SettingsPartition(), "voice", NVS_READONLY, &h) == ESP_OK) {
@@ -48,6 +172,7 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
         if (extra_.close)
             extra_.close(extra_.context);
         page_ = Page::kRoot;
+        quick_shortcut_ = false;
         return true;
     }
     if (input.action == TouchAction::kHome) {
@@ -59,7 +184,22 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
             return true;
         if (extra_.close)
             extra_.close(extra_.context);
-        page_ = page_ == Page::kRoot ? Page::kClosed : Page::kRoot;
+        if (Sugarat()) {
+            if ((page_ == Page::kNetwork || page_ == Page::kVolume) && quick_shortcut_) {
+                page_ = Page::kRoot;
+                quick_shortcut_ = false;
+            } else if (page_ == Page::kRoot)
+                page_ = Page::kClosed;
+            else if (page_ == Page::kSettings || page_ == Page::kExitConfirm)
+                page_ = Page::kRoot;
+            else if (page_ == Page::kUpdateConfirm)
+                page_ = Page::kUpdate;
+            else if (page_ == Page::kGuideTopic)
+                page_ = Page::kGuide;
+            else
+                page_ = Page::kSettings;
+        } else
+            page_ = page_ == Page::kRoot ? Page::kClosed : Page::kRoot;
         return true;
     }
     if (page_ == Page::kExtra && extra_.handle) {
@@ -68,6 +208,23 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
     }
     if (page_ == Page::kUpdate && update_.handle) {
         update_.handle(input, update_.context);
+        return true;
+    }
+    if (input.action == TouchAction::kBrightness && page_ == Page::kBrightness) {
+        brightness_ = std::clamp(input.row, 5, 100);
+        amoled_ui::SetBacklight(brightness_);
+        if (input.commit) {
+            nvs_handle_t handle;
+            auto err = nvs_open_from_partition(agent_system::SettingsPartition(), "button_hw",
+                                               NVS_READWRITE, &handle);
+            if (err == ESP_OK) {
+                err = nvs_set_u8(handle, "bright", brightness_);
+                if (err == ESP_OK)
+                    err = nvs_commit(handle);
+                nvs_close(handle);
+            }
+            Error(err);
+        }
         return true;
     }
     if (input.action == TouchAction::kVolume && page_ == Page::kVolume) {
@@ -92,6 +249,8 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
         return true;
     }
     if (input.action != TouchAction::kRow)
+        return true;
+    if (Sugarat() && HandleSugarat(input))
         return true;
     if (page_ == Page::kRoot) {
         const int update_row =
@@ -154,7 +313,7 @@ bool AmoledSystemMenu::Handle(const amoled_ui::Input& input) {
             nvs_close(h);
         }
         Error(err);
-        page_ = Page::kRoot;
+        page_ = Sugarat() ? Page::kSettings : Page::kRoot;
     }
     return true;
 }
@@ -172,7 +331,58 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
     };
     agent_link_wifi_info_t wifi{};
     (void)agent_link_wifi_info(&wifi);
-    if (page_ == Page::kRoot) {
+    if (Sugarat())
+        s.launcher_shell = true;
+    if (Sugarat() && page_ == Page::kRoot) {
+        s.kind = amoled_ui::View::kQuickMenu;
+        s.battery_percent = battery;
+        row(Tr("无线网络", "Wi-Fi"));
+        row(Tr("声音", "Sound"));
+        row(Tr("退出", "Exit"));
+        row(Tr("设置", "Settings"));
+    } else if (page_ == Page::kSettings) {
+        s.kind = amoled_ui::View::kSettings;
+        snprintf(s.title, sizeof s.title, "%s", Tr("设置", "Settings"));
+        row(Tr("亮度", "Brightness"));
+        row(Tr("启动器更新", "Launcher update"));
+        row(Tr("关于应用", "About"));
+        row(Tr("设备状态", "Device status"));
+        row(Tr("语言", "Language"));
+        row(Tr("使用说明", "User guide"));
+        if (!agent_system::IsLauncher())
+            row(Tr("返回启动器", "Return to launcher"));
+        if (extra_.render)
+            row(Tr("设备工具", "Device tools"));
+    } else if (page_ == Page::kGuide) {
+        snprintf(s.title, sizeof s.title, "%s", Tr("使用说明", "User guide"));
+        for (int i = 0; i < amoled_ui::kUserGuideTopicCount; ++i)
+            row(amoled_ui::SugaratUserGuide(i).title);
+    } else if (page_ == Page::kGuideTopic) {
+        const auto topic = amoled_ui::SugaratUserGuide(guide_topic_);
+        snprintf(s.title, sizeof s.title, "%s", topic.title);
+        snprintf(s.info, sizeof s.info, "%s", topic.body);
+    } else if (page_ == Page::kExitConfirm || page_ == Page::kUpdateConfirm) {
+        snprintf(s.title, sizeof s.title, "%s", Tr("返回启动器？", "Return to Launcher?"));
+        snprintf(s.info, sizeof s.info, "%s",
+                 page_ == Page::kUpdateConfirm
+                     ? Tr("确认后结束当前应用，重启到启动器检查 Factory 更新。",
+                          "Close this app and restart into Launcher to check Factory updates.")
+                     : Tr("确认后结束当前应用，并重启到启动器主页。",
+                          "Close this app and restart into the Launcher home screen."));
+        row(Tr("取消", "Cancel"));
+        row(Tr("确认返回", "Confirm"));
+    } else if (page_ == Page::kUpdate && !update_.render) {
+        snprintf(s.title, sizeof s.title, "%s", Tr("Factory 固件", "Factory firmware"));
+        snprintf(s.info, sizeof s.info, "%s",
+                 Tr("Factory 版本和更新在启动器中检查。\n返回后自动检查，不会自动安装更新。",
+                    "View the Factory version and check updates in Launcher. Updates are not "
+                    "installed automatically."));
+        row(Tr("返回启动器检查更新", "Check updates in Launcher"));
+    } else if (page_ == Page::kBrightness) {
+        s.kind = amoled_ui::View::kBrightnessControl;
+        s.brightness_percent = brightness_;
+        snprintf(s.title, sizeof s.title, "%s", Tr("亮度", "Brightness"));
+    } else if (page_ == Page::kRoot) {
         snprintf(s.title, sizeof s.title, "%s", Tr("系统菜单", "System"));
         snprintf(s.detail, sizeof s.detail, "%s", Tr("上下滑动查看更多", "Scroll for more"));
         row(Tr("网络与配网", "Network and WiFi setup"));
@@ -180,7 +390,7 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
         row(Tr("设备状态", "Device status"));
         row(Tr("应用服务", "App service"));
         row(Tr("音量", "Volume"));
-        row("语言 / Language");
+        row(Tr("语言", "Language"));
         if (agent_system::IsLauncher())
             row(Tr("应用封面与同步", "App covers and sync"));
         else if (agent_system::CanReturnToLauncher())
@@ -216,12 +426,23 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
                         "WiFi connected\nSSID: %s\nIP: %s\nSignal: %d dBm\nReturn home to download apps."),
                      wifi.ssid, wifi.ip, wifi.rssi);
         }
-        row(Tr("开始或重新配网（保留绑定）", "Set up WiFi (keep binding)"));
+        row(Tr("开始或重新配网（保留绑定）", "Set up WiFi"));
     } else if (page_ == Page::kApp) {
         snprintf(s.title, sizeof s.title, "%s", Tr("当前应用", "Current application"));
         const auto& d = agent_system::Current();
         snprintf(s.info, sizeof s.info, "%s\n%s\nVersion: %.31s\nSDK: %s\n%s", d.name, d.app_id,
                  esp_app_get_description()->version, d.sdk, d.board);
+        if (Sugarat()) {
+            snprintf(s.info, sizeof s.info,
+                     Tr("当前应用：%s\n版本：%.31s\nWiFi：%s\n网络：%s\n地址：%s\n电量：%d%%",
+                        "App: %s\nVersion: %.31s\nWiFi: %s\nSSID: %s\nIP: %s\nBattery: %d%%"),
+                     !strcmp(d.app_id, "agent.status") ? "Agent_link" : d.name,
+                     esp_app_get_description()->version,
+                     wifi.connected      ? Tr("已连接", "Connected")
+                     : wifi.setup_active ? Tr("配网中", "Setting up")
+                                         : Tr("未连接", "Disconnected"),
+                     wifi.connected ? wifi.ssid : "--", wifi.connected ? wifi.ip : "--", battery);
+        }
     } else if (page_ == Page::kDevice) {
         snprintf(s.title, sizeof s.title, "%s", Tr("设备状态", "Device status"));
         if (device_info_[0]) {
@@ -248,10 +469,12 @@ void AmoledSystemMenu::Render(amoled_ui::Screen& s, uint32_t view, uint32_t navi
     } else if (page_ == Page::kVolume) {
         snprintf(s.title, sizeof s.title, "%s", Tr("音量", "Volume"));
         s.volume_control = true;
+        if (Sugarat())
+            s.kind = amoled_ui::View::kVolumeControl;
         snprintf(s.detail, sizeof s.detail, Tr("共享音量 %d%%", "Shared volume %d%%"), volume_);
     } else if (page_ == Page::kLanguage) {
-        snprintf(s.title, sizeof s.title, "%s", "语言 / Language");
-        row("中文");
+        snprintf(s.title, sizeof s.title, "%s", Tr("语言", "Language"));
+        row(Tr("中文", "Chinese"));
         row("English");
     } else if (page_ == Page::kCovers) {
         snprintf(s.title, sizeof s.title, "%s", Tr("应用封面与同步", "App covers and sync"));

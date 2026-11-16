@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="{{LANGUAGE}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -31,9 +31,9 @@ button:active{opacity:.85}
 </style>
 </head>
 <body>
-<input type="checkbox" id="lang">
+<input type="checkbox" id="lang" {{LANG_CHECKED}}>
 <div class="card">
-<div class="langbar"><label for="lang" class="langbtn"><span class="zh">English</span><span class="en">中文</span></label></div>
+<div class="langbar"><label for="lang" class="langbtn"><span class="zh">English</span><span class="en">Chinese</span></label></div>
 <h1><span class="zh">WiFi 配网</span><span class="en">WiFi Setup</span></h1>
 <p class="sub"><span class="zh">为设备选择要接入的 WiFi</span><span class="en">Connect this device to your WiFi</span></p>
 <form method="POST" action="/provision" autocomplete="off">

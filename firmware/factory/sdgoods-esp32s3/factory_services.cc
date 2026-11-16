@@ -148,7 +148,18 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
     }
 
    private:
-    enum class Page { kRoot, kBattery, kMotion, kAudio, kBrightness, kPower, kConfirm, kDisplay, kTouch };
+    enum class Page {
+        kRoot,
+        kBattery,
+        kMotion,
+        kAudio,
+        kBrightness,
+        kPower,
+        kConfirm,
+        kDisplay,
+        kTouch,
+        kColors
+    };
     enum class Action { kNone, kSleep, kOff, kRestart };
     void UpdateLevel(int64_t now) {
         const auto& state = hardware_.sensors_.Read();
@@ -228,6 +239,31 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
             }
             return true;
         }
+        if (page_ == Page::kColors && input.action == TouchAction::kTouchPoint) {
+            if (input.x < 0 || input.x >= 360 || input.y < 0 || input.y >= 360)
+                return true;
+            const int dx = input.x - 180, dy = input.y - 180;
+            if (dx * dx + dy * dy <= 180 * 180)
+                test_.color_index = (test_.color_index + 1) % 5;
+            return true;
+        }
+        if (page_ == Page::kBrightness && input.action == TouchAction::kBrightness) {
+            brightness_ = std::clamp(input.row, 5, 100);
+            amoled_ui::SetBacklight(brightness_);
+            if (input.commit) {
+                nvs_handle_t handle;
+                esp_err_t error = nvs_open_from_partition(agent_system::SettingsPartition(),
+                                                          "button_hw", NVS_READWRITE, &handle);
+                if (error == ESP_OK) {
+                    error = nvs_set_u8(handle, "bright", brightness_);
+                    if (error == ESP_OK)
+                        error = nvs_commit(handle);
+                    nvs_close(handle);
+                }
+                Error(error);
+            }
+            return true;
+        }
         if (input.action != TouchAction::kRow)
             return true;
         if (page_ == Page::kRoot) {
@@ -255,6 +291,10 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                 case 6:
                     page_ = Page::kDisplay;
                     break;
+                case 7:
+                    page_ = Page::kColors;
+                    StartTest(amoled_ui::HardwareTest::Kind::kColors);
+                    break;
             }
         } else if (page_ == Page::kDisplay && input.row == 0) {
             page_ = Page::kTouch;
@@ -264,39 +304,7 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                                           : amoled_ui::HardwareTest::Kind::kLevel);
         } else if (page_ == Page::kAudio && input.row == 0)
             hardware_.audio_.Stop();
-        else if (page_ == Page::kBrightness) {
-            switch (input.row) {
-                case 0:
-                    brightness_ -= 10;
-                    break;
-                case 1:
-                    brightness_ += 10;
-                    break;
-                case 2:
-                    brightness_ = 25;
-                    break;
-                case 3:
-                    brightness_ = 75;
-                    break;
-                case 4:
-                    brightness_ = 100;
-                    break;
-                default:
-                    return true;
-            }
-            brightness_ = std::clamp(brightness_, 5, 100);
-            amoled_ui::SetBacklight(brightness_);
-            nvs_handle_t handle;
-            esp_err_t error = nvs_open_from_partition(agent_system::SettingsPartition(),
-                                                      "button_hw", NVS_READWRITE, &handle);
-            if (error == ESP_OK) {
-                error = nvs_set_u8(handle, "bright", brightness_);
-                if (error == ESP_OK)
-                    error = nvs_commit(handle);
-                nvs_close(handle);
-            }
-            Error(error);
-        } else if (page_ == Page::kPower && input.row >= 0 && input.row < 3) {
+        else if (page_ == Page::kPower && input.row >= 0 && input.row < 3) {
             selected_ = input.row == 0   ? Action::kSleep
                         : input.row == 1 ? Action::kOff
                                          : Action::kRestart;
@@ -318,7 +326,10 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         };
         const auto& state = hardware_.sensors_.Read();
         if (page_ == Page::kRoot) {
-            title(Tr("硬件与电源", "Hardware and power"));
+            title(Tr("设备工具", "Device tools"));
+            snprintf(screen.info, sizeof screen.info, "%s",
+                     Tr("屏幕测试：轻点换色，左缘右滑退出。",
+                        "Screen test: tap to cycle; swipe from the left edge to exit."));
             row(Tr("电量与电压", "Battery and voltage"));
             row(Tr("水平仪与六轴测试", "Level and motion test"));
             row(Tr("扬声器测试", "Test speaker"));
@@ -326,6 +337,7 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
             row(Tr("屏幕亮度", "Screen brightness"));
             row(Tr("休眠、关机与重启", "Sleep, power off, restart"));
             row(Tr("显示与触摸", "Display and touch"));
+            row(Tr("屏幕测试", "Screen test"));
         } else if (page_ == Page::kBattery) {
             title(Tr("电量与电压", "Battery and voltage"));
             if (state.percent >= 0)
@@ -368,6 +380,10 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                 snprintf(screen.info, sizeof screen.info, "X %d  Y %d   |   %d / 5", test_.x, test_.y, test_.completed);
             else
                 snprintf(screen.info, sizeof screen.info, "%s", Tr("等待触摸 · 0 / 5", "Waiting for touch - 0 / 5"));
+        } else if (page_ == Page::kColors) {
+            screen.kind = amoled_ui::View::kHardwareTest;
+            screen.local_mode = true;
+            screen.hardware_test = test_;
         } else if (page_ == Page::kAudio) {
             title(Tr("音频自检", "Audio self-test"));
             const char* text = Tr("测试就绪", "Ready");
@@ -399,14 +415,9 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                          : Tr("录音仅在设备内存临时保存。", "Recording stays in device RAM."));
             row(Tr("停止音频测试", "Stop audio test"));
         } else if (page_ == Page::kBrightness) {
-            title(Tr("屏幕亮度", "Screen brightness"));
-            snprintf(screen.info, sizeof screen.info, Tr("当前亮度：%d%%", "Brightness: %d%%"),
-                     brightness_);
-            row(Tr("降低 10%", "Decrease 10%"));
-            row(Tr("提高 10%", "Increase 10%"));
-            row("25%");
-            row("75%");
-            row("100%");
+            title(Tr("亮度", "Brightness"));
+            screen.kind = amoled_ui::View::kBrightnessControl;
+            screen.brightness_percent = brightness_;
         } else if (page_ == Page::kPower) {
             title(Tr("电源", "Power"));
             snprintf(screen.info, sizeof screen.info, "%s",
@@ -422,7 +433,7 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
                      : selected_ == Action::kOff
                          ? Tr("关闭设备？\nUSB 供电时进入休眠。",
                               "Power off?\nWith USB power, enter sleep.")
-                         : Tr("重新启动 Agent_link Launcher？", "Restart Agent_link Launcher?"));
+                         : Tr("重新启动 Sugarat Launcher？", "Restart Sugarat Launcher?"));
             row(Tr("确认", "Confirm"));
             row(Tr("取消", "Cancel"));
         } else if (page_ == Page::kDisplay) {

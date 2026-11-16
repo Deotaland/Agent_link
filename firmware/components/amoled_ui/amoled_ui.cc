@@ -91,7 +91,18 @@ lv_obj_t *ring_, *heading_, *battery_label_, *title_, *detail_, *back_, *footer_
 lv_obj_t *list_, *list_info_, *list_code_, *list_hint_, *rows_[kListRows], *row_labels_[kListRows], *row_icons_[kListRows];
 lv_obj_t *answer_view_, *answer_label_, *latest_, *volume_box_, *slider_, *volume_label_;
 lv_obj_t* home_handle_ = nullptr;
+lv_obj_t *quick_menu_, *quick_header_, *quick_buttons_[4], *quick_labels_[4];
+lv_obj_t *edge_back_badge_, *edge_back_text_;
+lv_obj_t *vertical_control_, *vertical_slider_, *vertical_fill_, *vertical_value_, *vertical_icon_;
+lv_obj_t *vertical_title_, *vertical_hint_;
+lv_obj_t *vertical_sun_, *vertical_sun_disc_, *vertical_sun_rays_[8];
+lv_point_precise_t vertical_sun_points_[8][2];
 const CardRenderer* card_renderer_ = nullptr;
+CardRenderer::TouchPolicy touch_policy_{};
+void ConfigureTouch(const CardRenderer* cards, CardRenderer::TouchPolicy touch = {}) {
+    card_renderer_ = cards;
+    touch_policy_ = cards ? cards->touch : touch;
+}
 lv_indev_t* pointer_ = nullptr;
 cst9217::Point point_;
 bool swallow_ = false, pending_ = false, shown_busy_ = false, has_before_ = false, has_after_ = false;
@@ -213,8 +224,7 @@ lv_obj_t* Card(lv_obj_t* parent, int radius = 20) {
     return obj;
 }
 bool Dispatch(TouchAction action, int row = 0, int x = -1, int y = -1) {
-    const bool system_swipe = action == TouchAction::kSystem && card_renderer_ &&
-        card_renderer_->touch.edge_system_swipe;
+    const bool system_swipe = action == TouchAction::kSystem && touch_policy_.edge_system_swipe;
     if (pending_ || (shown_busy_ && action != TouchAction::kHome && !system_swipe) || !handler_)
         return false;
     Input input{}; input.action = action; input.row = row;
@@ -248,27 +258,63 @@ void Click(lv_event_t* event) {
 }
 void BindClick(lv_obj_t* obj, int id) {
     lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
-    if (id == -1 && card_renderer_)
-        lv_obj_set_ext_click_area(obj, card_renderer_->touch.back_padding);
+    if (id == -1)
+        lv_obj_set_ext_click_area(obj, touch_policy_.back_padding);
     auto* data = reinterpret_cast<void*>(static_cast<intptr_t>(id));
     lv_obj_add_event_cb(obj, Click, LV_EVENT_PRESSED, data);
     lv_obj_add_event_cb(obj, Click, LV_EVENT_PRESS_LOST, data);
     lv_obj_add_event_cb(obj, Click, LV_EVENT_CLICKED, data);
     lv_obj_set_style_bg_color(obj, lv_color_hex(kPressed), LV_STATE_PRESSED);
 }
+void VerticalLevelText(int value, bool brightness) {
+    if (vertical_slider_) {
+        char text[16];
+        snprintf(text, sizeof text, "%d%%", value);
+        Text(vertical_value_, text);
+        CenterLabelVertically(vertical_value_);
+        const int height = Scale(264);
+        const int filled = (height * std::clamp(value, 0, 100) + 50) / 100;
+        lv_obj_set_pos(vertical_fill_, 0, height - filled);
+        lv_obj_set_height(vertical_fill_, filled);
+        Visible(vertical_fill_, filled > 0);
+        Visible(vertical_icon_, !brightness);
+        Visible(vertical_sun_, brightness);
+        Text(vertical_icon_, value ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE);
+        const auto color = lv_color_hex(value >= 30 ? 0x25313A : 0xDCE4EC);
+        lv_obj_set_style_text_color(vertical_icon_, color, 0);
+        lv_obj_set_style_border_color(vertical_sun_disc_, color, 0);
+        for (auto* ray : vertical_sun_rays_)
+            lv_obj_set_style_line_color(ray, color, 0);
+    }
+}
 void VolumeText(int value) {
     char text[48]; snprintf(text, sizeof text, Tr("音量  %d%%", "Volume  %d%%"), value);
     Text(volume_label_, text);
+    if (shown_kind_ == View::kVolumeControl)
+        VerticalLevelText(value, false);
 }
-void VolumeEvent(lv_event_t* event) {
+void LevelEvent(lv_event_t* event) {
     const auto code = lv_event_get_code(event);
     if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_RELEASED && code != LV_EVENT_PRESS_LOST) return;
-    const int value = lv_slider_get_value(slider_);
-    VolumeText(value); SetVolume(value);
-    Input input{}; input.action = TouchAction::kVolume; input.row = value;
+    const int value = lv_slider_get_value(lv_event_get_current_target_obj(event));
+    const bool brightness = lv_event_get_current_target_obj(event) == vertical_slider_ &&
+                            shown_kind_ == View::kBrightnessControl;
+    if (brightness) {
+        VerticalLevelText(value, true);
+        SetBacklight(value);
+    } else {
+        VolumeText(value);
+        SetVolume(value);
+    }
+    Input input{};
+    input.action = brightness ? TouchAction::kBrightness : TouchAction::kVolume;
+    input.row = value;
     input.commit = code != LV_EVENT_VALUE_CHANGED;
-    volume_events_.fetch_add(1);
-    if (input.commit) volume_commits_.fetch_add(1);
+    if (!brightness) {
+        volume_events_.fetch_add(1);
+        if (input.commit)
+            volume_commits_.fetch_add(1);
+    }
     input.view = shown_view_; input.at = esp_timer_get_time();
     if (handler_) handler_(input, context_);
 }
@@ -367,7 +413,7 @@ void Build() {
     lv_obj_set_style_bg_opa(slider_, LV_OPA_COVER, LV_PART_KNOB);
     lv_obj_set_style_pad_all(slider_, 7, LV_PART_KNOB);
     lv_obj_set_style_radius(slider_, LV_RADIUS_CIRCLE, LV_PART_KNOB);
-    lv_obj_add_event_cb(slider_, VolumeEvent, LV_EVENT_ALL, nullptr);
+    lv_obj_add_event_cb(slider_, LevelEvent, LV_EVENT_ALL, nullptr);
     footer_ = Label(root, fonts_.Small(), kMuted, true); Position(footer_, kFooter);
     lv_label_set_long_mode(footer_, LV_LABEL_LONG_DOT);
     auto* handle = Card(root, 3); Position(handle, kHandle);
@@ -377,6 +423,107 @@ void Build() {
     BindClick(latest_, -2); auto* down = Label(latest_, &lv_font_montserrat_20, kBlue);
     Text(down, LV_SYMBOL_DOWN); lv_obj_center(down); Visible(latest_, false);
     if (card_renderer_) card_renderer_->create(root, fonts_, BindClick);
+    quick_menu_ = Card(root, 0);
+    lv_obj_set_pos(quick_menu_, 0, 0);
+    lv_obj_set_size(quick_menu_, kDisplaySize, kDisplaySize);
+    lv_obj_set_style_bg_color(quick_menu_, lv_color_hex(0x080B10), 0);
+    lv_obj_set_style_border_width(quick_menu_, 0, 0);
+    lv_obj_remove_flag(quick_menu_, LV_OBJ_FLAG_CLICKABLE);
+    quick_header_ = Label(quick_menu_, fonts_.Small(), 0xBCC5D0, true);
+    Position(quick_header_, ScaledRect(90, 65, 286, 36));
+    const char* quick_icons[]{LV_SYMBOL_WIFI, LV_SYMBOL_AUDIO, LV_SYMBOL_CLOSE, LV_SYMBOL_SETTINGS};
+    for (int i = 0; i < 4; ++i) {
+        quick_buttons_[i] = Card(quick_menu_, 24);
+        Position(quick_buttons_[i], ScaledRect(83 + (i % 2) * 158, 124 + (i / 2) * 150, 142, 134));
+        lv_obj_set_style_bg_color(quick_buttons_[i], lv_color_hex(0x10151C), 0);
+        lv_obj_set_style_border_color(quick_buttons_[i], lv_color_hex(0x262D36), 0);
+        BindClick(quick_buttons_[i], i);
+        lv_obj_set_style_bg_color(quick_buttons_[i], lv_color_hex(0x202832), LV_STATE_PRESSED);
+        auto* icon = Label(quick_buttons_[i], &lv_font_montserrat_24, 0xEFF3F8);
+        Position(icon, ScaledRect(20, 20, 102, 40));
+        Text(icon, quick_icons[i]);
+        CenterLabelVertically(icon);
+        quick_labels_[i] = Label(quick_buttons_[i], fonts_.Body(), 0xEFF3F8);
+        Position(quick_labels_[i], ScaledRect(20, 78, 102, 36));
+    }
+    Visible(quick_menu_, false);
+    vertical_control_ = Card(root, 0);
+    lv_obj_set_pos(vertical_control_, 0, 0);
+    lv_obj_set_size(vertical_control_, kDisplaySize, kDisplaySize);
+    lv_obj_set_style_bg_color(vertical_control_, lv_color_hex(0x080D16), 0);
+    lv_obj_set_style_border_width(vertical_control_, 0, 0);
+    lv_obj_remove_flag(vertical_control_, LV_OBJ_FLAG_CLICKABLE);
+    auto* volume_back = Card(vertical_control_, LV_RADIUS_CIRCLE);
+    Position(volume_back, ScaledRect(100, 65, 46, 46));
+    BindClick(volume_back, -1);
+    auto* volume_back_label = Label(volume_back, &lv_font_montserrat_20, kBlue, true);
+    lv_obj_set_size(volume_back_label, Scale(46), Scale(46));
+    Text(volume_back_label, LV_SYMBOL_LEFT);
+    CenterLabelVertically(volume_back_label);
+    vertical_title_ = Label(vertical_control_, fonts_.Title(), kWhite, true);
+    Position(vertical_title_, ScaledRect(143, 42, 180, 32));
+    vertical_value_ = Label(vertical_control_, &lv_font_montserrat_24, kWhite, true);
+    Position(vertical_value_, ScaledRect(143, 83, 180, 42));
+    vertical_slider_ = lv_slider_create(vertical_control_);
+    lv_obj_remove_style_all(vertical_slider_);
+    Position(vertical_slider_, ScaledRect(161, 128, 144, 264));
+    lv_slider_set_range(vertical_slider_, 0, 100);
+    // Keep the slider's touch padding clear of the bottom-edge Home gesture.
+    lv_obj_set_ext_click_area(vertical_slider_, 4);
+    lv_obj_set_style_radius(vertical_slider_, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(vertical_slider_, lv_color_hex(0x2D3745), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(vertical_slider_, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(vertical_slider_, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(vertical_slider_, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_clip_corner(vertical_slider_, true, 0);
+    lv_obj_add_event_cb(vertical_slider_, LevelEvent, LV_EVENT_ALL, nullptr);
+    vertical_fill_ = Card(vertical_slider_, 0);
+    lv_obj_set_size(vertical_fill_, Scale(144), Scale(264));
+    lv_obj_set_style_border_width(vertical_fill_, 0, 0);
+    lv_obj_set_style_bg_color(vertical_fill_, lv_color_hex(0xEAF2F4), 0);
+    lv_obj_remove_flag(vertical_fill_, LV_OBJ_FLAG_CLICKABLE);
+    vertical_icon_ = Label(vertical_slider_, &lv_font_montserrat_24, 0x25313A, true);
+    Position(vertical_icon_, ScaledRect(0, 192, 144, 48));
+    vertical_sun_ = lv_obj_create(vertical_slider_);
+    lv_obj_remove_style_all(vertical_sun_);
+    Position(vertical_sun_, ScaledRect(46, 190, 52, 52));
+    lv_obj_remove_flag(vertical_sun_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(vertical_sun_, LV_OBJ_FLAG_SCROLLABLE);
+    vertical_sun_disc_ = lv_obj_create(vertical_sun_);
+    lv_obj_remove_style_all(vertical_sun_disc_);
+    Position(vertical_sun_disc_, ScaledRect(17, 17, 18, 18));
+    lv_obj_set_style_radius(vertical_sun_disc_, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(vertical_sun_disc_, 2, 0);
+    lv_obj_remove_flag(vertical_sun_disc_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(vertical_sun_disc_, LV_OBJ_FLAG_SCROLLABLE);
+    constexpr int rays[8][4]{{17, 0, 24, 0},     {12, 12, 17, 17},  {0, 17, 0, 24},
+                             {-12, 12, -17, 17}, {-17, 0, -24, 0},  {-12, -12, -17, -17},
+                             {0, -17, 0, -24},   {12, -12, 17, -17}};
+    for (int ray = 0; ray < 8; ++ray) {
+        for (int end = 0; end < 2; ++end) {
+            vertical_sun_points_[ray][end].x = Scale(26 + rays[ray][end * 2]);
+            vertical_sun_points_[ray][end].y = Scale(26 + rays[ray][end * 2 + 1]);
+        }
+        vertical_sun_rays_[ray] = lv_line_create(vertical_sun_);
+        lv_line_set_points(vertical_sun_rays_[ray], vertical_sun_points_[ray], 2);
+        lv_obj_set_style_line_width(vertical_sun_rays_[ray], 2, 0);
+        lv_obj_remove_flag(vertical_sun_rays_[ray], LV_OBJ_FLAG_CLICKABLE);
+    }
+    vertical_hint_ = Label(vertical_control_, fonts_.Small(), kMuted, true);
+    Position(vertical_hint_, ScaledRect(123, 407, 220, 24));
+    Visible(vertical_control_, false);
+    edge_back_badge_ = Card(root, LV_RADIUS_CIRCLE);
+    Position(edge_back_badge_, ScaledRect(10, 209, 112, 48));
+    lv_obj_set_style_bg_color(edge_back_badge_, lv_color_hex(0x111820), 0);
+    lv_obj_set_style_border_color(edge_back_badge_, lv_color_hex(0x2A333E), 0);
+    lv_obj_remove_flag(edge_back_badge_, LV_OBJ_FLAG_CLICKABLE);
+    auto* back_hint_arrow = Label(edge_back_badge_, &lv_font_montserrat_16, 0xEFF3F8, true);
+    Position(back_hint_arrow, ScaledRect(10, 8, 24, 32));
+    Text(back_hint_arrow, LV_SYMBOL_RIGHT);
+    CenterLabelVertically(back_hint_arrow);
+    edge_back_text_ = Label(edge_back_badge_, fonts_.Small(), 0xEFF3F8, true);
+    Position(edge_back_text_, ScaledRect(36, 8, 66, 32));
+    Visible(edge_back_badge_, false);
     toast_label_ = Label(root, fonts_.Body(), kWhite, true); Position(toast_label_, kToast);
     lv_obj_set_style_bg_color(toast_label_, lv_color_hex(0x3A3A3C), 0);
     lv_obj_set_style_bg_opa(toast_label_, LV_OPA_COVER, 0); lv_obj_set_style_radius(toast_label_, 18, 0);
@@ -400,8 +547,8 @@ void TrackTap(const cst9217::Point& next) {
     }
     // Only standalone buttons get more finger jitter tolerance. List rows keep
     // the existing scroll guard, and free touch-test targets keep their precision.
-    const int slop = card_renderer_ && pressed_obj_ && lv_obj_get_parent(pressed_obj_) != list_
-        ? card_renderer_->touch.button_slop : 12;
+    const int slop =
+        pressed_obj_ && lv_obj_get_parent(pressed_obj_) != list_ ? touch_policy_.button_slop : 12;
     if (std::abs(static_cast<int>(next.x) - contact_x_) > slop ||
         std::abs(static_cast<int>(next.y) - contact_y_) > slop) {
         click_cancelled_ = true;
@@ -475,21 +622,24 @@ void Render(void*) {
                 }
             }
             // Test taps use the last pressed coordinates (release frames have none).
-            // Keep the top Back control on its ordinary LVGL click path. Only a
-            // short, uncancelled tap counts; motion and I2C errors never pass a target.
+            // Target pages keep Back on its LVGL click path; solid-color pages
+            // accept taps anywhere. Motion and I2C errors cannot advance a test.
             const bool touch_test = screen.kind == View::kHardwareTest &&
                 screen.hardware_test.kind == HardwareTest::Kind::kTouch;
-            if (touch_test && touch_ok && point_.pressed && !next.pressed &&
-                contact_view_ == shown_view_ &&
-                !click_cancelled_ && !swallow_ && card_renderer_ && card_renderer_->capture_test_tap &&
-                card_renderer_->capture_test_tap(point_.x, point_.y) &&
+            const bool color_test = screen.kind == View::kHardwareTest &&
+                                    screen.hardware_test.kind == HardwareTest::Kind::kColors;
+            if ((touch_test || color_test) && touch_ok && point_.pressed && !next.pressed &&
+                contact_view_ == shown_view_ && !click_cancelled_ && !swallow_ && card_renderer_ &&
+                (color_test || (card_renderer_->capture_test_tap &&
+                                card_renderer_->capture_test_tap(point_.x, point_.y))) &&
                 Inside(point_.x, point_.y, kDisplaySize / 2))
                 Dispatch(TouchAction::kTouchPoint, 0, point_.x, point_.y);
             if (touch_ok) TrackTap(next);
+            const bool physical_down = next.pressed;
             // Native card layouts can place visible buttons outside the shared
             // list inset. Their taps must use the same physical circle as gestures.
             const bool gesture_down = next.pressed && Inside(next.x, next.y, kDisplaySize / 2);
-            const bool full_circle = touch_test || (card_renderer_ && card_renderer_->touch.full_circle);
+            const bool full_circle = touch_test || touch_policy_.full_circle;
             if (next.pressed && !Inside(next.x, next.y, full_circle ? kDisplaySize / 2 : kContentRadius)) {
                 next.pressed = false; click_cancelled_ = true;
             }
@@ -507,14 +657,41 @@ void Render(void*) {
                 }
             } else
                 swallow_ = false;
-            const bool volume_touch = !lv_obj_has_flag(volume_box_, LV_OBJ_FLAG_HIDDEN) &&
-                contact_y_ >= kVolume.y - 10 && contact_y_ <= kVolume.y + kVolume.h + 10;
-            const bool edge_system_swipe = card_renderer_ && card_renderer_->touch.edge_system_swipe;
-            const bool test_target = touch_test && (!edge_system_swipe || contact_y_ >= Scale(85));
+            const bool vertical_drag =
+                (shown_kind_ == View::kVolumeControl || shown_kind_ == View::kBrightnessControl) &&
+                contact_x_ >= Scale(161) - 4 && contact_x_ <= Scale(305) + 4 &&
+                contact_y_ >= Scale(128) - 4 && contact_y_ <= Scale(392) + 4;
+            const bool volume_touch =
+                vertical_drag ||
+                (!lv_obj_has_flag(volume_box_, LV_OBJ_FLAG_HIDDEN) &&
+                 contact_y_ >= kVolume.y - 10 && contact_y_ <= kVolume.y + kVolume.h + 10);
+            const bool edge_system_swipe = touch_policy_.edge_system_swipe;
+            const bool carousel =
+                shown_kind_ == View::kCarousel || shown_kind_ == View::kFactoryHome;
+            const bool edge_back_swipe =
+                touch_policy_.edge_back_swipe && !carousel && shown_kind_ != View::kHome;
+            const bool edge_back_start = contact_x_ <= Scale(SwipeTracker::kBackEdge);
+            const bool test_target = touch_test &&
+                                     (!edge_system_swipe || contact_y_ >= Scale(85)) &&
+                                     !(edge_back_swipe && edge_back_start);
+            const bool stale_touch = contact_view_ != shown_view_;
+            const int gesture_x = next.x * 466 / DISPLAY_WIDTH;
+            const int gesture_y = next.y * 466 / DISPLAY_HEIGHT;
             const Swipe direction =
-                swipe_.Update(gesture_down && !swallow_, next.x * 466 / DISPLAY_WIDTH,
-                              next.y * 466 / DISPLAY_HEIGHT, shown_view_, now,
-                              volume_touch || test_target, edge_system_swipe);
+                swipe_.Update(physical_down, gesture_x, gesture_y, shown_view_, now,
+                              volume_touch || test_target || stale_touch || swallow_ || !touch_ok ||
+                                  (physical_down && !gesture_down),
+                              edge_system_swipe, edge_back_swipe);
+            const bool back_hint = gesture_down && !swallow_ && !pending_ && !shown_busy_ &&
+                                   edge_back_swipe &&
+                                   swipe_.BackHint(gesture_x, gesture_y, shown_view_);
+            if (back_hint && lv_obj_has_flag(edge_back_badge_, LV_OBJ_FLAG_HIDDEN))
+                lv_indev_wait_release(pointer_);  // The captured edge gesture cannot press a tile.
+            Visible(edge_back_badge_, back_hint);
+            if (back_hint) {
+                Text(edge_back_text_, Tr("返回", "Back"));
+                CenterLabelVertically(edge_back_text_);
+            }
             bool sent = false;
             if (direction == Swipe::kSystem) sent = Dispatch(TouchAction::kSystem);
             else if ((shown_kind_ == View::kCarousel || shown_kind_ == View::kFactoryHome) && direction == Swipe::kLeft) sent = Dispatch(TouchAction::kNextCard);
@@ -548,16 +725,25 @@ void Render(void*) {
             keep_awake = screen.calling || screen.busy || screen.local_mode;
             const bool new_page = navigation != screen.navigation;
             if (shown_view_ != screen.view) {
+                Visible(edge_back_badge_, false);
                 shown_view_ = screen.view; pending_ = false;
                 if (pointer_ && point_.pressed) lv_indev_wait_release(pointer_);
             }
             shown_kind_ = screen.kind; shown_busy_ = screen.busy;
             const bool home = screen.kind == View::kHome;
-            const bool poster = screen.kind == View::kCarousel || screen.kind == View::kAppActions ||
+            const bool quick = screen.kind == View::kQuickMenu;
+            const bool brightness_control = screen.kind == View::kBrightnessControl;
+            const bool large_level = screen.kind == View::kVolumeControl || brightness_control;
+            const bool settings = screen.kind == View::kSettings;
+            const bool poster =
+                screen.kind == View::kCarousel || screen.kind == View::kAppActions || quick ||
+                large_level ||
                 (card_renderer_ && card_renderer_->accepts && card_renderer_->accepts(screen));
             const bool quiet = screen.launcher_shell;
             const bool setup = home && (status.phase == AGENT_LINK_PHASE_SETUP ||
                 status.phase == AGENT_LINK_PHASE_PAIRING || status.phase == AGENT_LINK_PHASE_BLOCKED);
+            const bool binding_guide =
+                setup && status.phase == AGENT_LINK_PHASE_PAIRING && screen.info[0];
             const bool volume_page = screen.volume_control;
             const char* state_text = home && screen.ended && state == Activity::kIdle ? Tr("通话已结束", "Call ended") : ActivityName(state);
             Text(heading_, state_text);
@@ -573,7 +759,15 @@ void Render(void*) {
             Position(title_, quiet ? Rect{Scale(111),Scale(72),Scale(244),Scale(36)} : kTitle);
             Position(back_, quiet ? Rect{Scale(85),Scale(111),Scale(38),Scale(35)} : kBack);
             Position(list_, quiet ? Rect{Scale(85),Scale(154),Scale(296),Scale(222)} : kList);
+            if (settings)
+                Position(list_, ScaledRect(80, 106, 306, 290));
+            else if (binding_guide)
+                Position(list_, ScaledRect(39, 181, 388, 125));
             Position(detail_, quiet ? Rect{Scale(129),Scale(115),Scale(249),Scale(24)} : kDetail);
+            if (settings) {
+                Position(title_, ScaledRect(110, 50, 246, 36));
+                Position(back_, ScaledRect(80, 48, 38, 38));
+            }
             if (!home) { lv_obj_set_x(detail_, Scale(129)); lv_obj_set_width(detail_, Scale(249)); }
             Text(detail_, setup ? status.hint : screen.detail);
             Visible(back_, !home && !screen.busy);
@@ -581,7 +775,11 @@ void Render(void*) {
             Visible(volume_box_, (home && !setup) || volume_page);
             if (!lv_slider_is_dragged(slider_)) { lv_slider_set_value(slider_, volume, LV_ANIM_OFF); VolumeText(volume); }
             Visible(list_, !home || setup); Visible(latest_, false);
-            lv_obj_set_height(list_, volume_page ? kAnswer.h : quiet ? Scale(222) : kList.h);
+            lv_obj_set_height(list_, settings        ? Scale(290)
+                                     : binding_guide ? Scale(125)
+                                     : volume_page   ? kAnswer.h
+                                     : quiet         ? Scale(222)
+                                                     : kList.h);
             const char* answer = text[0] ? text : screen.calling && state == Activity::kListening ?
                 Tr("我在听，请说话。", "Listening. Go ahead.") : screen.calling ?
                 Tr("正在建立通话，准备好后请说话…", "Connecting. Speak when ready...") :
@@ -604,24 +802,40 @@ void Render(void*) {
                 Mark(UiStage::kList);
                 const int old_y = lv_obj_get_scroll_y(list_);
                 int y = 0;
+                const int content_width = binding_guide ? Scale(388) : kList.w;
                 const char* code = setup ? status.code : screen.pair_code;
                 const bool show_code = code[0] && (!setup || status.phase == AGENT_LINK_PHASE_PAIRING);
                 Visible(list_code_, show_code);
                 if (show_code) {
                     Text(list_code_, code); lv_obj_set_pos(list_code_, 0, y);
-                    lv_obj_set_size(list_code_, kList.w - Scale(6), Scale(60));
+                    lv_obj_set_size(list_code_, content_width - Scale(6), Scale(60));
                     CenterLabelVertically(list_code_); y += Scale(68);
                 }
-                const char* description = setup ? status.hint : screen.info;
+                const char* description =
+                    setup && status.phase == AGENT_LINK_PHASE_PAIRING && screen.info[0]
+                        ? screen.info
+                    : setup ? status.hint
+                            : screen.info;
+                const bool link_guide = screen.kind == View::kDownloadHelp || binding_guide;
+                lv_obj_set_style_text_font(list_info_, link_guide ? fonts_.Small() : fonts_.Body(),
+                                           0);
                 Visible(list_info_, description[0]);
                 if (description[0]) {
-                    Text(list_info_, description); lv_obj_set_pos(list_info_, Scale(8), y); lv_obj_set_width(list_info_, kList.w - Scale(22));
+                    Text(list_info_, description);
+                    lv_obj_set_pos(list_info_, Scale(8), y);
+                    lv_obj_set_width(list_info_, content_width - Scale(22));
                     lv_obj_set_height(list_info_, LV_SIZE_CONTENT); lv_obj_update_layout(list_info_); y += lv_obj_get_height(list_info_) + Scale(18);
                 }
                 for (int i = 0; i < kListRows; ++i) {
                     const bool show = !setup && i < screen.row_count;
                     Visible(rows_[i], show);
                     if (!show) continue;
+                    lv_obj_set_style_bg_color(rows_[i], lv_color_hex(settings ? 0x10151C : kCard),
+                                              0);
+                    lv_obj_set_style_border_color(rows_[i],
+                                                  lv_color_hex(settings ? 0x262D36 : 0x303034), 0);
+                    lv_obj_set_style_bg_color(
+                        rows_[i], lv_color_hex(settings ? 0x202832 : kPressed), LV_STATE_PRESSED);
                     Text(row_labels_[i], screen.rows[i]); lv_obj_set_pos(rows_[i], 0, y); y += kRowHeight;
                     const char* icon = screen.kind == View::kLauncher ?
                         (i == 0 ? LV_SYMBOL_LIST : i == 1 ? LV_SYMBOL_SETTINGS : LV_SYMBOL_WIFI) : LV_SYMBOL_RIGHT;
@@ -645,12 +859,56 @@ void Render(void*) {
             Visible(ring_, !poster && !quiet); Visible(heading_, !poster && !quiet);
             Visible(battery_label_, !poster && !quiet); Visible(home_handle_, !poster && !quiet);
             Visible(title_, !poster); Visible(detail_, !poster); Visible(footer_, !poster && !quiet);
-            if (poster && card_renderer_) {
+            Visible(quick_menu_, quick);
+            Visible(vertical_control_, large_level);
+            if (quick || large_level) {
+                Visible(back_, false);
+                Visible(list_, false);
+                Visible(answer_view_, false);
+                Visible(volume_box_, false);
+                Visible(latest_, false);
+                if (quick) {
+                    char header[64];
+                    const int percent =
+                        screen.battery_percent >= 0 ? screen.battery_percent : battery;
+                    if (percent >= 0)
+                        snprintf(header, sizeof header, "%d%% · Quick Panel",
+                                 std::clamp(percent, 0, 100));
+                    else
+                        snprintf(header, sizeof header, "--%% · Quick Panel");
+                    Text(quick_header_, header);
+                    CenterLabelVertically(quick_header_);
+                    for (int i = 0; i < 4; ++i) {
+                        Text(quick_labels_[i], screen.rows[i]);
+                        CenterLabelVertically(quick_labels_[i]);
+                    }
+                }
+                if (large_level) {
+                    Text(vertical_title_,
+                         brightness_control ? Tr("亮度", "Brightness") : Tr("音量", "Volume"));
+                    CenterLabelVertically(vertical_title_);
+                    Text(vertical_hint_, Tr("上下滑动调节", "Swipe up or down"));
+                    CenterLabelVertically(vertical_hint_);
+                    if (!lv_slider_is_dragged(vertical_slider_)) {
+                        lv_slider_set_range(vertical_slider_, brightness_control ? 5 : 0, 100);
+                        lv_slider_set_value(vertical_slider_,
+                                            brightness_control ? screen.brightness_percent : volume,
+                                            LV_ANIM_OFF);
+                    }
+                    VerticalLevelText(lv_slider_get_value(vertical_slider_), brightness_control);
+                }
+                if (card_renderer_)
+                    card_renderer_->hide();
+            } else if (poster && card_renderer_) {
                 Visible(back_,false); Visible(list_,false); Visible(answer_view_,false);
                 Visible(volume_box_,false); Visible(latest_,false);
                 card_renderer_->update(screen);
-            } else if (card_renderer_) card_renderer_->hide();
-            was_toast = message[0] && now < until; Visible(toast_label_, was_toast);
+            } else if (card_renderer_)
+                card_renderer_->hide();
+            const bool color_test = screen.kind == View::kHardwareTest &&
+                                    screen.hardware_test.kind == HardwareTest::Kind::kColors;
+            was_toast = !color_test && message[0] && now < until;
+            Visible(toast_label_, was_toast);
             if (was_toast) Text(toast_label_, message);
             applied_.store(revision);
         }
@@ -691,9 +949,14 @@ bool UiResponsive() {
 }
 
 esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, void* context,
-                  const CardRenderer* cards, DisplayPerformance performance) {
+                  const CardRenderer* cards, DisplayPerformance performance,
+                  CardRenderer::TouchPolicy touch_policy) {
     if (!panel || !panel->Ready()) return ESP_ERR_INVALID_STATE;
-    panel_ = panel; touch_ = touch; handler_ = handler; context_ = context; card_renderer_ = cards;
+    panel_ = panel;
+    touch_ = touch;
+    handler_ = handler;
+    context_ = context;
+    ConfigureTouch(cards, touch_policy);
     fast_ui_ = performance == DisplayPerformance::kLauncher;
     const size_t bytes = fast_ui_ ? kFrameBytes : kBufferBytes;
     auto* pixels = static_cast<uint8_t*>(heap_caps_aligned_alloc(4, bytes, MALLOC_CAP_SPIRAM));
@@ -745,7 +1008,7 @@ esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, 
 bool SameScreen(const Screen& a, const Screen& b) {
     const auto& ta = a.hardware_test;
     const auto& tb = b.hardware_test;
-    if (ta.kind != tb.kind || ta.x != tb.x || ta.y != tb.y ||
+    if (ta.kind != tb.kind || ta.color_index != tb.color_index || ta.x != tb.x || ta.y != tb.y ||
         ta.target_x != tb.target_x || ta.target_y != tb.target_y || ta.completed != tb.completed ||
         ta.tilt_x != tb.tilt_x || ta.tilt_y != tb.tilt_y || ta.valid != tb.valid ||
         ta.centered != tb.centered || ta.passed != tb.passed)
@@ -757,14 +1020,15 @@ bool SameScreen(const Screen& a, const Screen& b) {
         a.card_index != b.card_index || a.card_count != b.card_count ||
         a.cover_slot != b.cover_slot || a.cover_revision != b.cover_revision ||
         a.storage_total != b.storage_total || a.storage_used != b.storage_used ||
-        a.battery_percent != b.battery_percent || a.wifi_connected != b.wifi_connected ||
-        a.wifi_setup_active != b.wifi_setup_active ||
+        a.brightness_percent != b.brightness_percent || a.battery_percent != b.battery_percent ||
+        a.wifi_connected != b.wifi_connected || a.wifi_setup_active != b.wifi_setup_active ||
         strcmp(a.wifi_setup_ssid, b.wifi_setup_ssid) || a.progress != b.progress ||
         strcmp(a.app_id, b.app_id) || a.row_count != b.row_count || a.row_offset != b.row_offset ||
         a.navigation != b.navigation || a.activity != b.activity || a.view != b.view ||
-        strcmp(a.pair_code, b.pair_code) || strcmp(a.download_code, b.download_code) || strcmp(a.title, b.title) ||
-        strcmp(a.detail, b.detail) || strcmp(a.footer, b.footer) || strcmp(a.info, b.info) ||
-        strcmp(a.hardware_status, b.hardware_status) || strcmp(a.job_status, b.job_status))
+        strcmp(a.pair_code, b.pair_code) || strcmp(a.download_code, b.download_code) ||
+        strcmp(a.title, b.title) || strcmp(a.detail, b.detail) || strcmp(a.footer, b.footer) ||
+        strcmp(a.info, b.info) || strcmp(a.hardware_status, b.hardware_status) ||
+        strcmp(a.job_status, b.job_status))
         return false;
     for (int i = 0; i < kListRows; ++i) if (strcmp(a.rows[i], b.rows[i])) return false;
     for (int i = 0; i < 4; ++i)

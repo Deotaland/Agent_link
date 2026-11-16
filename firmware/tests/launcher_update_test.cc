@@ -1,4 +1,5 @@
 #include "launcher_update_stubs.h"
+#include "wifi_download_stubs.h"
 #include "launcher_update.h"
 #include "agent_system.h"
 #include "agent_launcher_boot.h"
@@ -28,6 +29,7 @@ void Wait() {
     while (launcher::Busy() && std::chrono::steady_clock::now() < until)
         std::this_thread::yield();
     assert(!launcher::Busy());
+    assert(wifi_fixture::power_save == WIFI_PS_MIN_MODEM);
 }
 alboot_record State() {
     auto io = dynamic_fixture::Io();
@@ -118,7 +120,8 @@ int main(int argc, char** argv) {
     fixture::tls_errors[check] = {MBEDTLS_ERR_X509_FATAL_ERROR, 8};
     assert(launcher::Check() == 0);
     Wait();
-    assert(launcher::Read().error == kCertificateError && strstr(launcher::Read().message, "证书"));
+    assert(launcher::Read().error == kCertificateError &&
+           strstr(launcher::Read().message, "certificate"));
     fixture::open_errors.clear();
     const auto writes = dynamic_fixture::mutations;
     for (const auto& response :

@@ -285,6 +285,19 @@ void WifiEvent(void*, esp_event_base_t base, int32_t id, void* data) {
     if (base != WIFI_EVENT) return;
     {
         std::lock_guard<std::mutex> lock(s_wifi_mtx);
+#if defined(CONFIG_BOARD_TYPE_SDGOODS_ESP32S3_WIFI)
+        if (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_AP_START) {
+            // The driver accepts this limit only after esp_wifi_start().
+            const auto power_error = esp_wifi_set_max_tx_power(60);
+            int8_t actual = 0;
+            const auto read_error = esp_wifi_get_max_tx_power(&actual);
+            if (power_error != ESP_OK || read_error != ESP_OK)
+                ESP_LOGW(TAG, "WiFi TX power request=60 set=0x%x read=0x%x", unsigned(power_error),
+                         unsigned(read_error));
+            else
+                ESP_LOGI(TAG, "WiFi TX power requested=60 actual=%d (0.25 dBm units)", int(actual));
+        }
+#endif
         switch (id) {
         case WIFI_EVENT_STA_START:
             if (s_want_connect) ConnectStation();

@@ -1,3 +1,4 @@
+#include "ui_text.h"
 #include "community_store.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -369,7 +370,9 @@ esp_err_t ConnectionError(esp_http_client_handle_t handle, esp_err_t error) {
     StoreError value{};
     Text(value.code, sizeof value.code, "TLS_CERT_VERIFY_FAILED");
     Text(value.message, sizeof value.message,
-         "HTTPS 证书校验失败，连接已停止。请检查设备时间或更新启动器固件后重试。");
+         DefaultUiText("HTTPS 证书校验失败，连接已停止。请检查设备时间或更新启动器固件后重试。",
+                       "HTTPS certificate verification failed. Check the device time or update "
+                       "Launcher before retrying."));
     {
         std::lock_guard<std::mutex> lock(error_mutex);
         last_error = value;
@@ -474,10 +477,13 @@ esp_err_t LookupCode(const char* code, CatalogApp* app, InstallCancel cancel, vo
             !version[0] || strlen(version) >= sizeof fresh.version || !name[0] || !filename[0] ||
             strlen(filename) >= sizeof fresh.filename ||
             strcmp(filename, String(firmware, "file_name")))
-            error = Fail("下载码固件信息不完整、未公开发布或硬件不匹配");
+            error = Fail(DefaultUiText("下载码固件信息不完整、未公开发布或硬件不匹配",
+                                       "Download-code firmware metadata is incomplete, unpublished "
+                                       "or incompatible with this hardware."));
         else if (!CopyUrl(fresh.url, sizeof fresh.url, String(data, "download_url"),
                           AGENT_FIRMWARE_CODE_ORIGIN))
-            error = Fail("下载码未返回有效的固件下载链接");
+            error = Fail(DefaultUiText("下载码未返回有效的固件下载链接",
+                                       "The download code returned no valid firmware URL"));
         else {
             fresh.firmware_id = id;
             fresh.firmware_version_code = version_code;
@@ -500,7 +506,8 @@ esp_err_t LookupCode(const char* code, CatalogApp* app, InstallCancel cancel, vo
             if (cover[0]) {
                 if (!CopyUrl(fresh.cover_url, sizeof fresh.cover_url, cover,
                              AGENT_FIRMWARE_CODE_ORIGIN))
-                    error = Fail("下载码固件的封面链接无效");
+                    error = Fail(DefaultUiText("下载码固件的封面链接无效",
+                                               "The firmware icon URL is invalid"));
                 Text(fresh.cover_format, sizeof fresh.cover_format, "community-image");
             }
         }
@@ -597,7 +604,9 @@ esp_err_t PrepareDownload(CatalogApp* app, InstallCancel cancel, void* context) 
             fresh.firmware_version_code != app->firmware_version_code ||
             strcmp(fresh.version, app->release_version) || fresh.size != app->size ||
             strcmp(fresh.file_md5, app->file_md5))
-            return Fail("下载码对应的固件已变化，请重新查询后确认安装");
+            return Fail(DefaultUiText("下载码对应的固件已变化，请重新查询后确认安装",
+                                      "The firmware for this download code has changed. Look it up "
+                                      "and confirm installation again."));
         *app = fresh;
         return ESP_OK;
     }
@@ -718,6 +727,11 @@ esp_err_t File::Open(const char* url) {
 esp_err_t File::OpenDownload(const char* url, InstallCancel cancel, void* context) {
     if (!ValidServiceUrl(url))
         return ESP_ERR_INVALID_ARG;
+    if (cancel && cancel(context))
+        return kCancelled;
+#if defined(AGENT_SYSTEM_DOWNLOAD_WIFI)
+    download_power_.Begin();
+#endif
     // Explicitly requested device diagnostics: print the exact URL used, including
     // the short-lived download ticket. Never add account/device headers here.
     ESP_LOGI("agent_system.install", "download_url=%s", url);

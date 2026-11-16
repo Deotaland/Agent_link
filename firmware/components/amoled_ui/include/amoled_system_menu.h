@@ -26,6 +26,9 @@ class AmoledSystemMenu {
     }
     void SetDeviceInfo(const char* text);
     void Open();
+    void OpenUpdate();
+    // UI navigation intent only; upgrades still run exclusively in the Launcher.
+    static bool TakeUpdateRequest();
     void OpenNetwork() {
         Open();
         page_ = Page::kNetwork;
@@ -33,6 +36,7 @@ class AmoledSystemMenu {
     void Close() {
         if (extra_.close)
             extra_.close(extra_.context);
+        quick_shortcut_ = false;
         page_ = Page::kClosed;
     }
     bool Active() const {
@@ -61,6 +65,10 @@ class AmoledSystemMenu {
     enum class Page {
         kClosed,
         kRoot,
+        kSettings,
+        kExitConfirm,
+        kUpdateConfirm,
+        kBrightness,
         kNetwork,
         kApp,
         kDevice,
@@ -69,17 +77,24 @@ class AmoledSystemMenu {
         kLanguage,
         kCovers,
         kExtra,
-        kUpdate
+        kUpdate,
+        kGuide,
+        kGuideTopic
     };
     Page page_ = Page::kClosed;
+    bool Sugarat() const;
+    bool HandleSugarat(const amoled_ui::Input& input);
     bool exit_ = false;
     bool cover_retry_ = false;
+    bool quick_shortcut_ = false;
     char cover_summary_[384]{};
     char device_info_[384]{};
     ExtraPage extra_{};
     ExtraPage update_{};
     int volume_ = 70;
     int default_volume_ = 70;
+    int brightness_ = 75;
+    int guide_topic_ = 0;
     VolumeHandler volume_handler_ = nullptr;
     void* context_ = nullptr;
 };

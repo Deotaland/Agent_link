@@ -33,6 +33,7 @@ for name in ('esp_err.h', 'esp_app_desc.h', 'esp_crt_bundle.h', 'esp_http_client
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('#include "launcher_update_stubs.h"\n', encoding='utf-8')
 (stubs / 'esp_idf_version.h').write_text('#define ESP_IDF_VERSION_MAJOR 5\n', encoding='utf-8')
+(stubs / 'esp_wifi.h').write_text('#include "wifi_download_stubs.h"\n', encoding='utf-8')
 (stubs / 'strings.h').write_text('#pragma once\n', encoding='utf-8')
 profile = resolve_profiles()['sdgoods-wifi']
 (stubs / 'dynamic_layout_config.h').write_text(header(profile), encoding='utf-8')
@@ -73,13 +74,14 @@ if os.name == 'nt':
 else:
     compiler = 'c++'
 includes = [stubs, root / 'tests', root / 'components/agent_system/include',
+            root / 'components/agent_link/src/transports/wifi',
             root / 'components/agent_link/src/ota', root / 'factory/sdgoods-esp32s3',
             root / 'managed_components/espressif__cjson/cJSON']
-definitions = ['AGENT_SYSTEM_BOARD_MODEL="SDGOODS-ESP32S3"', 'AGENT_SYSTEM_LAYOUT=3',
+definitions = ['AGENT_LINK_UI_DEFAULT_ENGLISH=1', 'AGENT_SYSTEM_BOARD_MODEL="SDGOODS-ESP32S3"', 'AGENT_SYSTEM_LAYOUT=3',
     'AGENT_SYSTEM_ENABLED=1', 'AGENT_SYSTEM_APP_ID="agent.launcher"', 'AGENT_SYSTEM_APP_NAME="Test"',
     'AGENT_SYSTEM_METADATA_PARTITION=\"app_meta\"', 'AGENT_SYSTEM_SLOT_COUNT=14', 'AGENT_SYSTEM_APP_MAX_BYTES=0x9F2000',
     'AGENT_SYSTEM_DYNAMIC_SLOTS=1', 'AGENT_SYSTEM_REAL_SHA256=1', 'AGENT_SYSTEM_SDGOODS_COMPAT=1',
-    'AGENT_SYSTEM_COMMUNITY=1', 'AGENT_LAUNCHER_AB=1', 'AGENT_LAUNCHER_IMAGE=1',
+    'AGENT_SYSTEM_DOWNLOAD_WIFI=1', 'AGENT_SYSTEM_COMMUNITY=1', 'AGENT_LAUNCHER_AB=1', 'AGENT_LAUNCHER_IMAGE=1',
     'AGENT_COMMUNITY_ORIGIN="https://sugapi.deotaland.cn"', 'AGENT_COMMUNITY_PRODUCT=1', 'AGENT_COMMUNITY_REVISION=1']
 sources = [root / 'tests/launcher_update_test.cc', *[root / 'components/agent_system' / name for name in
     ('agent_system.cc', 'cover_cache.cc', 'dynamic_slots.cc', 'community_store.cc', 'launcher_update.cc')],

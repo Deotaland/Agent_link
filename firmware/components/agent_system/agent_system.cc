@@ -1,4 +1,5 @@
 #include "agent_system.h"
+#include "ui_text.h"
 #include "cover_cache.h"
 #include "image_identity.h"
 #include "slot_identity.h"
@@ -271,19 +272,29 @@ esp_err_t SettingsGet(httpd_req_t* request) {
     char url[256]{};
     (void)CatalogUrl(url, sizeof url);
     const std::string page =
-        "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
+        std::string(DefaultUiText("<!doctype html><html lang='zh-CN'><meta charset='utf-8'>",
+                                  "<!doctype html><html lang='en'><meta charset='utf-8'>")) +
         "<meta name='viewport' content='width=device-width,initial-scale=1'><title>" +
-        Escape(IsLauncher() ? Current().name : "Agent Link") + "</title>"
-        "<body style='font:18px sans-serif;max-width:600px;margin:40px auto;padding:16px'>"
-        "<h1>应用服务设置</h1><p>填写应用服务的完整列表地址。局域网测试可使用 HTTP；正式服务请使用 "
-        "HTTPS。</p>"
-        "<form method='post' action='/catalog'><label>应用列表地址<br><input "
+        Escape(IsLauncher() ? Current().name : "Agent Link") +
+        "</title>"
+        "<body style='font:18px sans-serif;max-width:600px;margin:40px auto;padding:16px'>" +
+        DefaultUiText(
+            "<h1>应用服务设置</h1><p>填写应用服务的完整列表地址。局域网测试可使用 "
+            "HTTP；正式服务请使用 HTTPS。</p>"
+            "<form method='post' action='/catalog'><label>应用列表地址<br><input ",
+            "<h1>App service settings</h1><p>Enter the full app catalog URL. HTTP is supported for "
+            "local testing; use HTTPS for production.</p>"
+            "<form method='post' action='/catalog'><label>App catalog URL<br><input ") +
         "style='width:100%;font-size:16px' "
         "name='url' maxlength='255' value=\"" +
         Escape(url) +
-        "\"></label><p><button>保存</button></p></form>"
-        "<p>保存后在设备上重新打开在线应用。清空地址可停用在线目录。此操作保留 WiFi "
-        "和设备绑定。</p></body></html>";
+        DefaultUiText(
+            "\"></label><p><button>保存</button></p></form>"
+            "<p>保存后在设备上重新打开在线应用。清空地址可停用在线目录。此操作保留 WiFi "
+            "和设备绑定。</p></body></html>",
+            "\"></label><p><button>Save</button></p></form>"
+            "<p>Reopen online apps on the device after saving. Clear the URL to disable the "
+            "catalog. WiFi and device binding are preserved.</p></body></html>");
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_send(request, page.c_str(), page.size());
 }

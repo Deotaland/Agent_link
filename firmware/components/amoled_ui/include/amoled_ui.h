@@ -7,8 +7,40 @@
 class AmoledFonts;
 
 namespace amoled_ui {
-enum class TouchAction { kMenu, kHome, kRow, kBack, kLoadBefore, kLoadAfter, kVolume, kSystem, kPreviousCard, kNextCard, kTouchPoint };
-enum class View { kHome, kLauncher, kList, kInfo, kFriend, kCarousel, kAppActions, kFactoryHome, kAppGrid, kDownloadCode, kDownloadDetail, kHardwareTest };
+enum class TouchAction {
+    kMenu,
+    kHome,
+    kRow,
+    kBack,
+    kLoadBefore,
+    kLoadAfter,
+    kVolume,
+    kSystem,
+    kPreviousCard,
+    kNextCard,
+    kTouchPoint,
+    kBrightness
+};
+enum class View {
+    kHome,
+    kLauncher,
+    kList,
+    kInfo,
+    kFriend,
+    kCarousel,
+    kAppActions,
+    kFactoryHome,
+    kAppGrid,
+    kDownloadCode,
+    kDownloadDetail,
+    kHardwareTest,
+    kQuickMenu,
+    kSettings,
+    kAppRemove,
+    kDownloadHelp,
+    kVolumeControl,
+    kBrightnessControl
+};
 struct GridItem {
     int cover_slot = -1;
     uint32_t cover_revision = 0;
@@ -27,6 +59,7 @@ struct Screen {
     uint32_t cover_revision = 0;
     uint32_t storage_total = 0, storage_used = 0;
     int battery_percent = -1, progress = -1;
+    int brightness_percent = 75;
     bool wifi_connected = false, wifi_setup_active = false;
     char wifi_setup_ssid[33] = {};
     GridItem grid[4];
@@ -61,12 +94,16 @@ struct CardRenderer {
         int button_slop = 12;
         int back_padding = 0;
         bool edge_system_swipe = false;
+        bool edge_back_swipe = false;
     };
     TouchPolicy touch{};
 };
 enum class DisplayPerformance { kBalanced, kLauncher };
+// Card pages keep their own policy. Apps without card pages can supply edge gestures separately.
 esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, void* context,
-                  const CardRenderer* cards = nullptr, DisplayPerformance performance = DisplayPerformance::kBalanced);
+                  const CardRenderer* cards = nullptr,
+                  DisplayPerformance performance = DisplayPerformance::kBalanced,
+                  CardRenderer::TouchPolicy touch_policy = {});
 void SetScreen(const Screen& screen);
 bool UiResponsive();  // A recent completed UI loop, for Launcher first-boot confirmation.
 void SetStatus(const agent_link_status_t& status);

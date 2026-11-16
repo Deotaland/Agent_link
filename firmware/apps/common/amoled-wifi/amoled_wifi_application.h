@@ -6,6 +6,7 @@
 #include "amoled_voice_audio.h"
 #include "amoled_ui.h"
 #include "amoled_ui_controls.h"
+#include "amoled_ui_guides.h"
 #include "agent_link_network.h"
 #include "agent_link_friends.h"
 #include "agent_link_platform.h"
@@ -55,6 +56,16 @@ public:
         amoled_ui::SetVolume(volume_.load());
 #ifdef AGENT_SYSTEM_ENABLED
         system_menu_.SetDefaultVolume(AUDIO_DEFAULT_VOLUME);
+        if (app_controls_only_) {
+            nvs_handle_t handle;
+            uint8_t brightness = 75;
+            if (nvs_open_from_partition(agent_system::SettingsPartition(), "button_hw",
+                                        NVS_READONLY, &handle) == ESP_OK) {
+                (void)nvs_get_u8(handle, "bright", &brightness);
+                nvs_close(handle);
+            }
+            amoled_ui::SetBacklight(std::clamp<int>(brightness, 5, 100));
+        }
         system_menu_.SetVolumeHandler([](int value, void* context) {
             auto* self = static_cast<WaveshareAmoledWifi*>(context);
             self->ChangeVolume(value); return self->volume_.load() == value;
@@ -62,7 +73,15 @@ public:
 #endif
         if (audio_.Init(&hardware_) != ESP_OK) ESP_LOGE(TAG, "audio unavailable");
         events_ = xQueueCreate(8, sizeof(amoled_ui::Input));
-        ui_ok_ = amoled_ui::StartUi(&hardware_.panel_, &hardware_.touch_, OnTouch, this) == ESP_OK;
+        amoled_ui::CardRenderer::TouchPolicy touch_policy{};
+        if (app_controls_only_) {
+            touch_policy.full_circle = true;
+            touch_policy.edge_system_swipe = true;
+            touch_policy.edge_back_swipe = true;
+        }
+        ui_ok_ =
+            amoled_ui::StartUi(&hardware_.panel_, &hardware_.touch_, OnTouch, this, nullptr,
+                               amoled_ui::DisplayPerformance::kBalanced, touch_policy) == ESP_OK;
         if (!hardware_.touch_.Ready()) amoled_ui::Toast(Tr("触控不可用，请重启", "Touch unavailable - restart"), 30000);
         if (!events_ || xTaskCreate(ControlEntry, "amoled_ctrl", 12288, this, 4, nullptr) != pdPASS) {
             ESP_LOGE(TAG, "controller unavailable");
@@ -124,9 +143,9 @@ private:
         }
         if (OpenStorage("amoled175", NVS_READONLY, &handle) != ESP_OK) return;
         (void)nvs_get_i32(handle, "agent", &saved_agent_);
-        int8_t lang = 0;
+        int8_t lang = static_cast<int8_t>(amoled_ui::kDefaultLanguage);
         (void)nvs_get_i8(handle, "language", &lang);
-        amoled_ui::language.store(lang == 1 ? amoled_ui::Language::kEnglish : amoled_ui::Language::kChinese);
+        amoled_ui::language.store(amoled_ui::SavedLanguage(lang));
         size_t size = sizeof session_;
         (void)nvs_get_str(handle, "session", session_, &size);
         size = sizeof session_name_; (void)nvs_get_str(handle, "session_name", session_name_, &size);
@@ -240,12 +259,12 @@ private:
         Clear(Page::kSettings);
         Add(Action::kWifi, Tr("WiFi 状态", "WiFi status"));
         Add(Action::kVolume, Tr("音量调节", "Volume"));
-        Add(Action::kLanguage, Tr("语言 / Language", "Language / 语言"));
+        Add(Action::kLanguage, Tr("语言", "Language"));
         Add(Action::kReset, Tr("设备激活", "Device activation"));
     }
     void Languages() {
         Clear(Page::kLanguage);
-        Add(Action::kChinese, "中文");
+        Add(Action::kChinese, Tr("中文", "Chinese"));
         Add(Action::kEnglish, "English");
     }
     void Volume() { Clear(Page::kVolume); }
@@ -525,17 +544,20 @@ private:
             agent_link_state() != AGENT_STATE_READY ? amoled_ui::Activity::kConnecting :
             audio_.Speaking() ? amoled_ui::Activity::kSpeaking :
             thinking_.load() ? amoled_ui::Activity::kThinking : amoled_ui::Activity::kListening;
-        const char* title = page_ == Page::kLauncher ? (app_controls_only_ ? Tr("通话菜单", "Call menu") : Tr("应用菜单", "Apps")) :
-                            page_ == Page::kConversations ? Tr("会话", "Sessions") :
-                            page_ == Page::kSettings ? Tr("设置", "Settings") :
-                            page_ == Page::kSessions ? Tr("选择会话", "Select session") :
-                            page_ == Page::kWifi ? Tr("WiFi 状态", "WiFi status") :
-                            page_ == Page::kVolume ? Tr("音量调节", "Volume") :
-                            page_ == Page::kLanguage ? Tr("语言 / Language", "Language / 语言") :
-                            page_ == Page::kFriend ? Tr("交友", "Nearby friends") :
-                            page_ == Page::kDelete ? Tr("删除会话？", "Delete session?") :
-                            page_ == Page::kReset ? Tr("重置设备激活？", "Reset activation?") :
-                            agent_name_[0] ? agent_name_ : Tr("语音通话", "Voice call");
+        const char* title =
+            page_ == Page::kLauncher
+                ? (app_controls_only_ ? Tr("通话菜单", "Call menu") : Tr("应用菜单", "Apps"))
+            : page_ == Page::kConversations ? Tr("会话", "Sessions")
+            : page_ == Page::kSettings      ? Tr("设置", "Settings")
+            : page_ == Page::kSessions      ? Tr("选择会话", "Select session")
+            : page_ == Page::kWifi          ? Tr("WiFi 状态", "WiFi status")
+            : page_ == Page::kVolume        ? Tr("音量调节", "Volume")
+            : page_ == Page::kLanguage      ? Tr("语言", "Language")
+            : page_ == Page::kFriend        ? Tr("交友", "Nearby friends")
+            : page_ == Page::kDelete        ? Tr("删除会话？", "Delete session?")
+            : page_ == Page::kReset         ? Tr("重置设备激活？", "Reset activation?")
+            : agent_name_[0]                ? agent_name_
+                                            : Tr("语音通话", "Voice call");
         snprintf(screen.title, sizeof screen.title, "%s", title);
         if (page_ == Page::kLauncher)
             snprintf(screen.detail, sizeof screen.detail, "%s", Tr("轻点打开 · 底部上滑回通话", "Tap an app - swipe up to return"));
@@ -602,6 +624,8 @@ private:
                 screen.next = session_offset_ + session_count_ < session_total_;
             }
         }
+        if (app_controls_only_ && page_ == Page::kHome)
+            snprintf(screen.info, sizeof screen.info, "%s", amoled_ui::DeviceBindingGuide());
         if (last_activity_ != screen.activity || last_calling_ != call_) {
             ESP_LOGD(TAG, "UI state: activity=%d calling=%d ended=%d view=%lu",
                 static_cast<int>(screen.activity), call_, ended_, static_cast<unsigned long>(view_));
@@ -621,6 +645,16 @@ private:
             amoled_ui::Input event;
             const bool received = xQueueReceive(events_, &event, pdMS_TO_TICKS(50)) == pdTRUE;
             const bool fresh = received && amoled_ui::CurrentInput(event, view_, esp_timer_get_time());
+#ifdef AGENT_SYSTEM_ENABLED
+            int brightness, saved_brightness;
+            if (brightness_requests_.Take(brightness, saved_brightness)) {
+                amoled_ui::Input level{};
+                level.action = amoled_ui::TouchAction::kBrightness;
+                level.row = saved_brightness >= 0 ? saved_brightness : brightness;
+                level.commit = saved_brightness >= 0;
+                system_menu_.Handle(level);
+            }
+#endif
             if (received && !fresh && event.view == view_) ++view_;
 #ifdef AGENT_SYSTEM_ENABLED
             if (fresh && system_menu_.Active() && event.action != amoled_ui::TouchAction::kSystem) {
@@ -657,8 +691,9 @@ private:
                     if (page_ == Page::kSessions && session_offset_ + session_count_ < session_total_)
                         Sessions(session_offset_ + amoled_ui::kListStride, true);
                     break;
-                case amoled_ui::TouchAction::kVolume: break; // Dedicated mailbox below.
-
+                case amoled_ui::TouchAction::kBrightness:
+                case amoled_ui::TouchAction::kVolume:
+                    break;  // Dedicated mailboxes.
                 }
             }
             int desired = 0, saved = -1;
@@ -716,6 +751,10 @@ private:
         if (input.action == amoled_ui::TouchAction::kVolume) {
             self->volume_requests_.Submit(input.row, input.commit); return true;
         }
+        if (input.action == amoled_ui::TouchAction::kBrightness) {
+            self->brightness_requests_.Submit(input.row, input.commit);
+            return true;
+        }
         if (self->events_ && xQueueSend(self->events_, &input, 0) == pdTRUE) return true;
         amoled_ui::Toast(Tr("正在处理，请稍后重试", "Busy - try again")); return false;
     }
@@ -744,6 +783,7 @@ private:
     std::atomic<int> volume_{AUDIO_DEFAULT_VOLUME};
     uint32_t view_ = 1, navigation_ = 1;
     amoled_ui::VolumeMailbox volume_requests_;
+    amoled_ui::VolumeMailbox brightness_requests_;
     amoled_ui::Screen publish_buffer_;
     amoled_ui::Activity last_activity_ = amoled_ui::Activity::kOffline;
     bool last_calling_ = false;
