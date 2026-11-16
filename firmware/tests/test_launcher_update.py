@@ -42,11 +42,12 @@ version_config = (args.baseline_config or root / 'factory/sdgoods-esp32s3/launch
 (stubs / 'launcher_version.h').write_text(version_config, encoding='utf-8')
 candidate_code = int(re.search(r'^#define AGENT_LAUNCHER_VERSION_CODE (\d+)u', version_config, re.M)[1]) + 1
 candidate_version = f'test.{candidate_code}'.encode('ascii')
-data = bytearray(24 + 8 + 512)
+segment_size = 192 * 1024
+data = bytearray(24 + 8 + segment_size)
 data[0:2] = bytes([0xE9, 1])
 struct.pack_into('<H', data, 12, 9)
 data[23] = 1
-struct.pack_into('<II', data, 24, 0x3C000020, 512)
+struct.pack_into('<II', data, 24, 0x3C000020, segment_size)
 struct.pack_into('<I', data, 32, 0xABCD5432)
 data[0x30:0x50] = candidate_version.ljust(32, b'\0')
 data[0x50:0x70] = b'SDGOODS_LAUNCHER'.ljust(32, b'\0')
@@ -96,3 +97,6 @@ else:
         *['-I' + str(p) for p in includes], *map(str, sources), '-o', str(binary), '-lcrypto']
 subprocess.run(command, cwd=build, env=env, check=True)
 subprocess.run([str(binary), str(build / 'candidate.bin')], cwd=build, check=True, timeout=45)
+
+for mode in ('--restore', '--forced', '--rollback', '--promote', '--offline', '--offline-ready'):
+    subprocess.run([str(binary), str(build / 'candidate.bin'), mode], cwd=build, check=True, timeout=45)

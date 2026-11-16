@@ -13,6 +13,11 @@ swipes cycle through installed apps and the final **+** card, then wrap around.
 Tapping an app opens a launch/delete dialog over its cover. The shared controller,
 installation service, provisioning and A/B update APIs are unchanged.
 
+Selecting Launch first shows a modal **Starting app... Please wait** message.
+The controller waits for the display-transfer acknowledgement and a short visible
+interval before requesting the reboot. This message stays on the panel during
+boot; failures dismiss it and return to app actions instead of leaving a stuck modal.
+
 Factory and the native Agent_link app default to English, including first boot,
 WiFi setup, menus, download/update progress and errors. Missing or invalid saved
 language settings fall back to English; an explicitly saved Chinese/English
@@ -92,7 +97,8 @@ rate and transition still require hardware acceptance.
   instructions and six-digit code. These are UI links; backend endpoints and
   activation/install behavior are unchanged.
 - Tap an app to open a popup with **Launch** and **Delete**; deletion has a second
-  confirmation popup. Neither action opens a separate application detail page.
+  confirmation popup. Tap **×** in the upper-right corner or outside the popup
+  to dismiss it. Neither action opens a separate application detail page.
 - The upper-left arrow returns one level. Swiping up from the physical bottom
   edge returns directly home, including from settings and download progress.
   Return arrows and download-code Help have a 10px invisible touch margin. Native launcher buttons use
@@ -270,10 +276,31 @@ of an unconfirmed trial and routes back through recovery. Confirmed images are
 not copied, and the old image remains until the next update. This state is separate
 from vendor applications' `otadata`; global IDF app rollback stays disabled.
 
-The update page retains failures with HTTP status/reason and reports progress.
-Returning home leaves work running; application changes and power actions wait
-until it completes/cancels. A staged update offers **Restart into new version**.
-Forced updates are indicated but do not silently erase data or interrupt use.
+Every Launcher boot checks for updates once after WiFi connects, without opening
+the update page. **Auto download** defaults on and persists in agent_nvs. Shared
+menu switches use blue/white on the right for on and gray/white on the left for off.
+
+Background downloads run at priority 1 and transfer at up to about 64 KiB/s.
+Browsing, swiping, ordinary menu actions, code lookup and level controls do not
+pause them. App installation/removal, cover writes, audio tests and restart/power
+actions take priority; downloading resumes automatically as soon as those tasks
+finish. Network or memory failures back off for 30 seconds before retrying, rather
+than applying that delay to every resource pause. Network waits
+never hold the app-operation mutex. Flash writes use 4 KiB sectors and durable
+64 KiB checkpoints. Partial images resume after network loss, app launches or
+power loss, using fresh signed URLs and validated 206 Content-Range responses.
+Ignoring Range restarts safely from zero; invalid ranges or hashes cannot boot.
+
+Ordinary completed downloads stay in the inactive Launcher partition. A home
+notice and a one-time notification invite the user to **Restart into new version**.
+Other reboots keep the current Launcher, and installed apps remain usable.
+Errors and progress remain visible in update settings.
+
+is_forced=true overrides the auto-download preference. Required updates still
+download quietly at low priority and yield to resource-intensive work. Verification
+arms the trial without restarting immediately: the next reboot, including an
+app-launch reboot, enters the new Launcher through Recovery. A version/MD5 that
+fails boot confirmation is quarantined to prevent automatic rollback loops.
 
 Migration requires a matching initial full USB image; a V4 app-only update cannot
 install this layout. Configuration/font/journal addresses move, and an existing

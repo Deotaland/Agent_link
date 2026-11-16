@@ -5,6 +5,10 @@
 #define strcasecmp _stricmp
 #endif
 constexpr int ESP_ERR_HTTP_FETCH_HEADER = 0x7004, eSetValueWithOverwrite = 0;
+inline unsigned launcher_worker_priority = 0;
+inline void vTaskPrioritySet(TaskHandle_t, unsigned priority) {
+    launcher_worker_priority = priority;
+}
 inline void xTaskNotify(TaskHandle_t task, uint32_t value, int) {
     std::lock_guard<std::mutex> lock(task->mutex);
     task->notifications = value;

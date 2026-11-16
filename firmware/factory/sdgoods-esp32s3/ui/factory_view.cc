@@ -35,6 +35,7 @@ lv_obj_t* color_screen;
 lv_obj_t *carousel, *carousel_name, *carousel_hint, *carousel_dots[15], *carousel_plus[2];
 lv_obj_t *action_shade, *action_popup, *action_name, *action_version;
 lv_obj_t *action_launch, *action_remove, *action_launch_text, *action_remove_text;
+lv_obj_t *action_wait, *action_close;
 
 void Show(lv_obj_t* obj, bool on) {
     if (on) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -243,6 +244,9 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     bind(action_shade, -1);
     action_popup = Box(action_shade, 46, 91, 268, 184, 26, 0x202735);
     action_name = Label(action_popup, fonts.Title(), 24, 20, 220, 36, kText);
+    action_close = Box(action_popup, 224, 10, 32, 32, 16, 0x303B49);
+    bind(action_close, -1);
+    Text(Label(action_close, &lv_font_montserrat_20, 0, 0, 32, 32, kText), LV_SYMBOL_CLOSE);
     action_version = Label(action_popup, fonts.Small(), 24, 61, 220, 32, kMuted);
     action_launch = Box(action_popup, 18, 116, 110, 46, 23, 0xD8F7A4);
     action_remove = Box(action_popup, 140, 116, 110, 46, 23, 0x472932);
@@ -250,6 +254,9 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     bind(action_remove, 1);
     action_launch_text = Label(action_launch, fonts.Body(), 0, 0, 110, 46, 0x162218);
     action_remove_text = Label(action_remove, fonts.Body(), 0, 0, 110, 46, 0xFFC0C8);
+    action_wait = Label(action_popup, &lv_font_montserrat_36, 110, 122, 48, 44, kBrand);
+    Text(action_wait, LV_SYMBOL_REFRESH);
+    Show(action_wait, false);
     color_screen = Box(root, 0, 0, 360, 360, 0, 0x000000);
     Show(root, false);
 }
@@ -323,8 +330,17 @@ void Update(const amoled_ui::Screen& screen) {
         }
         Show(action_shade, actions);
         if (actions) {
-            Text(action_name, removing ? Tr("删除这个应用？", "Delete this app?") : screen.title);
-            Text(action_version, screen.detail);
+            Show(action_launch, !screen.launching);
+            Show(action_remove, !screen.launching);
+            Show(action_wait, screen.launching);
+            Show(action_close, !screen.launching);
+            lv_obj_set_x(action_name, screen.launching ? 24 : 46);
+            lv_obj_set_width(action_name, screen.launching ? 220 : 176);
+            lv_obj_set_height(action_version, screen.launching ? 56 : 32);
+            lv_label_set_long_mode(action_version, screen.launching ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_DOT);
+            Text(action_name, screen.launching ? Tr("正在启动应用…", "Starting app...")
+                             : removing ? Tr("删除这个应用？", "Delete this app?") : screen.title);
+            Text(action_version, screen.launching ? Tr("请稍候，设备正在重启。", "Please wait. The device is restarting.") : screen.detail);
             Text(action_launch_text, removing ? Tr("取消", "Cancel") : Tr("启动", "Launch"));
             Text(action_remove_text, removing ? Tr("确认删除", "Delete") : Tr("删除", "Delete"));
         }

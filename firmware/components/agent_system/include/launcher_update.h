@@ -9,6 +9,7 @@ enum class State {
     kCurrent,
     kAvailable,
     kDownloading,
+    kPaused,
     kVerifying,
     kReady,
     kError
@@ -21,6 +22,7 @@ struct Status {
     esp_err_t error = ESP_OK;
     int http_status = 0, network_errno = 0;
     bool forced = false;
+    bool background = false, resumable = false;
     char current[32]{}, version[32]{}, changelog[512]{}, message[384]{};
     char md5[33]{}, url[1024]{};
 };
@@ -30,6 +32,13 @@ Status Read();
 bool Busy();
 esp_err_t Check();
 esp_err_t Install();
+// Ordinary UI input is allowed; only resource-intensive work pauses downloads.
+void Tick(bool connected, bool resources_available);
+bool AutoDownloadEnabled();
+esp_err_t SetAutoDownload(bool enabled);
+bool Background();
+// Before starting an exclusive operation. False while a short flash write finishes.
+bool YieldToForeground();
 void Cancel();
 esp_err_t Restart();
 // Called after the local display/control loop has remained healthy for 10 s.

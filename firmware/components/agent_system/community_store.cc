@@ -707,6 +707,11 @@ File::~File() {
 }
 esp_err_t File::Event(esp_http_client_event_t* event) {
     if (event->event_id == HTTP_EVENT_ON_HEADER && event->header_key && event->header_value &&
+        Equal(event->header_key, "Content-Range")) {
+        auto* self = static_cast<File*>(event->user_data);
+        self->content_range_ = strlen(event->header_value) < 96 ? event->header_value : "";
+    }
+    if (event->event_id == HTTP_EVENT_ON_HEADER && event->header_key && event->header_value &&
         Equal(event->header_key, "Retry-After")) {
         unsigned value;
         char extra;
@@ -724,6 +729,15 @@ esp_err_t File::Event(esp_http_client_event_t* event) {
 esp_err_t File::Open(const char* url) {
     return OpenWithTimeout(url, kReadTimeoutMs);
 }
+esp_err_t File::OpenRange(const char* url, uint32_t offset, uint32_t total, bool background,
+                          InstallCancel cancel, void* context) {
+    if (!total || offset >= total)
+        return ESP_ERR_INVALID_ARG;
+    range_offset_ = offset;
+    range_total_ = total;
+    background_ = background;
+    return OpenDownload(url, cancel, context);
+}
 esp_err_t File::OpenDownload(const char* url, InstallCancel cancel, void* context) {
     if (!ValidServiceUrl(url))
         return ESP_ERR_INVALID_ARG;
@@ -734,7 +748,11 @@ esp_err_t File::OpenDownload(const char* url, InstallCancel cancel, void* contex
 #endif
     // Explicitly requested device diagnostics: print the exact URL used, including
     // the short-lived download ticket. Never add account/device headers here.
-    ESP_LOGI("agent_system.install", "download_url=%s", url);
+    if (background_)
+        ESP_LOGI("launcher.update", "background file offset=%lu total=%lu",
+                 (unsigned long)range_offset_, (unsigned long)range_total_);
+    else
+        ESP_LOGI("agent_system.install", "download_url=%s", url);
     constexpr unsigned attempts = kRequestAttempts;
     for (unsigned attempt = 1; attempt <= attempts; ++attempt) {
         if (cancel && cancel(context))
@@ -778,6 +796,7 @@ esp_err_t File::OpenWithTimeout(const char* url, int header_timeout_ms) {
             handle = nullptr;
         }
         location_.clear();
+        content_range_.clear();
         retry_after_ = 0;
         esp_http_client_config_t config{};
         config.url = address.c_str();
@@ -790,6 +809,14 @@ esp_err_t File::OpenWithTimeout(const char* url, int header_timeout_ms) {
         handle = esp_http_client_init(&config);
         if (!handle)
             return ESP_ERR_NO_MEM;
+        if (range_total_) {
+            esp_http_client_set_header(handle, "Accept-Encoding", "identity");
+            if (range_offset_) {
+                char range[48];
+                snprintf(range, sizeof range, "bytes=%lu-", (unsigned long)range_offset_);
+                esp_http_client_set_header(handle, "Range", range);
+            }
+        }
         const auto open_at = esp_timer_get_time();
         auto error = esp_http_client_open(handle, 0);
         const auto headers_at = esp_timer_get_time();
@@ -797,12 +824,13 @@ esp_err_t File::OpenWithTimeout(const char* url, int header_timeout_ms) {
                  static_cast<long long>((headers_at - open_at) / 1000), unsigned(error));
         if (error != ESP_OK)
             return ConnectionError(handle, error);
-        error = esp_http_client_set_timeout_ms(handle, header_timeout_ms);
+        error = esp_http_client_set_timeout_ms(handle, background_ ? kConnectTimeoutMs : header_timeout_ms);
         if (error != ESP_OK)
             return error;
         const auto length = esp_http_client_fetch_headers(handle);
         const int network_errno = esp_http_client_get_errno(handle);
-        const auto restored = esp_http_client_set_timeout_ms(handle, kReadTimeoutMs);
+        const auto restored =
+            esp_http_client_set_timeout_ms(handle, background_ ? 3000 : kReadTimeoutMs);
         if (length < 0) {
             const bool timed_out = TimedOut(length, network_errno);
             error = timed_out ? ESP_ERR_TIMEOUT : ESP_ERR_INVALID_RESPONSE;
@@ -818,7 +846,19 @@ esp_err_t File::OpenWithTimeout(const char* url, int header_timeout_ms) {
         const int status = esp_http_client_get_status_code(handle);
         ESP_LOGI("agent_system.store", "file HTTP=%d headers_ms=%lld redirect=%u", status,
                  static_cast<long long>((esp_timer_get_time() - headers_at) / 1000), redirect);
-        if (status == 200)
+        if (range_offset_ && status == 200)
+            return ESP_ERR_NOT_SUPPORTED;  // Never append a full response to a partial image.
+        if (range_offset_ && status == 206) {
+            unsigned long long first, last, total;
+            char extra;
+            if (sscanf(content_range_.c_str(), "bytes %llu-%llu/%llu%c", &first, &last, &total,
+                       &extra) != 3 ||
+                first != range_offset_ || total != range_total_ || last != total - 1 ||
+                length != int64_t(total - first))
+                return ESP_ERR_INVALID_RESPONSE;
+            return ESP_OK;
+        }
+        if (status == 200 && !range_offset_)
             return ESP_OK;
         if ((status == 301 || status == 302 || status == 303 || status == 307 || status == 308) &&
             !location_.empty()) {

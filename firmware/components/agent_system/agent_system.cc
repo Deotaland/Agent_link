@@ -542,6 +542,11 @@ esp_err_t Launch(const char* label) {
     App app;
     if (!p || ReadApp(p, &app) != ESP_OK)
         return ESP_ERR_NOT_FOUND;
+#if defined(AGENT_LAUNCHER_IMAGE)
+    const auto update = launcher::Read();
+    if (update.forced && update.state == launcher::State::kReady)
+        return launcher::Restart();  // An app-launch reboot also applies a required update first.
+#endif
     const esp_err_t err = esp_ota_set_boot_partition(p);
     if (err == ESP_OK)
         esp_restart();

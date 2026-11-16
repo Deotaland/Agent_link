@@ -13,5 +13,9 @@ class FactoryHardwareServices {
     virtual void DeviceInfo(char*, size_t) = 0;
     virtual bool SetVolume(int) = 0;
     virtual bool Button(bool, int64_t) = 0;
+    virtual bool HighLoad() const {
+        return false;
+    }
+    virtual bool StartsHighLoad(const amoled_ui::Input&) const { return false; }
 };
 std::unique_ptr<FactoryHardwareServices> CreateFactoryHardwareServices(AmoledHardware&);

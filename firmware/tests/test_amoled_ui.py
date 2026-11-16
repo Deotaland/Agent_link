@@ -597,6 +597,9 @@ Status preview_update;
 bool preview_busy = false;
 Status Read() { return preview_update; }
 bool Busy() { return preview_busy; }
+bool Background() { return preview_busy; }
+bool preview_auto_download = true;
+bool AutoDownloadEnabled() { return preview_auto_download; }
 }
 using amoled_ui::Tr;
 '''

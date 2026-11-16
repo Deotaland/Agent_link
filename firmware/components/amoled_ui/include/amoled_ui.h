@@ -53,7 +53,7 @@ struct Screen {
     View kind = View::kHome;
     bool busy = false, calling = false, local_mode = false;
     bool previous = false, next = false, ended = false, volume_control = false;
-    bool launcher_shell = false, add_card = false;
+    bool launcher_shell = false, add_card = false, launching = false;
     size_t card_index = 0, card_count = 0;
     int cover_slot = -1;
     uint32_t cover_revision = 0;
@@ -66,6 +66,7 @@ struct Screen {
     HardwareTest hardware_test;
     char app_id[32] = {};
     int row_count = 0;
+    uint16_t toggle_rows = 0, checked_rows = 0;
     size_t row_offset = 0;
     uint32_t navigation = 0;
     Activity activity = Activity::kIdle;
@@ -106,6 +107,7 @@ esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, 
                   CardRenderer::TouchPolicy touch_policy = {});
 void SetScreen(const Screen& screen);
 bool UiResponsive();  // A recent completed UI loop, for Launcher first-boot confirmation.
+bool FramePresented(uint32_t view);  // The requested view (or a newer one) reached the display.
 void SetStatus(const agent_link_status_t& status);
 void SetBattery(int percent, bool charging);
 void SetVolume(int percent);

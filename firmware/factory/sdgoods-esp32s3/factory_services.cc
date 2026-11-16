@@ -57,6 +57,15 @@ class ButtonFactoryServices final : public FactoryHardwareServices {
         hardware_.audio_.SetVolume(value);
         return true;
     }
+    bool HighLoad() const override {
+        return hardware_.audio_.Busy() || pending_ != Action::kNone;
+    }
+    bool StartsHighLoad(const amoled_ui::Input& input) const override {
+        if (input.action != amoled_ui::TouchAction::kRow)
+            return false;
+        return (page_ == Page::kRoot && (input.row == 2 || input.row == 3)) ||
+               (page_ == Page::kConfirm && input.row == 0);
+    }
     bool Button(bool down, int64_t now) override {
         if (!down) {
             button_armed_ = true;

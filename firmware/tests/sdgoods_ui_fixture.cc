@@ -151,7 +151,33 @@ int main(int argc, char** argv) {
     snprintf(state.detail,sizeof state.detail,"2.0.0"); SetScreen(state); Frame("sdgoods-actions.ppm");
     check_button(amoled_factory::action_launch);
     check_button(amoled_factory::action_remove);
+    check_button(amoled_factory::action_close);
     assert(!lv_obj_has_flag(amoled_factory::action_shade, LV_OBJ_FLAG_HIDDEN));
+    assert(!lv_obj_has_flag(amoled_factory::action_close, LV_OBJ_FLAG_HIDDEN));
+    const auto popup_clicks = clicks;
+    Tap(touch, 286, 117);
+    assert(clicks == popup_clicks + 1 && last_input.action == TouchAction::kBack);
+    state.view++; SetScreen(state); Frame("sdgoods-actions.ppm");
+    Tap(touch, 180, 295);
+    assert(clicks == popup_clicks + 2 && last_input.action == TouchAction::kBack);
+    state.launching = state.busy = true;
+    state.view++;
+    SetScreen(state);
+    clock_us += 200000;
+    Render(nullptr);
+    lv_refr_now(nullptr);
+    assert(!FramePresented(state.view));  // A submitted DMA frame is not a presented one.
+    CompleteTransfer(true);
+    assert(FramePresented(state.view));
+    Frame("sdgoods-app-starting.ppm");
+    assert(!strcmp(lv_label_get_text(amoled_factory::action_name), "Starting app..."));
+    assert(strstr(lv_label_get_text(amoled_factory::action_version), "Please wait"));
+    assert(lv_obj_has_flag(amoled_factory::action_launch, LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_has_flag(amoled_factory::action_remove, LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_has_flag(amoled_factory::action_close, LV_OBJ_FLAG_HIDDEN));
+    state.launching = state.busy = false;
+    state.view++;
+    SetScreen(state); Frame("sdgoods-actions.ppm");
     Tap(touch, 120, 230);
     assert(last_input.action == TouchAction::kRow && last_input.row == 0);
     state.view++; state.navigation++; SetScreen(state); Frame("sdgoods-actions.ppm");
@@ -530,7 +556,7 @@ int main(int argc, char** argv) {
     auto& update = agent_system::launcher::preview_update;
     update.current_code = 20000;
     snprintf(update.current, sizeof update.current, "2.0.0");
-    snprintf(update.message, sizeof update.message, "检查 Sugarat Launcher 新版本");
+    snprintf(update.message, sizeof update.message, "Check for Sugarat Launcher updates");
     const auto update_frame = [&](const char* file) {
         const auto next = state.view + 1;
         state = {};
@@ -542,31 +568,49 @@ int main(int argc, char** argv) {
         Frame(file);
     };
     update_frame("sdgoods-update.ppm");
-    assert(state.row_count == 1);
+    assert(state.toggle_rows == 1 && state.checked_rows == 1);
+    assert(lv_obj_has_state(row_switches_[0], LV_STATE_CHECKED));
+    assert(!lv_obj_has_flag(row_switches_[0], LV_OBJ_FLAG_HIDDEN));
+    lv_area_t toggle_box;
+    lv_obj_get_coords(row_switches_[0], &toggle_box);
+    const int toggle_mid = (toggle_box.y1 + toggle_box.y2) / 2;
+    constexpr uint16_t toggle_blue = ((0x34 >> 3) << 11) | ((0x88 >> 2) << 5) | (0xFA >> 3);
+    constexpr uint16_t toggle_gray = ((0x51 >> 3) << 11) | ((0x56 >> 2) << 5) | (0x5F >> 3);
+    assert(panel_->pixels[toggle_mid * 360 + toggle_box.x1 + 4] == toggle_blue);
+    const unsigned toggle_clicks = clicks;
+    Tap(touch, (toggle_box.x1 + toggle_box.x2) / 2, (toggle_box.y1 + toggle_box.y2) / 2);
+    assert(clicks == toggle_clicks + 1 && last_input.action == TouchAction::kRow &&
+           last_input.row == 0);
+    agent_system::launcher::preview_auto_download = false;
+    update_frame("sdgoods-update-auto-off.ppm");
+    assert(state.checked_rows == 0 && !lv_obj_has_state(row_switches_[0], LV_STATE_CHECKED));
+    assert(panel_->pixels[toggle_mid * 360 + toggle_box.x2 - 4] == toggle_gray);
+    agent_system::launcher::preview_auto_download = true;
+    assert(state.row_count == 2);
     update.state = agent_system::launcher::State::kAvailable;
     snprintf(update.version, sizeof update.version, "2.0.1");
     update.size = 2300000;
     snprintf(update.changelog, sizeof update.changelog, "优化主页体验，改善下载速度和错误提示。");
     update_frame("sdgoods-update-available.ppm");
-    assert(state.row_count == 2);
+    assert(state.row_count == 3);
     agent_system::launcher::preview_busy = true;
     update.state = agent_system::launcher::State::kDownloading;
     update.received = 1150000;
     update.elapsed_ms = 10000;
     snprintf(update.message, sizeof update.message, "正在下载到启动器 B，旧版本保持可用");
     update_frame("sdgoods-update-progress.ppm");
-    assert(state.row_count == 1);
+    assert(state.row_count == 2);
     agent_system::launcher::preview_busy = false;
     update.state = agent_system::launcher::State::kError;
     snprintf(update.message, sizeof update.message,
              "升级服务返回 HTTP 401：Missing required header");
     update_frame("sdgoods-update-error.ppm");
-    assert(state.row_count == 1);
+    assert(state.row_count == 2);
     update.state = agent_system::launcher::State::kReady;
     snprintf(update.message, sizeof update.message,
              "下载和校验完成，请重启试运行新版；失败会返回旧版");
     update_frame("sdgoods-update-ready.ppm");
-    assert(state.row_count == 1);
+    assert(state.row_count == 2);
     assert(!lv_obj_has_flag(back_, LV_OBJ_FLAG_HIDDEN));
     Tap(touch, lv_obj_get_x(back_) + lv_obj_get_width(back_) / 2,
         lv_obj_get_y(back_) + lv_obj_get_height(back_) / 2);

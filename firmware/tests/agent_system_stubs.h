@@ -18,9 +18,14 @@ constexpr int ESP_LOG_INFO = 3, ESP_LOG_DEBUG = 4;
 #include <atomic>
 #include <thread>
 #include <chrono>
+namespace fixture {
+inline std::atomic<int64_t> timer_offset_us{0};
+}
 inline int64_t esp_timer_get_time() {
     return std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
+               std::chrono::steady_clock::now().time_since_epoch())
+               .count() +
+           fixture::timer_offset_us.load();
 }
 #include <cstdlib>
 #define pdMS_TO_TICKS(value) (value)
@@ -74,6 +79,8 @@ inline std::map<std::string,std::vector<int>> header_timeouts;
 inline std::map<std::string,int> header_delay_ms;
 inline std::map<std::string,std::vector<int>> read_results, read_timeouts;
 inline int active_http_clients = 0;
+inline bool ignore_range = false;
+inline void (*http_read_hook)(size_t) = nullptr;
 struct Request { std::string url; int method; std::map<std::string,std::string> headers; };
 inline std::vector<Request> requests;
 inline size_t fail_after=static_cast<size_t>(-1);
@@ -173,7 +180,11 @@ inline int nvs_commit(int){return fixture::commit_error;}
 inline void nvs_close(int){}
 struct esp_http_client_event_t;
 struct HttpClient {size_t offset=0;std::string body,url;int method=0,timeout_ms=0;void* user_data=nullptr;
-    esp_err_t(*event)(esp_http_client_event_t*)=nullptr;std::map<std::string,std::string> headers;};
+    esp_err_t (*event)(esp_http_client_event_t*) = nullptr;
+    std::map<std::string, std::string> headers;
+    int range_status = 0;
+    std::string content_range;
+};
 using esp_http_client_handle_t=HttpClient*;
 inline void esp_crt_bundle_attach(){}
 constexpr int HTTP_EVENT_ON_HEADER=1, HTTP_METHOD_GET=0, HTTP_METHOD_POST=1;
@@ -190,6 +201,16 @@ inline void esp_fill_random(void* out,size_t size){static uint8_t seed=0;memset(
 inline int esp_http_client_open(HttpClient* c,int){
     ++fixture::opens;
     fixture::requests.push_back({c->url,c->method,c->headers});
+    if (c->headers.count("Range") && !fixture::ignore_range) {
+        const size_t offset = std::stoull(c->headers["Range"].substr(6));
+        const size_t total = c->body.size();
+        if (offset < total) {
+            c->body = c->body.substr(offset);
+            c->range_status = 206;
+            c->content_range = "bytes " + std::to_string(offset) + "-" + std::to_string(total - 1) +
+                               "/" + std::to_string(total);
+        }
+    }
     if(fixture::pause_open.load()) {
         fixture::open_entered.store(true);
         while(!fixture::release_open.load())std::this_thread::yield();
@@ -213,12 +234,24 @@ inline int64_t esp_http_client_fetch_headers(HttpClient* c){
     if(fixture::header_delay_ms[c->url]>c->timeout_ms)return -ESP_ERR_HTTP_EAGAIN;
     auto& results=fixture::header_results[c->url];
     if(!results.empty()) {const auto result=results.front();results.erase(results.begin());if(result<0)return result;}
+    if (c->event && !c->content_range.empty()) {
+        esp_http_client_event_t event{HTTP_EVENT_ON_HEADER, c->user_data, "Content-Range",
+                                      c->content_range.c_str()};
+        c->event(&event);
+    }
     if(c->event) for(const auto& [key,value]:fixture::http_headers[c->url]){
     esp_http_client_event_t e{HTTP_EVENT_ON_HEADER,c->user_data,key.c_str(),value.c_str()};c->event(&e);}return c->body.size();}
-inline int esp_http_client_get_status_code(HttpClient* c){auto i=fixture::http_status.find(c->url);return i==fixture::http_status.end()?fixture::status:i->second;}
+inline int esp_http_client_get_status_code(HttpClient* c) {
+    if (c->range_status)
+        return c->range_status;
+    auto i = fixture::http_status.find(c->url);
+    return i == fixture::http_status.end() ? fixture::status : i->second;
+}
 inline int esp_http_client_get_errno(HttpClient*) {return 0;}
 inline int64_t esp_http_client_get_content_length(HttpClient* c){return c->body.size();}
 inline int esp_http_client_read(HttpClient* client,char* out,size_t size){
+    if (fixture::http_read_hook)
+        fixture::http_read_hook(client->offset);
     fixture::read_timeouts[client->url].push_back(client->timeout_ms);
     auto& results=fixture::read_results[client->url];
     if(!results.empty()) {const int result=results.front();results.erase(results.begin());if(result<0)return result;}

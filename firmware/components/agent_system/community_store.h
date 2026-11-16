@@ -33,6 +33,8 @@ class File {
     esp_err_t Open(const char* url);
     // Installer only: wait longer for headers and retry before reading/writing firmware.
     esp_err_t OpenDownload(const char* url, InstallCancel cancel = nullptr, void* context = nullptr);
+    esp_err_t OpenRange(const char* url, uint32_t offset, uint32_t total, bool background,
+                        InstallCancel cancel = nullptr, void* context = nullptr);
     esp_http_client_handle_t handle = nullptr;
 
    private:
@@ -43,5 +45,8 @@ class File {
 #endif
     std::string location_;
     unsigned retry_after_ = 0;
+    uint32_t range_offset_ = 0, range_total_ = 0;
+    bool background_ = false;
+    std::string content_range_;
 };
 }  // namespace agent_system::community

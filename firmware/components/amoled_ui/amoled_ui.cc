@@ -24,6 +24,8 @@ AmoledDisplayTransfer display_transfer_;
 lv_display_t* pending_display_ = nullptr;
 bool fast_ui_ = false;
 bool pending_last_flush_ = false;
+uint32_t pending_flush_view_ = 0;
+std::atomic<uint32_t> presented_view_{0};
 int64_t last_frame_at_ = 0;
 std::atomic<uint32_t> completed_frames_{0}, active_frame_samples_{0};
 std::atomic<uint32_t> active_frame_us_{0};
@@ -89,6 +91,7 @@ const char* StageName(UiStage stage) {
 }
 lv_obj_t *ring_, *heading_, *battery_label_, *title_, *detail_, *back_, *footer_, *toast_label_;
 lv_obj_t *list_, *list_info_, *list_code_, *list_hint_, *rows_[kListRows], *row_labels_[kListRows], *row_icons_[kListRows];
+lv_obj_t *row_switches_[kListRows], *row_arrows_[kListRows];
 lv_obj_t *answer_view_, *answer_label_, *latest_, *volume_box_, *slider_, *volume_label_;
 lv_obj_t* home_handle_ = nullptr;
 lv_obj_t *quick_menu_, *quick_header_, *quick_buttons_[4], *quick_labels_[4];
@@ -123,6 +126,7 @@ void PanelFailed(esp_err_t err, const char* operation) {
     panel_errors_.fetch_add(1);
     if (!panel_fault_) ESP_LOGE("Amoled175.ui", "%s failed: %s; scheduling panel recovery", operation, esp_err_to_name(err));
     panel_fault_ = true;
+    presented_view_ = 0;
     panel_retry_at_ = esp_timer_get_time() + 1000000;
 }
 void CompleteTransfer(bool wait) {
@@ -130,6 +134,7 @@ void CompleteTransfer(bool wait) {
     if (!display_transfer_.Finish(wait, &result)) return;
     if (result.error != ESP_OK) PanelFailed(result.error, "display transfer");
     if (result.error == ESP_OK && pending_last_flush_) {
+        if (!panel_fault_) presented_view_ = pending_flush_view_;
         const int64_t now = esp_timer_get_time();
         if (last_frame_at_ && now > last_frame_at_ && now - last_frame_at_ <= 250000) {
             active_frame_us_.fetch_add(static_cast<uint32_t>(now - last_frame_at_)); active_frame_samples_.fetch_add(1);
@@ -162,6 +167,7 @@ void Flush(lv_display_t* display, const lv_area_t* area, uint8_t* pixels) {
         const esp_err_t err = display_transfer_.Submit(logical, pixels);
         if (err == ESP_OK) {
             pending_display_ = display; pending_last_flush_ = lv_display_flush_is_last(display);
+            pending_flush_view_ = shown_view_;
             flush_started_.fetch_add(1);
         }
         else { PanelFailed(err, "display submit"); lv_display_flush_ready(display); }
@@ -184,6 +190,7 @@ void Flush(lv_display_t* display, const lv_area_t* area, uint8_t* pixels) {
     flush_started_.fetch_add(1); Mark(UiStage::kPanel);
     const esp_err_t err = panel_->DrawBitmap(target.x, target.y, target.w, target.h, pixels);
     if (err != ESP_OK) PanelFailed(err, "display transfer");
+    else if (lv_display_flush_is_last(display) && !panel_fault_) presented_view_ = shown_view_;
     flushes_.fetch_add(1);
     const uint32_t us = static_cast<uint32_t>(esp_timer_get_time() - start);
     if (us > max_flush_us_.load()) max_flush_us_.store(us);
@@ -393,8 +400,27 @@ void Build() {
         lv_obj_set_size(row_labels_[i], kList.w - Scale(84), lv_font_get_line_height(fonts_.Body()));
         lv_obj_align(row_labels_[i], LV_ALIGN_LEFT_MID, Scale(48), 0);
         lv_label_set_long_mode(row_labels_[i], LV_LABEL_LONG_DOT);
-        auto* arrow = Label(rows_[i], &lv_font_montserrat_14, kMuted);
+        auto* arrow = row_arrows_[i] = Label(rows_[i], &lv_font_montserrat_14, kMuted);
         Text(arrow, LV_SYMBOL_RIGHT); lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -Scale(10), 0);
+        auto* toggle = row_switches_[i] = lv_switch_create(rows_[i]);
+        lv_obj_remove_style_all(toggle);
+        lv_obj_set_size(toggle, Scale(48), Scale(28));
+        lv_obj_align(toggle, LV_ALIGN_RIGHT_MID, -Scale(10), 0);
+        lv_obj_remove_flag(toggle, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_remove_flag(toggle, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_radius(toggle, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(toggle, lv_color_hex(0x51565F), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(toggle, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(toggle, lv_color_hex(0x3488FA),
+                                  (uint32_t(LV_PART_INDICATOR) | uint32_t(LV_STATE_CHECKED)));
+        lv_obj_set_style_bg_opa(toggle, LV_OPA_TRANSP, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(toggle, LV_OPA_COVER, (uint32_t(LV_PART_INDICATOR) | uint32_t(LV_STATE_CHECKED)));
+        lv_obj_set_style_radius(toggle, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(toggle, lv_color_hex(0xFFFFFF), LV_PART_KNOB);
+        lv_obj_set_style_bg_opa(toggle, LV_OPA_COVER, LV_PART_KNOB);
+        lv_obj_set_style_radius(toggle, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+        lv_obj_set_style_pad_all(toggle, -Scale(3), LV_PART_KNOB);
+        Visible(toggle, false);
     }
     volume_box_ = Card(root, 18); Position(volume_box_, kVolume);
     volume_label_ = Label(volume_box_, fonts_.Body(), kMuted, true);
@@ -811,6 +837,43 @@ void Render(void*) {
                     lv_obj_set_size(list_code_, content_width - Scale(6), Scale(60));
                     CenterLabelVertically(list_code_); y += Scale(68);
                 }
+                const auto render_row = [&](int i) {
+                    const bool show = !setup && i < screen.row_count;
+                    Visible(rows_[i], show);
+                    if (!show)
+                        return;
+                    const bool toggle = (screen.toggle_rows & (1u << i)) != 0;
+                    Visible(row_switches_[i], toggle);
+                    Visible(row_arrows_[i], !toggle);
+                    lv_obj_set_width(row_labels_[i], kList.w - Scale(toggle ? 116 : 84));
+                    if (screen.checked_rows & (1u << i))
+                        lv_obj_add_state(row_switches_[i], LV_STATE_CHECKED);
+                    else
+                        lv_obj_remove_state(row_switches_[i], LV_STATE_CHECKED);
+                    lv_obj_set_style_bg_color(rows_[i], lv_color_hex(settings ? 0x10151C : kCard),
+                                              0);
+                    lv_obj_set_style_border_color(rows_[i],
+                                                  lv_color_hex(settings ? 0x262D36 : 0x303034), 0);
+                    lv_obj_set_style_bg_color(
+                        rows_[i], lv_color_hex(settings ? 0x202832 : kPressed), LV_STATE_PRESSED);
+                    Text(row_labels_[i], screen.rows[i]);
+                    lv_obj_set_pos(rows_[i], 0, y);
+                    y += kRowHeight;
+                    const char* icon = screen.kind == View::kLauncher
+                                           ? (i == 0   ? LV_SYMBOL_LIST
+                                              : i == 1 ? LV_SYMBOL_SETTINGS
+                                                       : LV_SYMBOL_WIFI)
+                                           : LV_SYMBOL_RIGHT;
+                    Text(row_icons_[i], icon);
+                    lv_obj_set_style_text_color(row_icons_[i],
+                                                lv_color_hex(i % 3 == 0   ? kBlue
+                                                             : i % 3 == 1 ? 0xBF5AF2
+                                                                          : 0x30D158),
+                                                0);
+                };
+                for (int i = 0; i < kListRows; ++i)
+                    if (screen.toggle_rows & (1u << i))
+                        render_row(i);
                 const char* description =
                     setup && status.phase == AGENT_LINK_PHASE_PAIRING && screen.info[0]
                         ? screen.info
@@ -826,22 +889,9 @@ void Render(void*) {
                     lv_obj_set_width(list_info_, content_width - Scale(22));
                     lv_obj_set_height(list_info_, LV_SIZE_CONTENT); lv_obj_update_layout(list_info_); y += lv_obj_get_height(list_info_) + Scale(18);
                 }
-                for (int i = 0; i < kListRows; ++i) {
-                    const bool show = !setup && i < screen.row_count;
-                    Visible(rows_[i], show);
-                    if (!show) continue;
-                    lv_obj_set_style_bg_color(rows_[i], lv_color_hex(settings ? 0x10151C : kCard),
-                                              0);
-                    lv_obj_set_style_border_color(rows_[i],
-                                                  lv_color_hex(settings ? 0x262D36 : 0x303034), 0);
-                    lv_obj_set_style_bg_color(
-                        rows_[i], lv_color_hex(settings ? 0x202832 : kPressed), LV_STATE_PRESSED);
-                    Text(row_labels_[i], screen.rows[i]); lv_obj_set_pos(rows_[i], 0, y); y += kRowHeight;
-                    const char* icon = screen.kind == View::kLauncher ?
-                        (i == 0 ? LV_SYMBOL_LIST : i == 1 ? LV_SYMBOL_SETTINGS : LV_SYMBOL_WIFI) : LV_SYMBOL_RIGHT;
-                    Text(row_icons_[i], icon);
-                    lv_obj_set_style_text_color(row_icons_[i], lv_color_hex(i % 3 == 0 ? kBlue : i % 3 == 1 ? 0xBF5AF2 : 0x30D158), 0);
-                }
+                for (int i = 0; i < kListRows; ++i)
+                    if (!(screen.toggle_rows & (1u << i)))
+                        render_row(i);
                 has_before_ = screen.previous; has_after_ = screen.next;
                 Visible(list_hint_, screen.next || screen.previous);
                 if (screen.next || screen.previous) {
@@ -947,6 +997,10 @@ bool UiResponsive() {
     return at && completed_frames_.load() &&
            static_cast<uint32_t>(esp_timer_get_time() / 1000) - at < 1000;
 }
+bool FramePresented(uint32_t view) {
+    const uint32_t shown = presented_view_.load();
+    return shown && int32_t(shown - view) >= 0;
+}
 
 esp_err_t StartUi(RoundDisplay* panel, RoundTouch* touch, InputHandler handler, void* context,
                   const CardRenderer* cards, DisplayPerformance performance,
@@ -1016,7 +1070,7 @@ bool SameScreen(const Screen& a, const Screen& b) {
     if (a.kind != b.kind || a.busy != b.busy || a.calling != b.calling ||
         a.local_mode != b.local_mode || a.previous != b.previous || a.next != b.next ||
         a.ended != b.ended || a.volume_control != b.volume_control ||
-        a.launcher_shell != b.launcher_shell || a.add_card != b.add_card ||
+        a.launcher_shell != b.launcher_shell || a.add_card != b.add_card || a.launching != b.launching ||
         a.card_index != b.card_index || a.card_count != b.card_count ||
         a.cover_slot != b.cover_slot || a.cover_revision != b.cover_revision ||
         a.storage_total != b.storage_total || a.storage_used != b.storage_used ||
@@ -1024,6 +1078,7 @@ bool SameScreen(const Screen& a, const Screen& b) {
         a.wifi_connected != b.wifi_connected || a.wifi_setup_active != b.wifi_setup_active ||
         strcmp(a.wifi_setup_ssid, b.wifi_setup_ssid) || a.progress != b.progress ||
         strcmp(a.app_id, b.app_id) || a.row_count != b.row_count || a.row_offset != b.row_offset ||
+        a.toggle_rows != b.toggle_rows || a.checked_rows != b.checked_rows ||
         a.navigation != b.navigation || a.activity != b.activity || a.view != b.view ||
         strcmp(a.pair_code, b.pair_code) || strcmp(a.download_code, b.download_code) ||
         strcmp(a.title, b.title) || strcmp(a.detail, b.detail) || strcmp(a.footer, b.footer) ||

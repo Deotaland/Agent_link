@@ -42,6 +42,9 @@ class AmoledSystemMenu {
     bool Active() const {
         return page_ != Page::kClosed;
     }
+    bool ExtraActive() const {
+        return page_ == Page::kExtra;
+    }
     bool Handle(const amoled_ui::Input& input);
     void Render(amoled_ui::Screen& screen, uint32_t view, uint32_t navigation, int battery,
                 bool charging);
