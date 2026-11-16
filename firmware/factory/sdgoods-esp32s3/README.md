@@ -7,7 +7,8 @@ at 15 dBm and STA/AP startup applies driver value 60 (0.25 dBm units), logging
 the readback. Actual transmit power may be lower for a particular rate or region.
 
 This board-bound Factory reuses the round launcher controller and system menu.
-Its native 360px home shows one large circular application cover. Horizontal
+Its native 360px home shows one large circular application cover. All cover views
+clip the image itself to a circle, including opaque square uploads. Horizontal
 swipes cycle through installed apps and the final **+** card, then wrap around.
 Tapping an app opens a launch/delete dialog over its cover. The shared controller,
 installation service, provisioning and A/B update APIs are unchanged.

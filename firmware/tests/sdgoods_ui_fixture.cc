@@ -101,6 +101,10 @@ int main(int argc, char** argv) {
             colors[y*132+x]=uint16_t((((x*31/131+slot*7)%32)<<11)|((y*63/131)<<5)|20);
             const float d=std::sqrt(float((2*x-131)*(2*x-131)+(2*y-131)*(2*y-131)))/2;
             alpha[y*132+x]=uint8_t(std::max(0.f,std::min(1.f,66-d))*255);
+            if (slot == 1) {
+                colors[y * 132 + x] = 0xF800;
+                alpha[y * 132 + x] = 255;
+            }
         }
         agent_system::supplied_grid[slot]=pixels;
     }
@@ -161,6 +165,34 @@ int main(int argc, char** argv) {
     snprintf(state.title, sizeof state.title, "Agent_link");
     state.card_count = 2;
     state.card_index = 0;
+    // A downloaded square cover must be round even without an alpha mask.
+    state.cover_slot = 1;
+    snprintf(state.app_id, sizeof state.app_id, "square.cover");
+    snprintf(state.title, sizeof state.title, "Downloaded app");
+    SetScreen(state);
+    Frame("sdgoods-carousel-round-cover.ppm");
+    lv_area_t cover_box;
+    lv_obj_get_coords(amoled_factory::carousel_cover.box, &cover_box);
+    const int edge = lv_area_get_width(&cover_box);
+    const int center_x2 = cover_box.x1 + cover_box.x2;
+    const int center_y2 = cover_box.y1 + cover_box.y2;
+    constexpr uint16_t background = ((0x08 >> 3) << 11) | ((0x0D >> 2) << 5) | (0x16 >> 3);
+    for (int y = cover_box.y1; y <= cover_box.y2; ++y) {
+        for (int x = cover_box.x1; x <= cover_box.x2; ++x) {
+            const int dx = 2 * x - center_x2, dy = 2 * y - center_y2;
+            const int distance = dx * dx + dy * dy;
+            // Leave two pixels for the anti-aliased circle boundary.
+            if (distance < (edge - 4) * (edge - 4))
+                assert(panel_->pixels[y * 360 + x] == 0xF800);
+            else if (distance > (edge + 4) * (edge + 4))
+                assert(panel_->pixels[y * 360 + x] == background);
+        }
+    }
+    state.cover_slot = 0;
+    state.view++;
+    state.navigation++;
+    snprintf(state.app_id, sizeof state.app_id, "agent.status");
+    snprintf(state.title, sizeof state.title, "Agent_link");
     std::ifstream cover_file(argv[2], std::ios::binary);
     assert(cover_file);
     std::vector<uint8_t> cover_bytes(std::istreambuf_iterator<char>(cover_file), {});

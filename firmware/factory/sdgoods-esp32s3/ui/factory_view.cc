@@ -88,7 +88,9 @@ struct CoverView {
     lv_obj_t *box = nullptr, *picture = nullptr, *glyph = nullptr;
     AmoledCoverCache cache{1};
     void Create(lv_obj_t* parent, int x, int y, int edge) {
-        box = Box(parent, x, y, edge, edge, 18, 0x443027);
+        box = Box(parent, x, y, edge, edge, LV_RADIUS_CIRCLE, 0x443027);
+        // Uploaded covers can be fully opaque squares; clip the child image too.
+        lv_obj_set_style_clip_corner(box, true, 0);
         picture = lv_image_create(box); lv_obj_remove_flag(picture, LV_OBJ_FLAG_CLICKABLE);
         glyph = Label(box, &lv_font_montserrat_24, 0, 0, edge, edge, kBrand);
         Text(glyph, LV_SYMBOL_FILE);
@@ -226,7 +228,6 @@ void Create(lv_obj_t* parent, AmoledFonts& fonts, void (*bind)(lv_obj_t*, int)) 
     carousel = Box(root, 0, 0, 360, 360, 0, 0x080D16);
     Box(carousel, 163, 19, 34, 3, 2, 0x526173);
     carousel_cover.Create(carousel, 64, 52, 232);
-    lv_obj_set_style_radius(carousel_cover.box, LV_RADIUS_CIRCLE, 0);
     bind(carousel_cover.box, 0);
     carousel_plus[0] = Box(carousel_cover.box, 59, 110, 114, 12, 6, 0xD8F7A4);
     carousel_plus[1] = Box(carousel_cover.box, 110, 59, 12, 114, 6, 0xD8F7A4);
