@@ -78,8 +78,8 @@ lv_obj_t* Ring(lv_obj_t* parent, int x, int y, int edge, int width, uint32_t tra
     lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE); return obj;
 }
 lv_obj_t* Back(lv_obj_t* parent, void (*bind)(lv_obj_t*, int)) {
-    auto* button = Box(parent, 70, 40, 36, 36, 18, kCard); bind(button, -1);
-    Text(Label(button, &lv_font_montserrat_20, 0, 0, 36, 36, kText), LV_SYMBOL_LEFT);
+    auto* button = Box(parent, 62, 46, 44, 44, 22, kCard); bind(button, -1);
+    Text(Label(button, &lv_font_montserrat_24, 0, 0, 44, 44, kText), LV_SYMBOL_LEFT);
     return button;
 }
 

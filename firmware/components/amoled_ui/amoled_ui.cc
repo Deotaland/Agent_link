@@ -89,7 +89,8 @@ const char* StageName(UiStage stage) {
     }
     return "unknown";
 }
-lv_obj_t *ring_, *heading_, *battery_label_, *title_, *detail_, *back_, *footer_, *toast_label_;
+lv_obj_t *ring_, *heading_, *battery_label_, *title_, *detail_, *back_, *back_label_, *footer_,
+    *toast_label_;
 lv_obj_t *list_, *list_info_, *list_code_, *list_hint_, *rows_[kListRows], *row_labels_[kListRows], *row_icons_[kListRows];
 lv_obj_t *row_switches_[kListRows], *row_arrows_[kListRows];
 lv_obj_t *answer_view_, *answer_label_, *latest_, *volume_box_, *slider_, *volume_label_;
@@ -370,8 +371,9 @@ void Build() {
     detail_ = Label(root, fonts_.Body(), kMuted, true); Position(detail_, kDetail);
     lv_label_set_long_mode(detail_, LV_LABEL_LONG_DOT);
     back_ = Card(root, 12); Position(back_, kBack); BindClick(back_, -1);
-    auto* back_label = Label(back_, &lv_font_montserrat_20, kBlue, true);
-    Text(back_label, LV_SYMBOL_LEFT); lv_obj_center(back_label);
+    back_label_ = Label(back_, &lv_font_montserrat_20, kBlue, true);
+    Text(back_label_, LV_SYMBOL_LEFT);
+    lv_obj_center(back_label_);
     answer_view_ = Card(root); Position(answer_view_, kAnswer); ScrollStyle(answer_view_);
     lv_obj_set_style_pad_all(answer_view_, 12, 0);
     answer_label_ = Label(answer_view_, fonts_.Body(), kWhite);
@@ -480,10 +482,16 @@ void Build() {
     lv_obj_set_style_border_width(vertical_control_, 0, 0);
     lv_obj_remove_flag(vertical_control_, LV_OBJ_FLAG_CLICKABLE);
     auto* volume_back = Card(vertical_control_, LV_RADIUS_CIRCLE);
-    Position(volume_back, ScaledRect(100, 65, 46, 46));
+    const auto level_back_rect =
+        kDisplaySize == 360 ? ScaledRect(78, 61, 58, 58) : ScaledRect(100, 65, 46, 46);
+    Position(volume_back, level_back_rect);
     BindClick(volume_back, -1);
-    auto* volume_back_label = Label(volume_back, &lv_font_montserrat_20, kBlue, true);
-    lv_obj_set_size(volume_back_label, Scale(46), Scale(46));
+    if (kDisplaySize == 360)
+        lv_obj_set_ext_click_area(volume_back, std::max(touch_policy_.back_padding, Scale(16)));
+    auto* volume_back_label =
+        Label(volume_back, kDisplaySize == 360 ? &lv_font_montserrat_24 : &lv_font_montserrat_20,
+              kBlue, true);
+    lv_obj_set_size(volume_back_label, level_back_rect.w, level_back_rect.h);
     Text(volume_back_label, LV_SYMBOL_LEFT);
     CenterLabelVertically(volume_back_label);
     vertical_title_ = Label(vertical_control_, fonts_.Title(), kWhite, true);
@@ -766,6 +774,8 @@ void Render(void*) {
                 large_level ||
                 (card_renderer_ && card_renderer_->accepts && card_renderer_->accepts(screen));
             const bool quiet = screen.launcher_shell;
+            const bool roomy_menu = quiet && kDisplaySize == 360;
+            const int row_step = roomy_menu ? Scale(88) : kRowHeight;
             const bool setup = home && (status.phase == AGENT_LINK_PHASE_SETUP ||
                 status.phase == AGENT_LINK_PHASE_PAIRING || status.phase == AGENT_LINK_PHASE_BLOCKED);
             const bool binding_guide =
@@ -794,14 +804,32 @@ void Render(void*) {
                 Position(title_, ScaledRect(110, 50, 246, 36));
                 Position(back_, ScaledRect(80, 48, 38, 38));
             }
-            if (!home) { lv_obj_set_x(detail_, Scale(129)); lv_obj_set_width(detail_, Scale(249)); }
+            if (roomy_menu) {
+                Position(title_, ScaledRect(136, 68, 194, 44));
+                Position(back_, ScaledRect(78, 61, 58, 58));
+                Position(detail_, ScaledRect(129, 119, 208, 24));
+                Position(list_, screen.detail[0] ? ScaledRect(72, 160, 322, 254)
+                                                 : ScaledRect(72, 132, 322, 282));
+            }
+            lv_obj_set_style_radius(back_, roomy_menu ? LV_RADIUS_CIRCLE : 12, 0);
+            lv_obj_set_ext_click_area(back_, roomy_menu
+                                                 ? std::max(touch_policy_.back_padding, Scale(16))
+                                                 : touch_policy_.back_padding);
+            lv_obj_set_style_text_font(
+                back_label_, roomy_menu ? &lv_font_montserrat_24 : &lv_font_montserrat_20, 0);
+            lv_obj_center(back_label_);
+            if (!home && !roomy_menu) {
+                lv_obj_set_x(detail_, Scale(129));
+                lv_obj_set_width(detail_, Scale(249));
+            }
             Text(detail_, setup ? status.hint : screen.detail);
             Visible(back_, !home && !screen.busy);
             Visible(answer_view_, home && !setup);
             Visible(volume_box_, (home && !setup) || volume_page);
             if (!lv_slider_is_dragged(slider_)) { lv_slider_set_value(slider_, volume, LV_ANIM_OFF); VolumeText(volume); }
             Visible(list_, !home || setup); Visible(latest_, false);
-            lv_obj_set_height(list_, settings        ? Scale(290)
+            lv_obj_set_height(list_, roomy_menu      ? Scale(screen.detail[0] ? 254 : 282)
+                                     : settings      ? Scale(290)
                                      : binding_guide ? Scale(125)
                                      : volume_page   ? kAnswer.h
                                      : quiet         ? Scale(222)
@@ -828,7 +856,9 @@ void Render(void*) {
                 Mark(UiStage::kList);
                 const int old_y = lv_obj_get_scroll_y(list_);
                 int y = 0;
-                const int content_width = binding_guide ? Scale(388) : kList.w;
+                const int content_width = roomy_menu      ? Scale(322)
+                                          : binding_guide ? Scale(388)
+                                                          : kList.w;
                 const char* code = setup ? status.code : screen.pair_code;
                 const bool show_code = code[0] && (!setup || status.phase == AGENT_LINK_PHASE_PAIRING);
                 Visible(list_code_, show_code);
@@ -845,7 +875,27 @@ void Render(void*) {
                     const bool toggle = (screen.toggle_rows & (1u << i)) != 0;
                     Visible(row_switches_[i], toggle);
                     Visible(row_arrows_[i], !toggle);
-                    lv_obj_set_width(row_labels_[i], kList.w - Scale(toggle ? 116 : 84));
+                    const int row_width = content_width - Scale(roomy_menu ? 8 : 5);
+                    const int row_height = row_step - Scale(roomy_menu ? 12 : 8);
+                    lv_obj_set_size(rows_[i], row_width, row_height);
+                    const auto* row_font = roomy_menu ? fonts_.Title() : fonts_.Body();
+                    lv_obj_set_style_text_font(row_labels_[i], row_font, 0);
+                    lv_obj_set_size(
+                        row_labels_[i], row_width - Scale(toggle ? 112 : 80),
+                        roomy_menu ? row_height - Scale(12) : lv_font_get_line_height(row_font));
+                    lv_obj_align(row_labels_[i], LV_ALIGN_LEFT_MID, Scale(48), 0);
+                    lv_obj_set_style_text_font(
+                        row_icons_[i], roomy_menu ? &lv_font_montserrat_24 : &lv_font_montserrat_20,
+                        0);
+                    lv_obj_set_size(row_icons_[i], Scale(28),
+                                    lv_font_get_line_height(roomy_menu ? &lv_font_montserrat_24
+                                                                       : &lv_font_montserrat_20));
+                    lv_obj_align(row_icons_[i], LV_ALIGN_LEFT_MID, Scale(10), 0);
+                    lv_obj_set_style_text_font(
+                        row_arrows_[i],
+                        roomy_menu ? &lv_font_montserrat_18 : &lv_font_montserrat_14, 0);
+                    lv_obj_align(row_arrows_[i], LV_ALIGN_RIGHT_MID, -Scale(10), 0);
+                    lv_obj_align(row_switches_[i], LV_ALIGN_RIGHT_MID, -Scale(10), 0);
                     if (screen.checked_rows & (1u << i))
                         lv_obj_add_state(row_switches_[i], LV_STATE_CHECKED);
                     else
@@ -857,8 +907,9 @@ void Render(void*) {
                     lv_obj_set_style_bg_color(
                         rows_[i], lv_color_hex(settings ? 0x202832 : kPressed), LV_STATE_PRESSED);
                     Text(row_labels_[i], screen.rows[i]);
-                    lv_obj_set_pos(rows_[i], 0, y);
-                    y += kRowHeight;
+                    CenterLabelVertically(row_labels_[i]);
+                    lv_obj_set_pos(rows_[i], roomy_menu ? (content_width - row_width) / 2 : 0, y);
+                    y += row_step;
                     const char* icon = screen.kind == View::kLauncher
                                            ? (i == 0   ? LV_SYMBOL_LIST
                                               : i == 1 ? LV_SYMBOL_SETTINGS
@@ -900,7 +951,8 @@ void Render(void*) {
                     CenterLabelVertically(list_hint_);
                 }
                 Mark(UiStage::kListLayout); lv_obj_update_layout(list_);
-                const int scroll_y = new_page ? 0 : WindowScroll(old_y, offset, screen.row_offset, kRowHeight);
+                const int scroll_y =
+                    new_page ? 0 : WindowScroll(old_y, offset, screen.row_offset, row_step);
                 if (new_page || offset != screen.row_offset) lv_obj_scroll_to_y(list_, scroll_y, LV_ANIM_OFF);
                 if (new_page) list_gesture_ = false;
             }

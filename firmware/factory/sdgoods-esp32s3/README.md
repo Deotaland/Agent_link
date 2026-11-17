@@ -141,11 +141,15 @@ rate and transition still require hardware acceptance.
   isolated settings. App downloads use the production firmware download-code API;
   provisioning continues to use the common Agent Link flow.
 - Settings is an ordinary scrolling list: **Brightness**, **Launcher update**,
-  **About**, device status, language, **User guide** and **Device tools**. Wi-Fi
+  **Device tools**, **About**, device status, language and **User guide**. Wi-Fi
   and volume are shortcuts in Quick Panel rather than repeated settings entries.
   App service and cover-sync entries are hidden; automatic cover sync continues.
   Back returns one level. **Settings > About** shows the running app name,
   actual image version, WiFi status, SSID/IP and battery.
+- On the 360px display, menu Back buttons are about 44–45px with a generous hit
+  margin. List rows are about 59px high with 18px text and larger spacing. Titles
+  and cards stay horizontally centered, and row text stays vertically centered.
+  Volume/brightness and native Factory Back buttons use the same larger target.
 - **User guide** has five scrollable topics: Launcher purpose, WiFi setup,
   download-code installation, apps/gestures, and updates/help. It defaults to
   English and follows the selected UI language. Guide Back returns to its topic

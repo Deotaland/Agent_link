@@ -719,6 +719,12 @@ int main(int argc, char** argv) {
     menu.Handle(last_input);
     menu_frame("sdgoods-settings-grid.ppm");
     assert(state.kind == View::kSettings && state.row_count == 6);
+    assert(lv_obj_get_width(back_) >= 44 && lv_obj_get_height(back_) >= 44);
+    const auto title_box = coords(title_);
+    assert(std::abs((title_box.x1 + title_box.x2 + 1) / 2 - 180) <= 1);
+    const auto roomy_row = coords(rows_[0]);
+    assert(lv_area_get_height(&roomy_row) >= 58 &&
+           std::abs((roomy_row.x1 + roomy_row.x2 + 1) / 2 - 180) <= 1);
     const char* setting_rows[]{"Brightness",    "Launcher update", "About",
                                "Device status", "Language",        "User guide"};
     for (int i = 0; i < 6; ++i)
@@ -856,7 +862,8 @@ int main(int argc, char** argv) {
             assert(!strcmp(state.title, guide.title) && !strcmp(state.info, guide.body));
             assert(!strcmp(lv_label_get_text(list_info_), guide.body));
             if (topic == 2) {
-                assert(strstr(state.info, "https://sugarat.vercel.app/") &&
+                assert(strstr(state.info, "https://sugarat.vercel.app/"));
+                assert(lv_obj_get_height(list_info_) <= lv_obj_get_height(list_) ||
                        lv_obj_get_scroll_bottom(list_) > 0);
                 lv_obj_scroll_to_y(list_, lv_obj_get_scroll_bottom(list_), LV_ANIM_OFF);
                 Frame("sdgoods-user-guide-install-scrolled.ppm");
